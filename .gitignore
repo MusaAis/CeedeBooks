@@ -1,0 +1,28 @@
+# secrets — never commit
+.env
+*.env
+!.env.example
+
+# solidity build artifacts
+out/
+cache/
+broadcast/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# node (frontend, if/when it's built out)
+node_modules/
+dist/
+.vite/
+
+# runtime data
+*.db
+*.sqlite
+*.sqlite3
+
+.DS_Store
+*.log

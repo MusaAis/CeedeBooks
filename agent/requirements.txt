@@ -1,0 +1,6 @@
+python-dotenv
+aiosqlite
+groq
+web3
+httpx
+circle-developer-controlled-wallets
