@@ -1,5 +1,4 @@
 # CeedeBooks
-
 *"Ceede" means money in Pulaar/Fulfulde.*
 
 An autonomous financial-operations agent for African SMEs on Arc: pays invoices, runs contractor
@@ -87,8 +86,8 @@ model — the contract doesn't know or care why the request was wrong. It just r
 - **An audit trail that's actually checkable.** Not "we hash things" as a slide bullet — a reviewer
   can pull the off-chain record, recompute the hash from the documented serialization, and confirm it
   against the on-chain event, live.
-- **Tested, not just described.** 24 Foundry tests, one per revert path and red-team scenario, all
-  passing against the deployed contract's exact source.
+- **Tested, not just described.** 24 Foundry tests plus 11 Python tests, all passing against the
+  deployed contract's exact source and the live decision pipeline.
 
 ---
 
@@ -179,9 +178,11 @@ key are deliberately different guarantees, kept in separate fields — conflatin
 mistake "this invoice wasn't double-paid" for "this reasoning was verified," which are not the same
 claim.
 
+One instance per business — this deployment is not multi-tenant. Onboarding a second business means
+deploying a second `BudgetEnforcer`, not reusing this address.
+
 **BudgetEnforcer Deployed** on **Arc Testnet** & verified. **Budget live:** 100 USDC/day, 20 USDC/tx,
 50 USDC/day in the data-oracle category.
-
 
 ## 📋 Contracts (Arc Testnet)
 
@@ -198,15 +199,20 @@ claim.
 ```
 ceedebooks/
 ├── agent/
-│   ├── config.py         # env loader
-│   ├── categories.py     # spend category enum (off-chain names for on-chain uint8 keys)
-│   ├── llm.py             # openai/gpt-oss-120b escalation reasoning (Groq)
-│   ├── decision_log.py    # SHA256 audit log, hash-before-action sequencing
-│   └── wallet_setup.py    # one-off Circle developer-controlled wallet creation
+│   ├── config.py           # env loader
+│   ├── categories.py       # spend category enum (off-chain names for on-chain uint8 keys)
+│   ├── llm.py              # openai/gpt-oss-120b escalation reasoning (Groq)
+│   ├── decision_log.py     # SHA256 audit log, hash-before-action sequencing
+│   ├── contract.py         # reads + Circle-signed writes against BudgetEnforcer
+│   ├── payables.py         # three-way match, rules-baseline decisions, commit-then-pay
+│   ├── wallet_setup.py     # one-off Circle developer-controlled wallet creation
+│   └── tests/
+│       └── test_payables.py
+├── backend/
+│   ├── main.py              # FastAPI: vendors, purchase orders, receipts, invoices, audit verify
+│   └── models.py             # SQLite schema + queries
 ├── contracts/
-│   ├── BudgetEnforcer.sol
-│   ├── MilestoneEscrow.sol
-│   └── CeedeBooksYield.sol
+│   └── BudgetEnforcer.sol
 ├── test/
 │   ├── BudgetEnforcer.t.sol
 │   └── mocks/MockUSDC.sol
@@ -258,6 +264,30 @@ attempt (contract refuses even if the agent were fooled), full escalate → appr
 escalated invoices blocked from direct payment, pause, withdraw, agent rotation, two-step approver
 rotation, and the `reasoningHash` round-trip via the `PaymentMade` event.
 
+```bash
+pytest agent/tests/
+```
+
+11 tests covering the three-way match, rules-baseline decisions (pay/hold/escalate), and retry
+safety — reprocessing an already-paid invoice is a no-op instead of a second payment attempt.
+
+---
+
+### Running the API
+
+```bash
+uvicorn backend.main:app --reload
+```
+
+- `POST /vendors`, `POST /purchase-orders`, `POST /receipts` — set up the records a real invoice
+  gets matched against. A receipt with `confirmed_by_role: "agent"` is rejected outright; it has to
+  come from an independent party.
+- `POST /invoices` — runs the full pipeline: three-way match → rules-baseline decision →
+  commit-then-pay or escalate.
+- `GET /invoices/{id}` — current status and `reasoning_hash` for that invoice.
+- `GET /decisions/{reasoning_hash}/verify` — the hash round-trip check as a real endpoint, not a
+  manual script: recomputes the hash from the stored record and confirms it matches.
+
 ---
 
 ### Deploy
@@ -282,7 +312,7 @@ cast send $BUDGET_ENFORCER_ADDRESS "setBudget(uint256,uint256)" 100000000 200000
 cast send $BUDGET_ENFORCER_ADDRESS "setCategoryDailyLimit(uint8,uint256)" 0 50000000 \
   --rpc-url $ARC_TESTNET_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
 
-# once the real vendor (data-provider) address is known:
+# Real vendor (data-provider) address:
 cast send $BUDGET_ENFORCER_ADDRESS "setVendor(address,bool)" <VENDOR_ADDRESS> true \
   --rpc-url $ARC_TESTNET_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
 ```
@@ -319,6 +349,9 @@ Only the ones big enough to actually cost someone real time or silently break so
 - **Gas and off-chain costs (LLM inference, cloud hosting) are not `pay()` categories.** Only
   transactions that actually move USDC through this contract belong there; everything else is a
   recorded expense in the off-chain ledger, never a phantom "paid" entry (see `decision_log.py`).
+- **A retry can't pay twice.** Before doing anything else, `payables.process_invoice()` checks the
+  contract's own `paid` mapping for that invoice's key. If a crash happened after a payment landed
+  on-chain but before the local record updated, reprocessing that invoice is a no-op, not a resend.
 
 ---
 
