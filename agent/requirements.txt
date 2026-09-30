@@ -2,5 +2,10 @@ python-dotenv
 aiosqlite
 groq
 web3
+eth-abi
 httpx
 circle-developer-controlled-wallets
+fastapi
+uvicorn
+pydantic
+pytest
