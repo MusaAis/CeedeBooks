@@ -67,13 +67,14 @@ async def _log_and_escalate(
         invoice.vendor_wallet, amount_units, invoice_number_b32, doc_hash,
         invoice.category, bytes.fromhex(reasoning_hash_hex), reason,
     )
+    contract.wait_for_transaction(tx_id)
     await decision_log.record_onchain_tx(reasoning_hash_hex, tx_id)
     await models.update_invoice_status(invoice.id, "escalated", reasoning_hash=reasoning_hash_hex, onchain_tx_id=tx_id)
 
 
 async def process_invoice(invoice: Invoice, treasury_runway_days: float) -> Decision:
     amount_units = int(round(invoice.amount_usdc * 1_000_000))
-    doc_hash = bytes.fromhex(invoice.doc_hash)
+    doc_hash = contract.to_bytes32(invoice.doc_hash)
     invoice_number_b32 = contract.to_bytes32(invoice.invoice_number)
 
     if contract.is_paid(contract.invoice_key(invoice.vendor_wallet, invoice_number_b32)):
@@ -106,10 +107,12 @@ async def process_invoice(invoice: Invoice, treasury_runway_days: float) -> Deci
     commitment = contract.commitment_for(
         invoice.vendor_wallet, amount_units, invoice_number_b32, doc_hash, invoice.category, reasoning_hash
     )
-    contract.commit_decision(commitment)
+    commit_tx_id = contract.commit_decision(commitment)
+    contract.wait_for_transaction(commit_tx_id)
     tx_id = contract.pay(
         invoice.vendor_wallet, amount_units, invoice_number_b32, doc_hash, invoice.category, reasoning_hash
     )
+    contract.wait_for_transaction(tx_id)
     await decision_log.record_onchain_tx(reasoning_hash_hex, tx_id)
     await models.update_invoice_status(invoice.id, "paid", reasoning_hash=reasoning_hash_hex, onchain_tx_id=tx_id)
     return decision

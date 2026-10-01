@@ -80,6 +80,15 @@ async def record_onchain_tx(reasoning_hash: str, tx_id: str) -> None:
         await db.commit()
 
 
+async def get_decision(reasoning_hash: str) -> Optional[aiosqlite.Row]:
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM audit_log WHERE reasoning_hash = ?", (reasoning_hash,)
+        ) as cursor:
+            return await cursor.fetchone()
+
+
 async def verify_roundtrip(reasoning_hash: str) -> bool:
     async with aiosqlite.connect(config.db_path) as db:
         db.row_factory = aiosqlite.Row
@@ -90,3 +99,4 @@ async def verify_roundtrip(reasoning_hash: str) -> bool:
     if row is None:
         return False
     return hashlib.sha256(row["hash_input"].encode()).hexdigest() == row["reasoning_hash"]
+

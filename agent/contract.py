@@ -1,5 +1,9 @@
 """Reads and Circle-signed writes against BudgetEnforcer."""
+import time
 import uuid
+
+_TERMINAL_SUCCESS = "COMPLETE"
+_TERMINAL_FAILURE = {"FAILED", "CANCELLED"}
 
 from circle.web3 import developer_controlled_wallets, utils
 from eth_abi import encode
@@ -67,6 +71,20 @@ def _execute(abi_function_signature: str, abi_parameters: list) -> str:
         create_contract_execution_transaction_for_developer_request=request
     )
     return response.data.id
+
+
+def wait_for_transaction(tx_id: str, timeout: float = 60, interval: float = 2) -> None:
+    """Blocks until Circle reports a terminal state; raises if it failed or reverted."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        txn = _transactions_api.get_transaction(id=tx_id).data.transaction
+        state = getattr(txn.state, "value", txn.state)
+        if state == _TERMINAL_SUCCESS:
+            return
+        if state in _TERMINAL_FAILURE:
+            raise RuntimeError(f"Transaction {tx_id} {state}: {txn.error_reason} - {txn.error_details}")
+        time.sleep(interval)
+    raise TimeoutError(f"Transaction {tx_id} did not reach a terminal state within {timeout}s")
 
 
 def commit_decision(commitment: bytes) -> str:

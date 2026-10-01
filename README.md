@@ -1,93 +1,76 @@
 # CeedeBooks
+
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Foundry tests](https://img.shields.io/badge/forge%20tests-24%2F24%20passing-brightgreen)
+![Python tests](https://img.shields.io/badge/pytest-11%2F11%20passing-brightgreen)
+![Network](https://img.shields.io/badge/Arc-Testnet-informational)
+
 *"Ceede" means money in Pulaar/Fulfulde.*
 
-An autonomous financial-operations agent for African SMEs on Arc: pays invoices, runs contractor
-milestone escrow, and parks idle treasury into yield — with spending limits enforced **on-chain**(never in a prompt) and every decision hash-logged before money moves.
+An autonomous financial-operations agent for African SMEs on Arc: pays invoices, runs contractor milestone escrow, and parks idle treasury into yield, with spending limits enforced **on-chain** (never in a prompt) and every decision hash-logged before money moves.
 
 Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 – Oct 10, 2026.
+
+**Current: Phase 2, AP/AR engine built and confirmed live on Arc Testnet.** See [Roadmap](#roadmap) and the [Changelog](#changelog).
 
 ---
 
 ## What is CeedeBooks
 
-Most African SMEs run their finances the way most small businesses everywhere do: a spreadsheet, a
-WhatsApp thread with a bookkeeper, and someone manually checking a bank app before every payment.
-CeedeBooks is an agent that takes over the repetitive parts of that job — validating and paying
-invoices, tracking contractor milestones, moving idle cash into yield when it isn't needed for a few
-days — while the business owner keeps hard, contract-level control over what the agent is allowed to
-spend, on whom, and how much.
+Most African SMEs run their finances the way most small businesses everywhere do: a spreadsheet, a WhatsApp thread with a bookkeeper, and someone manually checking a bank app before every payment.
+CeedeBooks is an agent that takes over the repetitive parts of that job (validating and paying invoices, tracking contractor milestones, moving idle cash into yield when it isn't needed for a few days) while the business owner keeps hard, contract-level control over what the agent is allowed to spend, on whom, and how much.
 
-It isn't "an LLM with a wallet." The agent proposes; a smart contract, not a prompt, decides whether
-a payment is actually allowed to go through.
+It isn't "an LLM with a wallet." The agent proposes; a smart contract, not a prompt, decides whether a payment is actually allowed to go through.
 
 ---
 
-## ✨ Features
+## Features
 
-- **On-chain budget enforcement** — per-transaction, per-day, and cumulative per-category-per-day
-  spending caps, enforced by the contract itself, not by the agent's instructions
-- **Vendor registry with wallet-change control** — only approver-registered addresses can be paid;
-  a vendor's wallet change requires explicit human sign-off
-- **Commit-then-pay** — the agent's reasoning is hashed and committed to the chain in an earlier
-  block than the payment it justifies, so "reasoned before paid" is provable from block order alone
-- **Escalation workflow** — the agent can park a payment for human review instead of guessing; only
-  the approver can release it, exactly once
-- **Full audit trail** — every decision (paid, held, escalated) is hash-logged off-chain and
-  on-chain, with a judge-reproducible round-trip: recompute the hash from the record, match it to
-  the on-chain event
-- **Contractor milestone escrow** *(planned)* — USDC held per milestone, released on evidence of
-  completed work, contract-enforced regardless of the model's confidence
-- **Idle-treasury auto-yield** *(planned)* — USYC via a pooled wrapper contract, working around
-  Arc's $100k/institution-only eligibility gate at the raw Teller level
-- **Multi-business ready** — vendor registry, budgets, and categories are all business-scoped
-  concepts, not hardcoded to one deployment
+**Built and running**
+
+- **On-chain budget enforcement**: per-transaction, per-day, and cumulative per-category-per-day spending caps, enforced by the contract itself, not by the agent's instructions
+- **Vendor registry**: only approver-registered addresses can be paid; changing a vendor wallet requires explicit approver action
+- **Commit-then-pay**: the agent's reasoning hash is committed on-chain in an earlier block than the payment it justifies, confirmed before the payment fires, so "reasoned before paid" is provable from block order
+- **Escalation workflow**: the agent can park a payment for human review instead of guessing; only the approver can release it, exactly once
+- **Three-way match**: an invoice must match a purchase order (number and amount) and an independently confirmed receipt, and the invoice wallet must match the vendor on file
+- **Independent receipt witness**: a receipt confirmed by the `agent` role is rejected at the API and again inside the match
+- **Rules-baseline decision engine**: deterministic pay / hold / escalate decisions, with an LLM used only to write the narrative on escalations
+- **Retry-safe payments**: before doing anything, the pipeline asks the contract whether the invoice key is already paid, so a crash-and-retry cannot pay twice
+- **Confirmed, not assumed, settlement**: every commit, payment, and escalation is polled to a terminal on-chain state before it's recorded as succeeded — a reverted transaction is never logged as paid
+- **Audit trail with round-trip check**: every decision (paid, held, escalated) is stored with its exact serialized hash input; `GET /decisions/{hash}/verify` recomputes the hash
+
+**Planned**
+
+- Laya fast-path decision model (kit built separately, not yet wired in)
+- Contractor milestone escrow
+- Idle-treasury auto-yield via a pooled USYC wrapper
+- Public proof page, refusal-first metrics, hash-chained audit ledger, on-chain red-team log
 
 ---
 
 ## How a payment actually happens
 
-1. AgoraFX's agent owes a data provider $0.001 for an FX-rate fetch. The invoice lands in the ledger.
-2. Deterministic checks run first, before any model is involved: is there a matching PO? Has the
-   receipt been confirmed by someone other than the agent? Has the vendor's wallet changed since the
-   last payment? Any failure here sends the invoice straight to escalation.
-3. If those pass, the decision layer — rules today, Laya once it's fine-tuned and calibrated on
-   CeedeBooks' own schema, an LLM only for genuinely uncertain cases — decides: pay now, pay early
-   for a discount, hold, or escalate.
-4. Whatever the decision, it's written to the audit log and hashed (`reasoningHash`) *before*
-   anything touches the contract.
-5. The agent calls `commitDecision()` with that hash, bound to the exact payment parameters. The
-   commitment has to sit in an earlier block than the payment itself.
-6. The agent calls `pay()`. The contract independently re-checks all of it: is this vendor
-   registered? Is this invoice already paid? Is the amount inside the per-tx, daily, and
-   category-daily limits? Does a valid, unconsumed commitment exist for these exact parameters?
-   Only if every one of those holds does USDC actually move.
-7. Anyone can later pull the off-chain record for that decision, recompute the hash from the
-   documented serialization, and check it against the on-chain event — "the agent reasoned before it
-   paid" isn't a claim in a deck, it's checkable in one command.
+1. A business's agent owes a vendor $0.001 for a data fetch. The invoice lands in the ledger (`POST /invoices`).
+2. **Retry guard:** the pipeline derives the invoice key (`keccak256(vendor, invoiceNumber)`) and asks the contract if it is already paid. If yes, nothing is resent.
+3. **Three-way match**, before any model is involved: does the invoice carry a PO number? Does the PO exist and match the amount (within $0.01)? Is there a receipt, confirmed by someone other than the agent? Does the invoice wallet match the vendor on file? Any failure escalates, with the rules reason as the logged explanation.
+4. **Decision (rules baseline):** is the vendor registered on-chain? Is runway at least 7 days? Result: pay, hold, or escalate. If the decision is escalate, `openai/gpt-oss-120b` (Groq) writes the narrative, and that text is logged. The model never changes the decision.
+5. The decision is written to the audit log and hashed (`reasoningHash`) *before* anything touches the contract.
+6. For a payment, the agent calls `commitDecision()` bound to the exact payment parameters, **waits for it to confirm on-chain**, then calls `pay()` and waits for that to confirm too.
+7. The contract independently re-checks everything: vendor registered, invoice not already paid, amount inside per-tx / daily / category-daily limits, valid unconsumed commitment for these exact parameters. Only if all hold does USDC move.
+8. The Circle transaction ID is stored against the decision. Anyone can pull the record, recompute the hash from the stored serialization, and compare it to the `PaymentMade` event for that transaction.
 
-If the agent gets any of this wrong — a compromised prompt, a hallucinated vendor, a miscalibrated
-model — the contract doesn't know or care why the request was wrong. It just refuses.
+If the agent gets any of this wrong (a compromised prompt, a hallucinated vendor, a miscalibrated model), the contract doesn't know or care why the request was wrong. It just refuses.
 
 ---
 
 ## Why CeedeBooks
 
-- **Verified, not assumed.** Every external dependency in this build — Laya's real accuracy, Groq's
-  live model lineup, Circle's actual USYC/Gateway/CCTP integration surfaces, Arc's real contract
-  addresses — was checked against a primary source before a line of code depended on it. Two of the
-  bigger surprises that turned up doing that are in the table below.
-- **Skin in the game, literally.** The agent cannot exceed its budget even if it's prompted,
-  jailbroken, or fed a malicious invoice — the enforcement lives in Solidity, not in a system prompt.
-  A simulated prompt-injection attempt is one of the 24 tests in this repo, and it fails the way it's
-  supposed to: the contract refuses regardless of what the agent was convinced of.
-- **Model output is an input, never a release condition.** Circle's own `arc-escrow` sample app
-  releases contractor funds on a bare JSON response from GPT-4o with no structural check behind it —
-  CeedeBooks was built specifically not to repeat that pattern.
-- **An audit trail that's actually checkable.** Not "we hash things" as a slide bullet — a reviewer
-  can pull the off-chain record, recompute the hash from the documented serialization, and confirm it
-  against the on-chain event, live.
-- **Tested, not just described.** 24 Foundry tests plus 11 Python tests, all passing against the
-  deployed contract's exact source and the live decision pipeline.
+- **Verified, not assumed.** Every external dependency in this build (Laya's real accuracy, Groq's live model lineup, Circle's actual USYC / Gateway / CCTP surfaces, Arc's contract addresses) was checked against a primary source before code depended on it.
+- **Skin in the game, literally.** The agent cannot exceed its budget even if it is prompted, jailbroken, or fed a malicious invoice. Enforcement lives in Solidity. A simulated prompt-injection attempt is one of the 24 Foundry tests, and the contract refuses regardless of what the agent was convinced of.
+- **Model output is an input, never a release condition.** Circle's own `arc-escrow` sample releases contractor funds on a bare JSON response from GPT-4o with no structural check behind it. CeedeBooks is built specifically not to repeat that pattern.
+- **Independent receipt witness.** A three-way match proves nothing if the agent can confirm its own receipts. It can't.
+- **Settlement is confirmed, not hoped for.** Circle's transaction API is asynchronous — accepting a request isn't the same as it succeeding on-chain. CeedeBooks waits for a terminal state before trusting any result, closing a real phantom-payment risk most demos never test for.
+- **Tested, not just described.** 24 Foundry tests plus 11 Python tests, both passing against the deployed contract and the live decision pipeline.
 
 ---
 
@@ -98,23 +81,23 @@ model — the contract doesn't know or care why the request was wrong. It just r
 │                      CeedeBooks Agent                            │
 ├──────────────────┬──────────────────┬───────────────────────────┤
 │  Treasury Brain   │  AP/AR Engine    │  Contractor Manager       │
+│  (Phase 3)        │  (Phase 2: BUILT)│  (Phase 4)                │
 ├──────────────────┼──────────────────┼───────────────────────────┤
-│ Circle Gateway    │ rules baseline   │ MilestoneEscrow.sol       │
-│ POST /v1/balances │  + Laya          │ holds USDC per milestone  │
-│                   │  + LLM escalation│                           │
-│ USYC via own      │                  │ Model validates evidence: │
-│ pooled wrapper    │ Three-way match  │ gates the CALL, never     │
-│ (CeedeBooksYield  │ (invoice+PO+     │ the CONTRACT's own        │
-│  .sol)            │  receipt)        │ require() checks          │
+│ Circle Gateway    │ Three-way match  │ MilestoneEscrow.sol       │
+│ POST /v1/balances │ rules baseline   │ holds USDC per milestone  │
+│                   │ LLM on escalation│                           │
+│ USYC via own      │ (Laya: planned)  │ Model validates evidence: │
+│ pooled wrapper    │                  │ gates the CALL, never     │
+│ (CeedeBooksYield  │ FastAPI intake + │ the CONTRACT's own        │
+│  .sol)            │ SQLite ledger    │ require() checks          │
 └──────────────────┴──────────────────┴───────────────────────────┘
                     │
-          ┌─────────▼──────────┐
-          │   BudgetEnforcer   │
-          │   .sol             │
-          │                    │
-          │ vendor registry    │
-          │ commit-then-pay    │
-          │ per-tx/daily/      │
+          ┌─────────▼──────────┐        ┌──────────────────────┐
+          │   BudgetEnforcer   │◄───────│ Audit log (SQLite)   │
+          │   .sol             │ hash   │ hash_input + hash,   │
+          │ vendor registry    │ commit │ written BEFORE the   │
+          │ commit-then-pay    │        │ contract is touched  │
+          │ per-tx/daily/      │        └──────────────────────┘
           │  category caps     │
           │ escalation flow    │
           │ pause, 2-step      │
@@ -128,23 +111,26 @@ model — the contract doesn't know or care why the request was wrong. It just r
 
 | Phase | Scope | Status |
 |---|---|---|
-| 1. Foundation | Repo, Circle treasury wallet, `BudgetEnforcer.sol` deployed + verified + tested | ✅ Done |
-| 2. AP/AR Engine | Rules baseline, three-way match, Laya/LLM escalation, first real payments | 🔧 In progress |
+| 1. Foundation | Repo, Circle treasury wallet, `BudgetEnforcer.sol` deployed, verified, tested | ✅ Done |
+| 2. AP/AR Engine | Three-way match, independent receipt witness, rules baseline, escalation, retry safety, confirmed settlement, API | ✅ Built — confirmed with a real payment on Arc Testnet |
 | 3. Treasury Brain | Gateway unified balance, `CeedeBooksYield.sol` pooled USYC wrapper, runway forecasting | ⏳ Planned |
 | 4. Contractor Milestones | `MilestoneEscrow.sol`, at least 1 real contractor paid | ⏳ Planned |
-| 5. Audit Trail + Traction | 5+ businesses onboarded, real USDC volume, live hash round-trip demo | ⏳ Planned |
-| 6. Submit | Demo video, final README, submission | ⏳ Planned |
+| 5. Audit Trail + Traction | Public proof page, refusal-first metrics, hash-chained ledger, on-chain red-team log, 5+ businesses | ⏳ Planned |
+| 6. Submit | Demo video, final README, submission (due Oct 10, 11:59 PM ET) | ⏳ Planned |
+| Later | Agent-posted decision bond | 💡 Idea |
+
+**Still open in Phase 2:** Laya isn't wired into `payables.py` yet (built and tested separately; live decisions run on the rules baseline until it is). First real outside-business invoices are next — so far the pipeline has only processed self-owned test flows.
 
 ---
 
-## Circle tools — 6
+## Circle tools
 
 | Tool | Status | Notes |
 |---|---|---|
-| Agent Wallet | ✅ live | Developer-controlled wallet, Arc Testnet |
+| Agent Wallet | ✅ live | Developer-controlled wallet, Arc Testnet; signs every contract call |
 | USDC | ✅ live | Native ERC-20 at `0x3600000000000000000000000000000000000000` |
-| Gateway | Planned Phase 3 | `POST /v1/balances`, confirmed permissionless |
-| USYC | Planned Phase 3 | Via own pooled wrapper — Arc's Teller has a $100k/allowlist gate at the raw contract level |
+| Gateway | Planned Phase 3 | `POST /v1/balances` |
+| USYC | Planned Phase 3 | Via own pooled wrapper (Arc's Teller has a $100k / allowlist gate) |
 | CCTP | Stretch | Domain 26, `minFinalityThreshold: 2000`, V2 7-param `depositForBurn` only |
 | EURC | Stretch | European vendor payments |
 | ~~Paymaster~~ | Dropped |
@@ -155,42 +141,46 @@ model — the contract doesn't know or care why the request was wrong. It just r
 
 ### `BudgetEnforcer.sol`
 
-The on-chain spending authority. Funds are **held by the contract**, not the agent wallet — the agent
-can only move them through `pay()`, inside these limits:
+The on-chain spending authority. Funds are **held by the contract**, not the agent wallet. The agent can only move them through `pay()`, inside these limits:
 
-- **Vendor registry** — only approver-registered addresses can be paid. A vendor wallet change means
-  registering a new address; the old one stops working the moment it's revoked.
-- **Commit-then-pay** — `commitDecision(hash)` must land in an earlier block than the `pay()` it
-  justifies, bound to the exact payment parameters (vendor, amount, invoice, doc, category, reasoning).
-  This makes "reasoned before paid" provable from block order, not just code discipline.
-- **Canonical idempotency key** — `invoiceKey = keccak256(vendor, invoiceNumber)`, not something the
-  agent can shift by resubmitting a different file. `docHash` is a separate pointer, emitted in the
-  event, so every payment still points at a real document.
-- **Limits** — per-tx, per-day, and cumulative per-category-per-day. An unregistered category defaults
-  to a 0 limit — fail-closed, not fail-open.
-- **Escalation** — the agent can park a payment instead of making it; only the approver can pay it,
-  exactly once, and it's provably distinct from a direct payment.
-- **Admin** — pause (circuit breaker), approver-only withdraw, agent rotation, and a two-step approver
-  rotation (so a typo in the new address can't lock the contract).
+- **Vendor registry**: only approver-registered addresses can be paid. A wallet change means registering a new address; the old one stops working once revoked.
+- **Commit-then-pay**: `commitDecision(hash)` must land in an earlier block than the `pay()` it justifies, bound to the exact payment parameters (vendor, amount, invoice, doc, category, reasoning).
+- **Canonical idempotency key**: `invoiceKey = keccak256(vendor, invoiceNumber)`, so resubmitting a different file doesn't create a new key. `docHash` is a separate pointer emitted in the event.
+- **Limits**: per-tx, per-day, and cumulative per-category-per-day. An unregistered category has a 0 limit (fail-closed).
+- **Escalation**: the agent can park a payment; only the approver can pay it, exactly once.
+- **Admin**: pause, approver-only withdraw, agent rotation, two-step approver rotation.
 
-`reasoningHash` (proves *this decision* was logged before money moved) and the invoice-level dedupe
-key are deliberately different guarantees, kept in separate fields — conflating them would let a judge
-mistake "this invoice wasn't double-paid" for "this reasoning was verified," which are not the same
-claim.
+`reasoningHash` (this decision was logged before money moved) and the invoice key (this invoice wasn't paid twice) are deliberately separate guarantees in separate fields.
 
-One instance per business — this deployment is not multi-tenant. Onboarding a second business means
-deploying a second `BudgetEnforcer`, not reusing this address.
+One instance per business. This deployment is not multi-tenant: onboarding a second business means deploying a second `BudgetEnforcer`.
 
-**BudgetEnforcer Deployed** on **Arc Testnet** & verified. **Budget live:** 100 USDC/day, 20 USDC/tx,
-50 USDC/day in the data-oracle category.
-
-## 📋 Contracts (Arc Testnet)
+### Contracts (Arc Testnet)
 
 | Contract | Address |
 |----------|---------|
 | BudgetEnforcer | [`0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB`](https://explorer.testnet.arc.io/address/0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB) |
 | CeedeBooksYield | not built yet |
 | MilestoneEscrow | not built yet |
+
+Live budget: 100 USDC/day, 20 USDC/tx, 50 USDC/day in the data-oracle category.
+
+---
+
+## API
+
+Run with `uvicorn backend.main:app --reload`.
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /vendors`, `GET /vendors/{id}` | Register / read a vendor (wallet address validated) |
+| `POST /purchase-orders` | Create a PO (number, vendor, amount, category) |
+| `POST /receipts` | Confirm receipt of a PO. `confirmed_by_role: "agent"` is rejected (400) |
+| `POST /invoices` | Full pipeline: retry guard, three-way match, decision, commit-then-pay or escalate (confirmed on-chain before responding). Duplicate invoice numbers return 409 |
+| `GET /invoices/{id}` | Status and `reasoning_hash` |
+| `GET /decisions/{hash}` | The stored audit record, including the full reasoning text |
+| `GET /decisions/{hash}/verify` | Recomputes the SHA-256 of the stored `hash_input` and compares it to the stored hash |
+
+Today `verify` proves the stored record is internally consistent. Comparing against the on-chain event and a hash-chain link is planned (see Roadmap).
 
 ---
 
@@ -201,16 +191,16 @@ ceedebooks/
 ├── agent/
 │   ├── config.py           # env loader
 │   ├── categories.py       # spend category enum (off-chain names for on-chain uint8 keys)
-│   ├── llm.py              # openai/gpt-oss-120b escalation reasoning (Groq)
-│   ├── decision_log.py     # SHA256 audit log, hash-before-action sequencing
-│   ├── contract.py         # reads + Circle-signed writes against BudgetEnforcer
-│   ├── payables.py         # three-way match, rules-baseline decisions, commit-then-pay
+│   ├── llm.py              # openai/gpt-oss-120b escalation narrative (Groq)
+│   ├── decision_log.py     # canonical-JSON SHA-256 audit log, hash-before-action
+│   ├── contract.py         # reads + Circle-signed writes, wait_for_transaction
+│   ├── payables.py         # three-way match, rules baseline, commit-then-pay, retry guard
 │   ├── wallet_setup.py     # one-off Circle developer-controlled wallet creation
 │   └── tests/
 │       └── test_payables.py
 ├── backend/
-│   ├── main.py              # FastAPI: vendors, purchase orders, receipts, invoices, audit verify
-│   └── models.py             # SQLite schema + queries
+│   ├── main.py             # FastAPI: vendors, POs, receipts, invoices, audit verify
+│   └── models.py           # SQLite schema + queries
 ├── contracts/
 │   └── BudgetEnforcer.sol
 ├── test/
@@ -226,8 +216,8 @@ ceedebooks/
 ## Setup
 
 ```bash
-git clone https://github.com/MusaAis/ceedebooks
-cd ceedebooks
+git clone https://github.com/MusaAis/CeedeBooks
+cd CeedeBooks
 cp .env.example .env   # fill in real values
 
 pip install -r agent/requirements.txt
@@ -236,7 +226,8 @@ forge install foundry-rs/forge-std   # if not already present
 set -a; source .env; set +a
 ```
 
----
+Use the Canteen RPC (`arc-canteen rpc-url`) for `ARC_TESTNET_RPC_URL`, since testnet traction is
+counted through it.
 
 ### Circle treasury wallet
 
@@ -245,50 +236,19 @@ python agent/wallet_setup.py
 ```
 
 Reuses an already-registered Circle entity secret (don't generate a new one for an account that
-already has one — that's a rotation flow, not a fresh setup). Creates a separate wallet set + one
-Arc Testnet wallet, appends its ID/address to `.env`. Fund it at
-[faucet.circle.com](https://faucet.circle.com) (Arc Testnet).
-
----
+already has one; that's a rotation flow). Creates a wallet set and one Arc Testnet wallet and
+appends its ID and address to `.env`. Fund it at [faucet.circle.com](https://faucet.circle.com).
 
 ### Tests
 
 ```bash
 forge test -vv
-```
-
-24 tests, one per revert path / acceptance scenario: unregistered vendor, revoked vendor, over
-per-tx/daily/category limits, unset category (fail-closed), invoice resubmitted as a different file,
-missing/reused/mismatched commit, crash-and-retry (no double payment), a simulated prompt-injection
-attempt (contract refuses even if the agent were fooled), full escalate → approve/reject flow,
-escalated invoices blocked from direct payment, pause, withdraw, agent rotation, two-step approver
-rotation, and the `reasoningHash` round-trip via the `PaymentMade` event.
-
-```bash
 pytest agent/tests/
 ```
 
-11 tests covering the three-way match, rules-baseline decisions (pay/hold/escalate), and retry
-safety — reprocessing an already-paid invoice is a no-op instead of a second payment attempt.
+**24 Foundry tests**, one per revert path or acceptance scenario: unregistered and revoked vendor, over per-tx / daily / category limits, unset category (fail-closed), same invoice resubmitted as a different file, missing / reused / mismatched commit, crash-and-retry, simulated prompt injection (contract refuses even if the agent were fooled), the escalate → approve / reject flow, escalated invoices blocked from direct payment, pause, withdraw, agent rotation, two-step approver rotation, and the `reasoningHash` round-trip via the `PaymentMade` event.
 
----
-
-### Running the API
-
-```bash
-uvicorn backend.main:app --reload
-```
-
-- `POST /vendors`, `POST /purchase-orders`, `POST /receipts` — set up the records a real invoice
-  gets matched against. A receipt with `confirmed_by_role: "agent"` is rejected outright; it has to
-  come from an independent party.
-- `POST /invoices` — runs the full pipeline: three-way match → rules-baseline decision →
-  commit-then-pay or escalate.
-- `GET /invoices/{id}` — current status and `reasoning_hash` for that invoice.
-- `GET /decisions/{reasoning_hash}/verify` — the hash round-trip check as a real endpoint, not a
-  manual script: recomputes the hash from the stored record and confirms it matches.
-
----
+**11 Python tests** covering the three-way match, rules-baseline decisions (pay / hold / escalate), and retry safety (reprocessing a paid invoice is a no-op).
 
 ### Deploy
 
@@ -312,52 +272,62 @@ cast send $BUDGET_ENFORCER_ADDRESS "setBudget(uint256,uint256)" 100000000 200000
 cast send $BUDGET_ENFORCER_ADDRESS "setCategoryDailyLimit(uint8,uint256)" 0 50000000 \
   --rpc-url $ARC_TESTNET_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
 
-# Real vendor (data-provider) address:
 cast send $BUDGET_ENFORCER_ADDRESS "setVendor(address,bool)" <VENDOR_ADDRESS> true \
   --rpc-url $ARC_TESTNET_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY
 ```
 
-Amounts are USDC in its native 6-decimal ERC-20 representation (`100000000` = $100.00).
+Amounts are USDC in its 6-decimal ERC-20 form (`100000000` = $100.00).
+
+---
+
+## Changelog
+
+**Phase 2: AP/AR engine**
+- Added FastAPI intake (vendors, POs, receipts, invoices, decisions, verify)
+- Added three-way match with PO number, amount tolerance, independent receipt witness, vendor wallet match
+- Added rules-baseline pay / hold / escalate with LLM narrative on escalations only
+- Added retry guard (`paid` check on-chain before any action) and confirmed-commit-before-pay
+- Audit log now hashes canonical JSON, stores the exact `hash_input`, and records `model_used` explicitly
+- Added `wait_for_transaction`: every commit, payment, and escalation is polled to a terminal on-chain state before being trusted or recorded — closes a phantom-payment gap where a reverted transaction could have been logged as paid
+- Added input validation on wallet addresses (0x + 40 hex), a clean 409 on duplicate invoice numbers, and `GET /vendors/{id}` / `GET /decisions/{hash}` for inspecting stored records directly
+- Confirmed live on Arc Testnet: a real invoice processed end-to-end through the deployed contract, vendor balance verified on-chain
+
+**Phase 1: Foundation**
+- `BudgetEnforcer.sol` deployed and verified on Arc Testnet; 24 Foundry tests
+- Circle treasury wallet, Groq health check, Canteen RPC in `.env.example`
 
 ---
 
 ## Documented bugs & gotchas
 
-Only the ones big enough to actually cost someone real time or silently break something real.
-
 | # | Area | Symptom | Cause | Fix |
 |---|---|---|---|---|
-| 1 | `forge create` | `Constructor argument count mismatch: expected N but got N+k` | `--constructor-args` is greedy — it swallows every token after it, including later flags like `--broadcast` or `--verify` | Put `--constructor-args ...` **last** in the command |
-| 2 | verification | `Params 'module' and 'action' are required parameters` from `testnet.arcscan.app`, even with correct Etherscan-style fields | Open, unresolved upstream bug (`circlefin/arc-node#210`) — Arcscan's verify endpoint is inconsistent for fresh submissions despite being documented as Etherscan-V1-compatible | Verify against Arc's other explorer instance instead: `--verifier blockscout --verifier-url https://explorer.testnet.arc.io/api/`. Confirmed working, "exact match." |
-| 3 | Laya | Model-card numbers look production-ready; the checkpoint most people would actually reach for isn't | The base `laya` checkpoint scores **0.362 zero-shot** on typed-decisions — below even majority-class guessing (0.461). It's explicitly a base to fine-tune, not a decision engine, but that caveat is easy to miss under deadline pressure | Never gate a real decision on the base checkpoint. Fine-tune on your own labeled schema — and don't assume a workflow-specific fine-tuned checkpoint transfers to a *different* schema either; per its own model card, it doesn't |
-| 4 | Groq | A live agent's LLM calls fail silently — process stays up, only a log warning, looks fine from the outside | `groq/compound-mini` was decommissioned Sep 21, 2026, and `llama-3.3-70b-versatile` was quietly moved to Enterprise-tier-only pricing on developer keys around the same time. A wrapped try/except turned a hard failure into a silent one | Don't trust "the process is running" as a proxy for "the model calls are succeeding" — add a real health check against the exact model string. Target `openai/gpt-oss-120b` directly: live, developer-tier accessible, no orchestration wrapper needed |
-| 5 | USYC | Deposits revert / can't clear eligibility | Arc's USYC Teller has a **$100k minimum + non-US-institution allowlist** at the contract level | Route through one pooled wrapper contract (allowlisted once), track per-business shares internally — never call the Teller directly per business |
-| 6 | CCTP on Arc | Attestation stuck at "pending" forever | Arc requires `minFinalityThreshold: 2000` (finalized) — the usual `1000` (safe) value other CCTP testnets accept doesn't work here | Hardcode `2000` for any Arc CCTP call |
-| 7 | CCTP on Arc | Silent revert with no error data | Arc only supports the CCTP **V2 7-parameter** `depositForBurn` selector; V1's 4-param version is accepted by the node but reverts | Confirm your library/call uses the V2 selector explicitly |
+| 1 | `forge create` | `Constructor argument count mismatch: expected N but got N+k` | `--constructor-args` swallows every token after it, including later flags | Put `--constructor-args ...` **last** |
+| 2 | verification | `Params 'module' and 'action' are required parameters` from `testnet.arcscan.app` | Open upstream bug (`circlefin/arc-node#210`) | Verify via `--verifier blockscout --verifier-url https://explorer.testnet.arc.io/api/` |
+| 3 | Laya | Model card looks production-ready; the base checkpoint isn't | Base `laya` scores **0.362 zero-shot** on typed-decisions, below majority-class guessing (0.461) | Never gate a real decision on the base checkpoint; fine-tune on your own schema |
+| 4 | Groq | LLM calls fail silently while the process looks healthy | `groq/compound-mini` decommissioned Sep 21, 2026; `llama-3.3-70b-versatile` moved to Enterprise-only on developer keys; a try/except hid the failure | Health-check the exact model string; target `openai/gpt-oss-120b` |
+| 5 | USYC | Deposits revert / can't clear eligibility | Arc's USYC Teller has a $100k minimum + non-US-institution allowlist | Route through one pooled wrapper allowlisted once |
+| 6 | CCTP on Arc | Attestation stuck at "pending" | Arc needs `minFinalityThreshold: 2000`, not `1000` | Hardcode `2000` |
+| 7 | CCTP on Arc | Silent revert with no error data | Arc only supports the V2 7-parameter `depositForBurn` | Confirm the V2 selector explicitly |
+| 8 | Circle wallets | A payment looked successful but reverted on-chain | Circle's `contractExecution` API returns a transaction ID on *acceptance*, not on-chain confirmation — calling `pay()` right after `commitDecision()` can fire before the commit is actually mined | Poll `get_transaction` to a terminal state (`COMPLETE`/`FAILED`/`CANCELLED`) before trusting any result |
 
 ---
 
 ## Design notes for reviewers
 
-- **`invoiceKey` excludes amount on purpose.** It's derived from `(vendor, invoiceNumber)` only, so an
-  attacker can't get a second payment through by altering the amount on a resubmission.
-- **`categoryDailyLimit` defaults to 0.** An unregistered category is fail-closed, not fail-open —
-  categories must be explicitly enabled by the approver before the agent can spend in them.
-- **Escalated invoices are locked out of `pay()`.** Once `escalate()` runs for an invoice key, `pay()`
-  for that same key reverts with `"Invoice escalated"` — there's no path where the agent's escalation
-  gets silently bypassed by a later direct payment attempt.
-- **Gas and off-chain costs (LLM inference, cloud hosting) are not `pay()` categories.** Only
-  transactions that actually move USDC through this contract belong there; everything else is a
-  recorded expense in the off-chain ledger, never a phantom "paid" entry (see `decision_log.py`).
-- **A retry can't pay twice.** Before doing anything else, `payables.process_invoice()` checks the
-  contract's own `paid` mapping for that invoice's key. If a crash happened after a payment landed
-  on-chain but before the local record updated, reprocessing that invoice is a no-op, not a resend.
+- **`invoiceKey` excludes amount on purpose.** It's derived from `(vendor, invoiceNumber)` only, so altering the amount on a resubmission can't get a second payment through.
+- **`categoryDailyLimit` defaults to 0.** An unregistered category is fail-closed.
+- **Escalated invoices are locked out of `pay()`.** Once `escalate()` runs for a key, `pay()` for the same key reverts with `"Invoice escalated"`.
+- **Gas and off-chain costs (LLM inference, hosting) are not `pay()` categories.** Only transactions that move USDC through the contract belong there; the rest are off-chain ledger entries, never a phantom "paid".
+- **A retry can't pay twice.** `process_invoice()` checks the contract's own `paid` mapping first.
+- **A transaction ID isn't a result.** Every commit, payment, and escalation is confirmed to a terminal state before anything is logged as succeeded — see bug #8 above.
+- **Escalation reasons come from the rules, not the model.** A failed match is escalated with the rule that failed; the LLM is only asked to narrate vendor-registration escalations.
 
 ---
 
 ## Builder
 
-**Musa Ali** — CS student at Federal University Dutse (FUD). Builder, PenTester & Dev. Appointed
+**Musa Ali**, CS student at Federal University Dutse (FUD). Builder, PenTester & Dev. Appointed
 **Lepton Peer Mentor** by Canteen.
 
 - **3rd** place at Lepton, **Standout** at Agora with [@AgoraFX](https://github.com/MusaAis/AgoraFX)
@@ -370,4 +340,3 @@ Only the ones big enough to actually cost someone real time or silently break so
 
 MIT
 
-⭐ **Star the repo if you find it useful**
