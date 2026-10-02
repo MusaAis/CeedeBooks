@@ -67,7 +67,7 @@ If the agent gets any of this wrong (a compromised prompt, a hallucinated vendor
 
 ## Traction
 
-Everything below is checkable on-chain or in the repo. Nothing here is estimated.
+Everything below is checkable on-chain. Nothing here is estimated.
 
 | What | Evidence |
 |---|---|
