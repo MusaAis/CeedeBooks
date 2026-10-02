@@ -27,6 +27,11 @@ _READ_ABI = [
      "inputs": [{"name": "", "type": "bytes32"}], "outputs": [{"name": "", "type": "bool"}]},
 ]
 _read_contract = _w3.eth.contract(address=Web3.to_checksum_address(config.budget_enforcer_address), abi=_READ_ABI)
+_USDC_ABI = [
+    {"type": "function", "name": "balanceOf", "stateMutability": "view",
+     "inputs": [{"name": "", "type": "address"}], "outputs": [{"name": "", "type": "uint256"}]},
+]
+_usdc = _w3.eth.contract(address=Web3.to_checksum_address(config.usdc_address), abi=_USDC_ABI)
 
 
 def to_bytes32(text: str) -> bytes:
@@ -52,6 +57,11 @@ def is_vendor_approved(vendor: str) -> bool:
 
 def is_paid(invoice_key_bytes: bytes) -> bool:
     return _read_contract.functions.paid(invoice_key_bytes).call()
+
+
+def usdc_balance() -> int:
+    """USDC held by the BudgetEnforcer pool, in raw 6-decimal units."""
+    return _usdc.functions.balanceOf(Web3.to_checksum_address(config.budget_enforcer_address)).call()
 
 
 def remaining_today(category: int) -> tuple[int, int]:

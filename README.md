@@ -4,7 +4,7 @@
 ![CI](https://github.com/MusaAis/CeedeBooks/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Foundry tests](https://img.shields.io/badge/forge%20tests-24%2F24%20passing-brightgreen)
-![Python tests](https://img.shields.io/badge/pytest-11%2F11%20passing-brightgreen)
+![Python tests](https://img.shields.io/badge/pytest-51%2F51%20passing-brightgreen)
 ![Network](https://img.shields.io/badge/Arc-Testnet-informational)
 
 *"Ceede" means money in Pulaar/Fulfulde.*
@@ -72,7 +72,7 @@ Everything below is checkable on-chain. Nothing here is estimated.
 | What | Evidence |
 |---|---|
 | Contract deployed and verified on Arc Testnet | [`BudgetEnforcer`](https://explorer.testnet.arc.io/address/0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB) |
-| Test suites | 24 Foundry + 11 Python tests, run by CI on every push |
+| Test suites | 24 Foundry + 51 Python tests, run by CI on every push |
 | First self-owned vendor bill paid through the contract | `ceedebooks.xyz` registration, 2.20 USDC, category 1 |
 
 **The domain payment.** CeedeBooks' own domain was bought by card (Namecheap order 215679394, $2.00 + $0.20 ICANN fee), and the registrar cannot take USDC, so the founder was reimbursed through the contract: vendor registered with `setVendor`, category 1 given a 20 USDC/day limit, the receipt hashed into `docHash`, the reasoning hash logged off-chain first, then `commitDecision` and `pay` from the Circle agent wallet in separate blocks.
@@ -101,7 +101,7 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 - **Model output is an input, never a release condition.** Circle's own `arc-escrow` sample releases contractor funds on a bare JSON response from GPT-4o with no structural check behind it. CeedeBooks is built specifically not to repeat that pattern.
 - **Independent receipt witness.** A three-way match proves nothing if the agent can confirm its own receipts. It can't.
 - **Settlement is confirmed, not hoped for.** Circle's transaction API is asynchronous — accepting a request isn't the same as it succeeding on-chain. CeedeBooks waits for a terminal state before trusting any result, closing a real phantom-payment risk most demos never test for.
-- **Tested, not just described.** 24 Foundry tests plus 11 Python tests, both passing against the deployed contract and the live decision pipeline.
+- **Tested, not just described.** 24 Foundry tests plus 51 Python tests, both passing against the deployed contract and the live decision pipeline.
 
 ---
 
@@ -199,17 +199,24 @@ Live budget: 100 USDC/day, 20 USDC/tx, 50 USDC/day in category 0 (data oracle), 
 
 ## API
 
-Run with `uvicorn backend.main:app --reload`.
+Run with a **single worker**: `uvicorn backend.main:app` (the rate limiter is per-process).
 
-| Endpoint | Purpose |
-|---|---|
-| `POST /vendors`, `GET /vendors/{id}` | Register / read a vendor (wallet address validated) |
-| `POST /purchase-orders` | Create a PO (number, vendor, amount, category) |
-| `POST /receipts` | Confirm receipt of a PO. `confirmed_by_role: "agent"` is rejected (400) |
-| `POST /invoices` | Full pipeline: retry guard, three-way match, decision, commit-then-pay or escalate (confirmed on-chain before responding). Duplicate invoice numbers return 409 |
-| `GET /invoices/{id}` | Status and `reasoning_hash` |
-| `GET /decisions/{hash}` | The stored audit record, including the full reasoning text |
-| `GET /decisions/{hash}/verify` | Recomputes the SHA-256 of the stored `hash_input` and compares it to the stored hash |
+**Access model.** Send the key in an `X-API-Key` header. Keys are created on the server with `python3 scripts/create_api_key.py create --role buyer --label <name>` (or `--role vendor --vendor-id N`), shown once, and stored only as SHA-256 hashes. `/decisions/*` needs no key.
+
+| Endpoint | Who | Purpose |
+|---|---|---|
+| `POST /vendors` | buyer | Register a vendor (wallet address validated) |
+| `GET /vendors/{id}` | buyer; a vendor for its own record | Read a vendor |
+| `POST /purchase-orders` | buyer | Create a PO (number, vendor, amount, category). Duplicate PO numbers return 409 |
+| `POST /receipts` | buyer | Confirm delivery of a PO. The role is set by the server from the key; `confirmed_by_role` in the body is rejected (422). One receipt per PO (409) |
+| `POST /invoices` | buyer, or a vendor for its own `vendor_id` | Full pipeline: retry guard, three-way match, decision, commit-then-pay or escalate. Always pays the wallet on file; the invoice category must match the PO's; the runway is computed server-side from the pool balance and trailing spend (`treasury_runway_days` in the body is rejected). Duplicate invoice numbers return 409 |
+| `GET /invoices/{id}` | buyer; a vendor for its own invoices | Status and `reasoning_hash`. Another vendor's invoice returns 404 |
+| `GET /decisions/{hash}` | public | The stored audit record, including the full reasoning text |
+| `GET /decisions/{hash}/verify` | public | Recomputes the SHA-256 of the stored `hash_input` and compares it to the stored hash |
+
+Hardening: amounts are exact decimals (positive, at most 6 places); request bodies over `MAX_BODY_BYTES` return 413; per-IP rate limit (`RATE_LIMIT_PER_MIN`) and a stricter limit on failed keys (`FAILED_AUTH_PER_MIN`) return 429; CORS allows only `CORS_ORIGINS` (default `https://ceedebooks.xyz`). Behind Caddy set `TRUST_PROXY=1` so limits apply per real client.
+
+Limits: runway uses ledger history only (paid invoices in the last 30 days), so a fresh ledger gets the 365-day cap.
 
 Today `verify` proves the stored record is internally consistent. Comparing against the on-chain event and a hash-chain link is planned (see Roadmap).
 
@@ -228,13 +235,17 @@ ceedebooks/
 │   ├── payables.py         # three-way match, rules baseline, commit-then-pay, retry guard
 │   ├── wallet_setup.py     # one-off Circle developer-controlled wallet creation
 │   └── tests/
-│       └── test_payables.py
+│       ├── test_payables.py
+│       └── test_api_auth.py
 ├── scripts/
+│   ├── create_api_key.py   # create / revoke API keys (printed once, stored hashed)
 │   └── pay_domain.py       # one-off: manual commit-then-pay of the ceedebooks.xyz domain bill
 ├── .github/workflows/ci.yml  # forge test + pytest on every push
 ├── backend/
 │   ├── main.py             # FastAPI: vendors, POs, receipts, invoices, audit verify
-│   └── models.py           # SQLite schema + queries
+│   ├── auth.py             # API-key auth, roles, failed-key throttling
+│   ├── ratelimit.py        # in-memory sliding-window limiter
+│   └── models.py           # SQLite schema + queries (incl. api_keys)
 ├── contracts/
 │   └── BudgetEnforcer.sol
 ├── test/
@@ -279,7 +290,7 @@ pytest agent/tests/
 
 **24 Foundry tests**, one per revert path or acceptance scenario: unregistered and revoked vendor, over per-tx / daily / category limits, unset category (fail-closed), same invoice resubmitted as a different file, missing / reused / mismatched commit, crash-and-retry, simulated prompt injection (contract refuses even if the agent were fooled), the escalate → approve / reject flow, escalated invoices blocked from direct payment, pause, withdraw, agent rotation, two-step approver rotation, and the `reasoningHash` round-trip via the `PaymentMade` event.
 
-**11 Python tests** covering the three-way match, rules-baseline decisions (pay / hold / escalate), and retry safety (reprocessing a paid invoice is a no-op).
+**51 Python tests** covering the three-way match, rules-baseline decisions (pay / hold / escalate), and retry safety (reprocessing a paid invoice is a no-op).
 
 ### Deploy
 
@@ -312,6 +323,14 @@ Amounts are USDC in its 6-decimal ERC-20 form (`100000000` = $100.00).
 ---
 
 ## Changelog
+
+**v1.2.2: Phase A, API auth and safe intake**
+- `X-API-Key` authentication with `buyer` and `vendor` roles (keys stored as SHA-256 hashes), keyless read-only `/decisions/*`; `scripts/create_api_key.py` to create and revoke keys
+- Receipt role is set by the server from the key, never from the body; vendors cannot create vendors, POs or receipts, and can submit and read only their own invoices
+- Treasury runway computed server-side (`agent/treasury.py`) and removed from the request body; fails closed to 0 if the pool balance cannot be read
+- Invoice pays the wallet on file; invoice category must match the PO's
+- Exact-decimal amounts, 413 body cap, per-IP rate limit, failed-key throttle, CORS limited to the site origin, internal errors no longer returned to clients
+- New tests in `agent/tests/test_api_auth.py` covering every denied path
 
 **v1.2.1: Phase 2 follow-up**
 - Added `agent/categories.py` (the README already listed it) and registered category 1 (infrastructure) on-chain

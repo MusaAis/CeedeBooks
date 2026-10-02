@@ -10,6 +10,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+_ARC_TESTNET_USDC = "0x3600000000000000000000000000000000000000"
+
+
 def _require(name: str) -> str:
     val = os.environ.get(name)
     if not val:
@@ -62,6 +65,13 @@ class Config:
     backend_url: str
     db_path: str
 
+    # API hardening
+    max_body_bytes: int
+    rate_limit_per_min: int
+    failed_auth_per_min: int
+    cors_origins: tuple
+    trust_proxy: bool
+
     @classmethod
     def load(cls) -> "Config":
         return cls(
@@ -69,7 +79,7 @@ class Config:
             deployer_private_key=_require("DEPLOYER_PRIVATE_KEY"),
             agent_address=_optional("AGENT_ADDRESS"),
             approver_address=_optional("APPROVER_ADDRESS"),
-            usdc_address=_optional("USDC_ADDRESS"),
+            usdc_address=_optional("USDC_ADDRESS") or _ARC_TESTNET_USDC,
             budget_enforcer_address=_optional("BUDGET_ENFORCER_ADDRESS"),
             milestone_escrow_address=_optional("MILESTONE_ESCROW_ADDRESS"),
             ceedebooks_yield_address=_optional("CEEDEBOOKS_YIELD_ADDRESS"),
@@ -90,6 +100,13 @@ class Config:
             usyc_idle_threshold_days=int(_optional("USYC_IDLE_THRESHOLD_DAYS", "3")),
             backend_url=_optional("BACKEND_URL", "https://api.ceedebooks.xyz"),
             db_path=_optional("CEEDEBOOKS_DB_PATH", "./ceedebooks.db"),
+            max_body_bytes=int(_optional("MAX_BODY_BYTES") or "16384"),
+            rate_limit_per_min=int(_optional("RATE_LIMIT_PER_MIN") or "60"),
+            failed_auth_per_min=int(_optional("FAILED_AUTH_PER_MIN") or "10"),
+            cors_origins=tuple(
+                o.strip() for o in (_optional("CORS_ORIGINS") or "https://ceedebooks.xyz").split(",") if o.strip()
+            ),
+            trust_proxy=_optional("TRUST_PROXY").lower() in ("1", "true", "yes"),
         )
 
 

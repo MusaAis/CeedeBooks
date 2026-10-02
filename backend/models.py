@@ -43,6 +43,17 @@ CREATE TABLE IF NOT EXISTS invoices (
     onchain_tx_id TEXT,
     created_at REAL NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS api_keys (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key_hash TEXT NOT NULL UNIQUE,
+    role TEXT NOT NULL CHECK (role IN ('buyer', 'vendor')),
+    vendor_id INTEGER REFERENCES vendors(id),
+    label TEXT NOT NULL,
+    revoked INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL,
+    CHECK ((role = 'vendor' AND vendor_id IS NOT NULL) OR (role = 'buyer' AND vendor_id IS NULL))
+);
 """
 
 
@@ -143,3 +154,43 @@ async def get_invoice(invoice_id: int) -> Optional[aiosqlite.Row]:
         async with db.execute("SELECT * FROM invoices WHERE id = ?", (invoice_id,)) as cur:
             return await cur.fetchone()
 
+
+
+async def save_api_key(key_hash: str, role: str, vendor_id: Optional[int], label: str) -> int:
+    async with aiosqlite.connect(config.db_path) as db:
+        cur = await db.execute(
+            "INSERT INTO api_keys (key_hash, role, vendor_id, label, created_at) VALUES (?, ?, ?, ?, ?)",
+            (key_hash, role, vendor_id, label, time.time()),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def get_api_key_by_hash(key_hash: str) -> Optional[aiosqlite.Row]:
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM api_keys WHERE key_hash = ?", (key_hash,)) as cur:
+            return await cur.fetchone()
+
+
+async def revoke_api_key(key_id: int) -> bool:
+    async with aiosqlite.connect(config.db_path) as db:
+        cur = await db.execute("UPDATE api_keys SET revoked = 1 WHERE id = ?", (key_id,))
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def paid_total_since(since_ts: float) -> float:
+    """Total USDC of invoices with status 'paid' created at or after since_ts."""
+    async with aiosqlite.connect(config.db_path) as db:
+        async with db.execute(
+            "SELECT COALESCE(SUM(amount_usdc), 0) FROM invoices WHERE status = 'paid' AND created_at >= ?", (since_ts,)
+        ) as cur:
+            return float((await cur.fetchone())[0])
+
+
+async def get_purchase_order_by_id(po_id: int) -> Optional[aiosqlite.Row]:
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM purchase_orders WHERE id = ?", (po_id,)) as cur:
+            return await cur.fetchone()
