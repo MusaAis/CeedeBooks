@@ -13,7 +13,7 @@ An autonomous financial-operations agent for African SMEs on Arc: pays invoices,
 
 Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 – Oct 10, 2026.
 
-**Current: Phase 2, AP/AR engine built and confirmed live on Arc Testnet.** See [Roadmap](#roadmap) and the [Changelog](#changelog).
+**Current: Phase 2 plus API hardening (v1.2.3): AP/AR engine confirmed live on Arc Testnet; the API is key-authenticated and served over HTTPS at `api.ceedebooks.xyz`.** See [Roadmap](#roadmap) and the [Changelog](#changelog).
 
 ---
 
@@ -214,7 +214,9 @@ Run with a **single worker**: `uvicorn backend.main:app` (the rate limiter is pe
 | `GET /decisions/{hash}` | public | The stored audit record, including the full reasoning text |
 | `GET /decisions/{hash}/verify` | public | Recomputes the SHA-256 of the stored `hash_input` and compares it to the stored hash |
 
-Hardening: amounts are exact decimals (positive, at most 6 places); request bodies over `MAX_BODY_BYTES` return 413; per-IP rate limit (`RATE_LIMIT_PER_MIN`) and a stricter limit on failed keys (`FAILED_AUTH_PER_MIN`) return 429; CORS allows only `CORS_ORIGINS` (default `https://ceedebooks.xyz`). Behind Caddy set `TRUST_PROXY=1` so limits apply per real client.
+Hardening: amounts are exact decimals (positive, at most 6 places); request bodies over `MAX_BODY_BYTES` return 413; per-IP rate limit (`RATE_LIMIT_PER_MIN`) and a stricter limit on failed keys (`FAILED_AUTH_PER_MIN`) return 429; CORS allows only `CORS_ORIGINS` (default `https://ceedebooks.xyz`). Behind a reverse proxy set `TRUST_PROXY=1` so limits apply per real client.
+
+Deploy steps (nginx + certbot + systemd): [deploy/DEPLOY.md](deploy/DEPLOY.md).
 
 Limits: runway uses ledger history only (paid invoices in the last 30 days), so a fresh ledger gets the 365-day cap.
 
@@ -290,7 +292,7 @@ pytest agent/tests/
 
 **24 Foundry tests**, one per revert path or acceptance scenario: unregistered and revoked vendor, over per-tx / daily / category limits, unset category (fail-closed), same invoice resubmitted as a different file, missing / reused / mismatched commit, crash-and-retry, simulated prompt injection (contract refuses even if the agent were fooled), the escalate → approve / reject flow, escalated invoices blocked from direct payment, pause, withdraw, agent rotation, two-step approver rotation, and the `reasoningHash` round-trip via the `PaymentMade` event.
 
-**51 Python tests** covering the three-way match, rules-baseline decisions (pay / hold / escalate), and retry safety (reprocessing a paid invoice is a no-op).
+**51 Python tests** covering the three-way match, rules-baseline decisions (pay / hold / escalate), retry safety (reprocessing a paid invoice is a no-op), API access control (every denied path), server-side runway, and input validation.
 
 ### Deploy
 
@@ -323,6 +325,10 @@ Amounts are USDC in its 6-decimal ERC-20 form (`100000000` = $100.00).
 ---
 
 ## Changelog
+
+**v1.2.3: Phase B, deployment**
+- Added `deploy/` (nginx site config, systemd unit, DEPLOY.md): API behind nginx with a Let's Encrypt certificate at `api.ceedebooks.xyz`, one uvicorn worker under systemd, `TRUST_PROXY=1`
+- README status line and test description brought up to date
 
 **v1.2.2: Phase A, API auth and safe intake**
 - `X-API-Key` authentication with `buyer` and `vendor` roles (keys stored as SHA-256 hashes), keyless read-only `/decisions/*`; `scripts/create_api_key.py` to create and revoke keys

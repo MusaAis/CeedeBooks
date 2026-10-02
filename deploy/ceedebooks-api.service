@@ -1,0 +1,19 @@
+# /etc/systemd/system/ceedebooks-api.service
+# One worker only: the rate limiters are per process. Secrets stay in ~/ceedebooks/.env (loaded by the app), not here.
+[Unit]
+Description=CeedeBooks API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/ceedebooks
+Environment=TRUST_PROXY=1
+ExecStart=/usr/bin/python3 -m uvicorn backend.main:app --host 127.0.0.1 --port 8004 --workers 1 --no-server-header
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
