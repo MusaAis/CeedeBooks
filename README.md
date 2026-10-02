@@ -1,5 +1,6 @@
 # CeedeBooks
 
+![Release](https://img.shields.io/github/v/release/MusaAis/CeedeBooks?label=release)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Foundry tests](https://img.shields.io/badge/forge%20tests-24%2F24%20passing-brightgreen)
 ![Python tests](https://img.shields.io/badge/pytest-11%2F11%20passing-brightgreen)
@@ -226,8 +227,7 @@ forge install foundry-rs/forge-std   # if not already present
 set -a; source .env; set +a
 ```
 
-Use the Canteen RPC (`arc-canteen rpc-url`) for `ARC_TESTNET_RPC_URL`, since testnet traction is
-counted through it.
+Use the Canteen RPC (`arc-canteen rpc-url`) for `ARC_TESTNET_RPC_URL`, since testnet traction is counted through it.
 
 ### Circle treasury wallet
 
@@ -235,9 +235,7 @@ counted through it.
 python agent/wallet_setup.py
 ```
 
-Reuses an already-registered Circle entity secret (don't generate a new one for an account that
-already has one; that's a rotation flow). Creates a wallet set and one Arc Testnet wallet and
-appends its ID and address to `.env`. Fund it at [faucet.circle.com](https://faucet.circle.com).
+Reuses an already-registered Circle entity secret (don't generate a new one for an account that already has one; that's a rotation flow). Creates a wallet set and one Arc Testnet wallet and appends its ID and address to `.env`. Fund it at [faucet.circle.com](https://faucet.circle.com).
 
 ### Tests
 
@@ -339,4 +337,3 @@ Amounts are USDC in its 6-decimal ERC-20 form (`100000000` = $100.00).
 ## License
 
 MIT
-
