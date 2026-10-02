@@ -14,6 +14,11 @@ def _db(tmp_path, monkeypatch):
     asyncio.run(models.init_db())
 
 
+@pytest.fixture(autouse=True)
+def _no_circle_polling(monkeypatch):
+    monkeypatch.setattr(payables.contract, "wait_for_transaction", lambda *a, **k: None)
+
+
 async def _seed(receipt_role="ops_manager", wallet="0xVENDOR"):
     vendor_id = await models.save_vendor("Test Vendor", wallet)
     po_id = await models.save_purchase_order("PO-1", vendor_id, 10.0, 0)

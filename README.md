@@ -1,6 +1,7 @@
 # CeedeBooks
 
 ![Release](https://img.shields.io/github/v/release/MusaAis/CeedeBooks?label=release)
+![CI](https://github.com/MusaAis/CeedeBooks/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Foundry tests](https://img.shields.io/badge/forge%20tests-24%2F24%20passing-brightgreen)
 ![Python tests](https://img.shields.io/badge/pytest-11%2F11%20passing-brightgreen)
@@ -61,6 +62,35 @@ It isn't "an LLM with a wallet." The agent proposes; a smart contract, not a pro
 8. The Circle transaction ID is stored against the decision. Anyone can pull the record, recompute the hash from the stored serialization, and compare it to the `PaymentMade` event for that transaction.
 
 If the agent gets any of this wrong (a compromised prompt, a hallucinated vendor, a miscalibrated model), the contract doesn't know or care why the request was wrong. It just refuses.
+
+---
+
+## Traction
+
+Everything below is checkable on-chain or in the repo. Nothing here is estimated.
+
+| What | Evidence |
+|---|---|
+| Contract deployed and verified on Arc Testnet | [`BudgetEnforcer`](https://explorer.testnet.arc.io/address/0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB) |
+| Test suites | 24 Foundry + 11 Python tests, run by CI on every push |
+| First self-owned vendor bill paid through the contract | `ceedebooks.xyz` registration, 2.20 USDC, category 1 |
+
+**The domain payment.** CeedeBooks' own domain was bought by card (Namecheap order 215679394, $2.00 + $0.20 ICANN fee), and the registrar cannot take USDC, so the founder was reimbursed through the contract: vendor registered with `setVendor`, category 1 given a 20 USDC/day limit, the receipt hashed into `docHash`, the reasoning hash logged off-chain first, then `commitDecision` and `pay` from the Circle agent wallet in separate blocks.
+
+- Payment transaction: [`0x8c176242...ce5d0d`](https://explorer.testnet.arc.io/tx/0x8c176242a84235a884d5790edf4a9aed403d87619359373e11f2e27141ce5d0d)
+- `reasoning_hash`: `46f65d7786a368e6e0814c938b8af9a7f6bed20bb1196478ac0a32708fa6f14a`
+- Script: [`scripts/pay_domain.py`](scripts/pay_domain.py)
+
+This was run by hand through the same two-call sequence the agent uses, labelled `manual` in the audit log. It is not an autonomous agent decision, and it is testnet USDC, which has no market value.
+
+### Spend categories
+
+| Key | Name | Daily limit |
+|---|---|---|
+| 0 | Data oracle | 50 USDC |
+| 1 | Infrastructure (domains, hosting, SaaS) | 20 USDC |
+
+An unregistered category has a limit of 0, so the contract refuses it. Names live off-chain in `agent/categories.py`.
 
 ---
 
@@ -163,7 +193,7 @@ One instance per business. This deployment is not multi-tenant: onboarding a sec
 | CeedeBooksYield | not built yet |
 | MilestoneEscrow | not built yet |
 
-Live budget: 100 USDC/day, 20 USDC/tx, 50 USDC/day in the data-oracle category.
+Live budget: 100 USDC/day, 20 USDC/tx, 50 USDC/day in category 0 (data oracle), 20 USDC/day in category 1 (infrastructure).
 
 ---
 
@@ -199,6 +229,9 @@ ceedebooks/
 │   ├── wallet_setup.py     # one-off Circle developer-controlled wallet creation
 │   └── tests/
 │       └── test_payables.py
+├── scripts/
+│   └── pay_domain.py       # one-off: manual commit-then-pay of the ceedebooks.xyz domain bill
+├── .github/workflows/ci.yml  # forge test + pytest on every push
 ├── backend/
 │   ├── main.py             # FastAPI: vendors, POs, receipts, invoices, audit verify
 │   └── models.py           # SQLite schema + queries
@@ -279,6 +312,13 @@ Amounts are USDC in its 6-decimal ERC-20 form (`100000000` = $100.00).
 ---
 
 ## Changelog
+
+**v1.2.1: Phase 2 follow-up**
+- Added `agent/categories.py` (the README already listed it) and registered category 1 (infrastructure) on-chain
+- Added `.github/workflows/ci.yml`: `forge test` and `pytest` on every push, plus a CI badge
+- Pinned `agent/requirements.txt` to exact versions
+- Tests no longer poll Circle: `wait_for_transaction` is mocked, so the suite runs offline and with newer Circle SDK versions
+- Added a Traction section and `scripts/pay_domain.py`; first self-owned vendor bill (the `ceedebooks.xyz` domain) paid through `BudgetEnforcer`
 
 **Phase 2: AP/AR engine**
 - Added FastAPI intake (vendors, POs, receipts, invoices, decisions, verify)

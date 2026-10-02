@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  foundry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Install forge-std
+        run: git clone --depth 1 https://github.com/foundry-rs/forge-std lib/forge-std
+      - name: forge test
+        run: forge test -vv
+
+  python:
+    runs-on: ubuntu-latest
+    env:
+      ARC_TESTNET_RPC_URL: http://localhost:8545
+      DEPLOYER_PRIVATE_KEY: "0x01"
+      GROQ_API_KEY: ci-placeholder
+      BUDGET_ENFORCER_ADDRESS: "0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB"
+      CIRCLE_API_KEY: ci-placeholder
+      CIRCLE_ENTITY_SECRET: ci-placeholder
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: agent/requirements.txt
+      - run: pip install -r agent/requirements.txt
+      - run: python -m pytest agent/tests -q
