@@ -4,7 +4,7 @@
 ![CI](https://github.com/MusaAis/CeedeBooks/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Foundry tests](https://img.shields.io/badge/forge%20tests-24%2F24%20passing-brightgreen)
-![Python tests](https://img.shields.io/badge/pytest-62%2F62%20passing-brightgreen)
+![Python tests](https://img.shields.io/badge/pytest-79%2F79%20passing-brightgreen)
 ![Network](https://img.shields.io/badge/Arc-Testnet-informational)
 
 *"Ceede" means money in Pulaar/Fulfulde.*
@@ -13,7 +13,7 @@ An autonomous financial-operations agent for African SMEs on Arc: pays invoices,
 
 Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 – Oct 10, 2026.
 
-**Current: Phase 2 plus API hardening (v1.2.3): AP/AR engine confirmed live on Arc Testnet; the API is key-authenticated and served over HTTPS at `api.ceedebooks.xyz`.** See [Roadmap](#roadmap) and the [Changelog](#changelog).
+**Current: Phase 2 plus API hardening, the public proof page and invoice pre-flight (v1.2.6): AP/AR engine confirmed live on Arc Testnet; the API is key-authenticated and served over HTTPS at `api.ceedebooks.xyz`.** See [Roadmap](#roadmap) and the [Changelog](#changelog).
 
 ---
 
@@ -72,7 +72,7 @@ Everything below is checkable on-chain. Nothing here is estimated.
 | What | Evidence |
 |---|---|
 | Contract deployed and verified on Arc Testnet | [`BudgetEnforcer`](https://explorer.testnet.arc.io/address/0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB) |
-| Test suites | 24 Foundry + 62 Python tests, run by CI on every push |
+| Test suites | 24 Foundry + 79 Python tests, run by CI on every push |
 | First self-owned vendor bill paid through the contract | `ceedebooks.xyz` registration, 2.20 USDC, category 1 |
 
 **The domain payment.** CeedeBooks' own domain was bought by card (Namecheap order 215679394, $2.00 + $0.20 ICANN fee), and the registrar cannot take USDC, so the founder was reimbursed through the contract: vendor registered with `setVendor`, category 1 given a 20 USDC/day limit, the receipt hashed into `docHash`, the reasoning hash logged off-chain first, then `commitDecision` and `pay` from the Circle agent wallet in separate blocks.
@@ -81,7 +81,7 @@ Everything below is checkable on-chain. Nothing here is estimated.
 - `reasoning_hash`: `46f65d7786a368e6e0814c938b8af9a7f6bed20bb1196478ac0a32708fa6f14a`
 - Script: [`scripts/pay_domain.py`](scripts/pay_domain.py)
 
-This was run by hand through the same two-call sequence the agent uses, labelled `manual` in the audit log. It is not an autonomous agent decision, and it is testnet USDC, which has no market value.
+This was run by hand through the same two-call sequence the agent uses, labelled `manual` in the audit log. It is not an autonomous agent decision. The cost itself was real: the domain was paid by card and reimbursed through the contract.
 
 ### Spend categories
 
@@ -101,7 +101,7 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 - **Model output is an input, never a release condition.** Circle's own `arc-escrow` sample releases contractor funds on a bare JSON response from GPT-4o with no structural check behind it. CeedeBooks is built specifically not to repeat that pattern.
 - **Independent receipt witness.** A three-way match proves nothing if the agent can confirm its own receipts. It can't.
 - **Settlement is confirmed, not hoped for.** Circle's transaction API is asynchronous — accepting a request isn't the same as it succeeding on-chain. CeedeBooks waits for a terminal state before trusting any result, closing a real phantom-payment risk most demos never test for.
-- **Tested, not just described.** 24 Foundry tests plus 62 Python tests, both passing against the deployed contract and the live decision pipeline.
+- **Tested, not just described.** 24 Foundry tests plus 79 Python tests, both passing against the deployed contract and the live decision pipeline.
 
 ---
 
@@ -242,7 +242,9 @@ ceedebooks/
 │   ├── wallet_setup.py     # one-off Circle developer-controlled wallet creation
 │   └── tests/
 │       ├── test_payables.py
-│       └── test_api_auth.py
+│       ├── test_api_auth.py
+│       ├── test_audit_public.py
+│       └── test_preflight.py
 ├── scripts/
 │   ├── create_api_key.py   # create / revoke API keys (printed once, stored hashed)
 │   └── pay_domain.py       # one-off: manual commit-then-pay of the ceedebooks.xyz domain bill
@@ -296,7 +298,7 @@ pytest agent/tests/
 
 **24 Foundry tests**, one per revert path or acceptance scenario: unregistered and revoked vendor, over per-tx / daily / category limits, unset category (fail-closed), same invoice resubmitted as a different file, missing / reused / mismatched commit, crash-and-retry, simulated prompt injection (contract refuses even if the agent were fooled), the escalate → approve / reject flow, escalated invoices blocked from direct payment, pause, withdraw, agent rotation, two-step approver rotation, and the `reasoningHash` round-trip via the `PaymentMade` event.
 
-**62 Python tests** covering the three-way match, rules-baseline decisions (pay / hold / escalate), retry safety (reprocessing a paid invoice is a no-op), API access control (every denied path), server-side runway, and input validation.
+**79 Python tests** covering the three-way match, rules-baseline decisions (pay / hold / escalate), retry safety (reprocessing a paid invoice is a no-op), API access control (every denied path), server-side runway, input validation, the public audit endpoints and on-chain verification, and the invoice pre-flight dry run (it writes nothing and reveals no balances or limits). A separate browser-side test (`site/verify.test.js`) checks the proof page's hash recomputation.
 
 ### Deploy
 
@@ -329,6 +331,11 @@ Amounts are USDC in its 6-decimal ERC-20 form (`100000000` = $100.00).
 ---
 
 ## Changelog
+
+**v1.2.5.1: proof page wording and README**
+- The ceedebooks.xyz domain payment is now presented as what it is: a real bill, paid by card and reimbursed through `BudgetEnforcer`, run by hand and shown apart from the agent's decisions
+- Fewer repeated network caveats on the proof page; fixed a typo in its "does not prove" list
+- README test counts, project tree and status line brought up to date (79 Python tests)
 
 **v1.2.5: invoice pre-flight and agent manifest**
 - `POST /invoices/preflight`: a dry run of the payment pipeline that tells a vendor (or the buyer) whether an invoice would be paid, held or escalated, and why, before anything is saved or sent on-chain. It also flags an invoice that would exceed today's budget, which the contract would otherwise refuse at payment time

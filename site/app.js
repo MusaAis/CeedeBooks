@@ -149,8 +149,8 @@
       [s.paid, s.held, s.escalated].forEach(function (n, i) { segs[i].style.width = total ? (100 * n / total) + "%" : "0%"; });
       var note = total === 0
         ? "No agent decisions yet. The first one will appear here."
-        : "Of " + total + " decisions, the agent refused " + s.refused + ". A refusal is a decision the agent made not to pay. All of them so far come from the builder's own test invoices on testnet.";
-      if (s.manual_paid > 0) note += " One manual payment (" + usdc(s.manual_paid_usdc) + ") is labelled manual in the audit log and not counted here.";
+        : "Of " + total + " decisions, the agent refused " + s.refused + ". A refusal is a decision the agent made not to pay. All of them so far come from the builder's own invoices.";
+      if (s.manual_paid > 0) note += " " + (s.manual_paid === 1 ? "One payment" : s.manual_paid + " payments") + " (" + usdc(s.manual_paid_usdc) + ") run by hand through the contract " + (s.manual_paid === 1 ? "is" : "are") + " shown apart from the agent's decisions.";
       $("stats-note").textContent = note;
     } catch (e) {
       $("stats-note").textContent = "The live counts could not be loaded just now.";
