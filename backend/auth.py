@@ -16,7 +16,7 @@ from typing import Optional
 from fastapi import Depends, Header, HTTPException, Request
 
 from agent.config import config
-from backend import models
+from backend import admin_auth, models
 from backend.ratelimit import RateLimiter
 
 BUYER = "buyer"
@@ -52,12 +52,26 @@ class Principal:
     role: str
     vendor_id: Optional[int]
     label: str
+    admin_address: Optional[str] = None  # set only for a wallet-signed admin session
 
 
-async def authenticate(request: Request, x_api_key: Optional[str] = Header(default=None)) -> Principal:
+async def authenticate(
+    request: Request,
+    x_api_key: Optional[str] = Header(default=None),
+    authorization: Optional[str] = Header(default=None),
+) -> Principal:
     ip = client_ip(request)
     if failed_auth_limiter.blocked(ip, config.failed_auth_per_min, 60.0):
         raise HTTPException(429, "Too many failed attempts; try again later", headers={"Retry-After": "60"})
+
+    if authorization is not None:  # wallet-signed admin session: acts as the buyer, plus the /admin routes
+        token = authorization[7:].strip() if authorization[:7].lower() == "bearer " else ""
+        session = await admin_auth.validate_token(token) if 0 < len(token) <= _MAX_KEY_LEN else None
+        if session is None:
+            failed_auth_limiter.allow(ip, config.failed_auth_per_min, 60.0)
+            raise HTTPException(401, "Admin session missing, expired or no longer valid")
+        return Principal(key_id=0, role=BUYER, vendor_id=None, label="admin:" + session["address"], admin_address=session["address"])
+
 
     row = None
     if x_api_key and len(x_api_key) <= _MAX_KEY_LEN:
@@ -77,3 +91,10 @@ def require(*roles: str):
         return principal
 
     return dependency
+
+
+async def require_admin(principal: Principal = Depends(authenticate)) -> Principal:
+    """Only a wallet-signed admin session. A buyer API key is not enough for the /admin routes."""
+    if principal.admin_address is None:
+        raise HTTPException(403, "Admin wallet session required")
+    return principal

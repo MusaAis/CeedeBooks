@@ -23,3 +23,23 @@ Notes: `TRUST_PROXY=1` is set in the unit so rate limits apply per real client (
 6. After the API restarts on v1.3.0 the audit table gains a `chain_tx_hash` column automatically. Backfill the domain payment once:
    `python3 -c "import sqlite3,os; c=sqlite3.connect(os.environ.get('CEEDEBOOKS_DB_PATH','./ceedebooks.db')); c.execute(\"UPDATE audit_log SET chain_tx_hash='0x8c176242a84235a884d5790edf4a9aed403d87619359373e11f2e27141ce5d0d' WHERE reasoning_hash='46f65d7786a368e6e0814c938b8af9a7f6bed20bb1196478ac0a32708fa6f14a'\"); c.commit(); print(c.total_changes)"`
    It should print `1`.
+
+## Admin site at admin.ceedebooks.xyz
+
+Sign-in is a wallet signature from whoever `approver()` returns on the contract. There are no passwords or API keys to hand out.
+
+1. DNS: add an `A` record, host `admin`, value = the server's public IPv4.
+2. Files: `sudo mkdir -p /var/www/ceedebooks-admin && sudo cp admin/index.html admin/admin.css admin/wallet.js admin/admin.js /var/www/ceedebooks-admin/` (re-run after any change to `admin/`).
+3. nginx: `sudo cp deploy/nginx-admin.conf /etc/nginx/sites-available/ceedebooks-admin && sudo ln -s /etc/nginx/sites-available/ceedebooks-admin /etc/nginx/sites-enabled/ && sudo nginx -t && sudo systemctl reload nginx`
+4. HTTPS: `sudo certbot --nginx -d admin.ceedebooks.xyz`
+5. Restart the API once so CORS includes the admin origin (it is the default; set `ADMIN_ORIGIN` only to change it): `sudo systemctl restart ceedebooks-api`.
+6. Open the site in a wallet app's browser (MetaMask mobile) or a browser with the MetaMask or Rabby extension.
+
+### Moving the approver to a wallet that lives only in your wallet app
+
+The approver was the deployer key in the server `.env`. Rotate it so a server breach cannot be an admin breach. Each step is an on-chain transaction: run it only after reading it.
+1. Fund the new wallet with a little USDC for gas (plain transfer from the old key).
+2. `proposeApprover(<new wallet>)` from the old key (`cast send`).
+3. Open the admin site with the new wallet: it shows **Accept admin role**. One transaction later it is the approver.
+4. Check with `cast call <BudgetEnforcer> "approver()(address)"`.
+Keep the new wallet's seed phrase offline. If the approver wallet is lost, nobody can approve vendors or change limits.

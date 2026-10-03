@@ -4,7 +4,7 @@
 ![CI](https://github.com/MusaAis/CeedeBooks/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Foundry tests](https://img.shields.io/badge/forge%20tests-24%2F24%20passing-brightgreen)
-![Python tests](https://img.shields.io/badge/pytest-79%2F79%20passing-brightgreen)
+![Python tests](https://img.shields.io/badge/pytest-108%2F108%20passing-brightgreen)
 ![Network](https://img.shields.io/badge/Arc-Testnet-informational)
 
 *"Ceede" means money in Pulaar/Fulfulde.*
@@ -13,7 +13,7 @@ An autonomous financial-operations agent for African SMEs on Arc: pays invoices,
 
 Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 – Oct 10, 2026.
 
-**Current: Phase 2 plus API hardening, the public proof page and invoice pre-flight (v1.2.5.1): AP/AR engine confirmed live on Arc Testnet; the API is key-authenticated and served over HTTPS at `api.ceedebooks.xyz`.** See [Roadmap](#roadmap) and the [Changelog](#changelog).
+**Current: Phase 2 plus API hardening, the public proof page, invoice pre-flight and the wallet-signed admin site (v1.2.6): AP/AR engine confirmed live on Arc Testnet; the API is key-authenticated and served over HTTPS at `api.ceedebooks.xyz`.** See [Roadmap](#roadmap) and the [Changelog](#changelog).
 
 ---
 
@@ -72,7 +72,7 @@ Everything below is checkable on-chain. Nothing here is estimated.
 | What | Evidence |
 |---|---|
 | Contract deployed and verified on Arc Testnet | [`BudgetEnforcer`](https://explorer.testnet.arc.io/address/0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB) |
-| Test suites | 24 Foundry + 79 Python tests, run by CI on every push |
+| Test suites | 24 Foundry + 108 Python tests + browser-side JS tests, run by CI on every push |
 | First self-owned vendor bill paid through the contract | `ceedebooks.xyz` registration, 2.20 USDC, category 1 |
 
 **The domain payment.** CeedeBooks' own domain was bought by card (Namecheap order 215679394, $2.00 + $0.20 ICANN fee), and the registrar cannot take USDC, so the founder was reimbursed through the contract: vendor registered with `setVendor`, category 1 given a 20 USDC/day limit, the receipt hashed into `docHash`, the reasoning hash logged off-chain first, then `commitDecision` and `pay` from the Circle agent wallet in separate blocks.
@@ -101,7 +101,7 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 - **Model output is an input, never a release condition.** Circle's own `arc-escrow` sample releases contractor funds on a bare JSON response from GPT-4o with no structural check behind it. CeedeBooks is built specifically not to repeat that pattern.
 - **Independent receipt witness.** A three-way match proves nothing if the agent can confirm its own receipts. It can't.
 - **Settlement is confirmed, not hoped for.** Circle's transaction API is asynchronous — accepting a request isn't the same as it succeeding on-chain. CeedeBooks waits for a terminal state before trusting any result, closing a real phantom-payment risk most demos never test for.
-- **Tested, not just described.** 24 Foundry tests plus 79 Python tests, both passing against the deployed contract and the live decision pipeline.
+- **Tested, not just described.** 24 Foundry tests plus 108 Python tests, both passing against the deployed contract and the live decision pipeline.
 
 ---
 
@@ -212,6 +212,9 @@ Run with a **single worker**: `uvicorn backend.main:app` (the rate limiter is pe
 | `POST /invoices` | buyer, or a vendor for its own `vendor_id` | Full pipeline: retry guard, three-way match, decision, commit-then-pay or escalate. Always pays the wallet on file; the invoice category must match the PO's; the runway is computed server-side from the pool balance and trailing spend (`treasury_runway_days` in the body is rejected). Duplicate invoice numbers return 409 |
 | `GET /invoices/{id}` | buyer; a vendor for its own invoices | Status and `reasoning_hash`. Another vendor's invoice returns 404 |
 | `POST /invoices/preflight` | buyer, or a vendor for its own `vendor_id` | Dry run of `POST /invoices`: returns `would_pay`, `would_hold`, `would_escalate`, `would_be_refused_by_contract` or `already_paid`, with every check and the reasons. Writes nothing (no invoice row, no audit row, no chain transaction) and returns only booleans, never balances or limits |
+| `GET /admin/auth/state`, `POST /admin/auth/challenge`, `POST /admin/auth/verify` | public | Wallet sign-in for the admin site: a one-time challenge is signed with the wallet and accepted only if it recovers to the contract's current `approver()`. Challenge requests are rate-limited; failures count toward the failed-auth throttle |
+| `GET /admin/overview`, `/admin/vendors`, `/admin/purchase-orders`, `/admin/invoices`, `/admin/actions`, `/admin/invoices/{id}/escalation` | admin session | Admin dashboard data. A buyer API key is refused (403); no session is a 401 |
+| `POST /admin/actions` | admin session | Records an on-chain admin transaction after the wallet sent it. The server checks the chain itself (to the contract, from the admin, successful); settling an escalation also needs the on-chain event to carry that invoice's own reasoning hash |
 | `GET /.well-known/agent.json` | public | Machine-readable manifest: the vendor flow step by step, endpoints with their roles, and the guarantees, so another agent can discover how to invoice CeedeBooks |
 | `GET /decisions/{hash}` | public | The stored audit record, including the full reasoning text |
 | `GET /decisions/{hash}/verify` | public | Recomputes the SHA-256 of the stored `hash_input`, and (`onchain`) checks that the same hash is in a BudgetEnforcer event of the recorded transaction |
@@ -220,7 +223,7 @@ Run with a **single worker**: `uvicorn backend.main:app` (the rate limiter is pe
 
 Hardening: amounts are exact decimals (positive, at most 6 places); request bodies over `MAX_BODY_BYTES` return 413; per-IP rate limit (`RATE_LIMIT_PER_MIN`) and a stricter limit on failed keys (`FAILED_AUTH_PER_MIN`) return 429; CORS allows only `CORS_ORIGINS` (default `https://ceedebooks.xyz`). Behind a reverse proxy set `TRUST_PROXY=1` so limits apply per real client.
 
-Deploy steps (nginx + certbot + systemd): [deploy/DEPLOY.md](deploy/DEPLOY.md).
+Deploy steps (nginx + certbot + systemd, and the admin site): [deploy/DEPLOY.md](deploy/DEPLOY.md).
 
 Limits: runway uses ledger history only (paid invoices in the last 30 days), so a fresh ledger gets the 365-day cap.
 
@@ -244,7 +247,8 @@ ceedebooks/
 │       ├── test_payables.py
 │       ├── test_api_auth.py
 │       ├── test_audit_public.py
-│       └── test_preflight.py
+│       ├── test_preflight.py
+│       └── test_admin.py
 ├── scripts/
 │   ├── create_api_key.py   # create / revoke API keys (printed once, stored hashed)
 │   └── pay_domain.py       # one-off: manual commit-then-pay of the ceedebooks.xyz domain bill
@@ -253,7 +257,9 @@ ceedebooks/
 │   ├── main.py             # FastAPI: vendors, POs, receipts, invoices, audit verify
 │   ├── auth.py             # API-key auth, roles, failed-key throttling
 │   ├── ratelimit.py        # in-memory sliding-window limiter
+│   ├── admin_auth.py       # wallet sign-in for the admin site (session bound to the on-chain approver)
 │   └── models.py           # SQLite schema + queries (incl. api_keys)
+├── admin/                  # admin site: static app, wallet call encoding, Node tests
 ├── contracts/
 │   └── BudgetEnforcer.sol
 ├── test/
@@ -298,7 +304,7 @@ pytest agent/tests/
 
 **24 Foundry tests**, one per revert path or acceptance scenario: unregistered and revoked vendor, over per-tx / daily / category limits, unset category (fail-closed), same invoice resubmitted as a different file, missing / reused / mismatched commit, crash-and-retry, simulated prompt injection (contract refuses even if the agent were fooled), the escalate → approve / reject flow, escalated invoices blocked from direct payment, pause, withdraw, agent rotation, two-step approver rotation, and the `reasoningHash` round-trip via the `PaymentMade` event.
 
-**79 Python tests** covering the three-way match, rules-baseline decisions (pay / hold / escalate), retry safety (reprocessing a paid invoice is a no-op), API access control (every denied path), server-side runway, input validation, the public audit endpoints and on-chain verification, and the invoice pre-flight dry run (it writes nothing and reveals no balances or limits). A separate browser-side test (`site/verify.test.js`) checks the proof page's hash recomputation.
+**108 Python tests** covering the three-way match, rules-baseline decisions (pay / hold / escalate), retry safety (reprocessing a paid invoice is a no-op), API access control (every denied path), server-side runway, input validation, the public audit endpoints and on-chain verification, the invoice pre-flight dry run (it writes nothing and reveals no balances or limits), and the admin wallet sign-in and routes. Browser-side tests check the proof page's hash recomputation (`site/verify.test.js`) and the admin app's call encoding and rendering (`admin/*.test.js`).
 
 ### Deploy
 
@@ -331,6 +337,14 @@ Amounts are USDC in its 6-decimal ERC-20 form (`100000000` = $100.00).
 ---
 
 ## Changelog
+
+**v1.2.6: Phase K1, admin site**
+- `admin.ceedebooks.xyz`: a private admin app. Before a wallet connects it shows only a Connect wallet button; every action after sign-in is a wallet signature, and the admin never types an API key
+- Admin identity is the contract itself: the `/admin` API accepts a session only if its signature recovers to the current on-chain `approver()`, and a session ends the moment the approver changes (or the chain cannot be read). One-time challenges, 15-minute idle and 2-hour absolute session limits, tokens held in browser memory only
+- Admin actions: add and approve or revoke vendors on-chain, create purchase orders, confirm receipts, approve or reject escalated payments, set category limits, pause and resume payments, view the activity log. On-chain steps are signed in the admin's own wallet; the server then verifies each transaction on-chain before recording it
+- A wallet proposed with `proposeApprover` can take over with one **Accept admin role** button, so the approver key can leave the server
+- `agent/contract.py` reads `approver`, `pendingApprover`, `paused` and the limits; new `admin_actions` table; CORS allows the admin origin and the `Authorization` header
+- Tests: wrong signer, non-approver, replayed and expired challenges, approver rotated mid-session, unreadable chain, every admin route without a session, a buyer API key on admin routes, transaction verification and escalation settling (Python); call encoding and the sign-in and approval flows with a mocked wallet (Node, run by CI)
 
 **v1.2.5.1: proof page wording and README**
 - The ceedebooks.xyz domain payment is now presented as what it is: a real bill, paid by card and reimbursed through `BudgetEnforcer`, run by hand and shown apart from the agent's decisions

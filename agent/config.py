@@ -71,6 +71,7 @@ class Config:
     failed_auth_per_min: int
     cors_origins: tuple
     trust_proxy: bool
+    admin_origin: str
 
     @classmethod
     def load(cls) -> "Config":
@@ -107,6 +108,7 @@ class Config:
                 o.strip() for o in (_optional("CORS_ORIGINS") or "https://ceedebooks.xyz").split(",") if o.strip()
             ),
             trust_proxy=_optional("TRUST_PROXY").lower() in ("1", "true", "yes"),
+            admin_origin=_optional("ADMIN_ORIGIN") or "https://admin.ceedebooks.xyz",
         )
 
 

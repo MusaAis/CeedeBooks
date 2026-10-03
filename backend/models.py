@@ -44,6 +44,16 @@ CREATE TABLE IF NOT EXISTS invoices (
     created_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS admin_actions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    admin_address TEXT NOT NULL,
+    action TEXT NOT NULL,
+    ref TEXT,
+    tx_hash TEXT UNIQUE,
+    block INTEGER,
+    created_at REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS api_keys (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     key_hash TEXT NOT NULL UNIQUE,
@@ -194,3 +204,59 @@ async def get_purchase_order_by_id(po_id: int) -> Optional[aiosqlite.Row]:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM purchase_orders WHERE id = ?", (po_id,)) as cur:
             return await cur.fetchone()
+
+
+async def log_admin_action(admin_address: str, action: str, ref: Optional[str] = None,
+                           tx_hash: Optional[str] = None, block: Optional[int] = None) -> int:
+    """Raises sqlite3.IntegrityError if this transaction hash was already recorded."""
+    async with aiosqlite.connect(config.db_path) as db:
+        cur = await db.execute(
+            "INSERT INTO admin_actions (admin_address, action, ref, tx_hash, block, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (admin_address, action, ref, tx_hash, block, time.time()),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def list_admin_actions(limit: int = 100) -> list:
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM admin_actions ORDER BY id DESC LIMIT ?", (limit,)) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def list_vendors() -> list:
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT id, name, wallet_address FROM vendors ORDER BY id") as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def list_purchase_orders(limit: int = 100) -> list:
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT p.id, p.po_number, p.vendor_id, v.name AS vendor_name, p.amount_usdc, p.category,
+                      EXISTS(SELECT 1 FROM receipts r WHERE r.po_id = p.id) AS received
+               FROM purchase_orders p JOIN vendors v ON v.id = p.vendor_id ORDER BY p.id DESC LIMIT ?""",
+            (limit,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def list_invoices(limit: int = 50) -> list:
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT i.id, i.invoice_number, i.vendor_id, v.name AS vendor_name, i.amount_usdc, i.category,
+                      i.status, i.reasoning_hash, i.created_at
+               FROM invoices i JOIN vendors v ON v.id = i.vendor_id ORDER BY i.id DESC LIMIT ?""",
+            (limit,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def invoice_counts() -> dict:
+    async with aiosqlite.connect(config.db_path) as db:
+        async with db.execute("SELECT status, COUNT(*) FROM invoices GROUP BY status") as cur:
+            return {status: n for status, n in await cur.fetchall()}

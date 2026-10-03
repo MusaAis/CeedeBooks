@@ -25,6 +25,13 @@ _READ_ABI = [
      "outputs": [{"name": "overall", "type": "uint256"}, {"name": "inCategory", "type": "uint256"}]},
     {"type": "function", "name": "paid", "stateMutability": "view",
      "inputs": [{"name": "", "type": "bytes32"}], "outputs": [{"name": "", "type": "bool"}]},
+    {"type": "function", "name": "approver", "stateMutability": "view", "inputs": [], "outputs": [{"name": "", "type": "address"}]},
+    {"type": "function", "name": "pendingApprover", "stateMutability": "view", "inputs": [], "outputs": [{"name": "", "type": "address"}]},
+    {"type": "function", "name": "paused", "stateMutability": "view", "inputs": [], "outputs": [{"name": "", "type": "bool"}]},
+    {"type": "function", "name": "dailyLimit", "stateMutability": "view", "inputs": [], "outputs": [{"name": "", "type": "uint256"}]},
+    {"type": "function", "name": "perTxLimit", "stateMutability": "view", "inputs": [], "outputs": [{"name": "", "type": "uint256"}]},
+    {"type": "function", "name": "categoryDailyLimit", "stateMutability": "view",
+     "inputs": [{"name": "", "type": "uint8"}], "outputs": [{"name": "", "type": "uint256"}]},
 ]
 _read_contract = _w3.eth.contract(address=Web3.to_checksum_address(config.budget_enforcer_address), abi=_READ_ABI)
 _USDC_ABI = [
@@ -167,3 +174,65 @@ def reasoning_events(tx_hash: str) -> list:
                 {"event": name, "reasoning_hash": topics[index], "block": receipt["blockNumber"], "success": receipt["status"] == 1}
             )
     return found
+
+
+# ---- admin reads (Phase K1)
+_ESCALATION_RESULTS = {
+    "f10f5169dd83b5b624e0a34647ebb3e1e73ce20e3bc59a6d5a836e4fd4a375ee": "EscalationApproved",
+    "6b90159687711ccd3b2677caad269e5e6b993e68ae1a267d357209e1b6268a28": "EscalationRejected",
+}
+_ESCALATED_TOPIC = "8b958ddaf670e221a55a2f21042994d5613123b0230429b5763e2178979ed045"
+
+
+def approver() -> str:
+    return _read_contract.functions.approver().call()
+
+
+def pending_approver() -> str:
+    return _read_contract.functions.pendingApprover().call()
+
+
+def is_paused() -> bool:
+    return _read_contract.functions.paused().call()
+
+
+def budget_limits() -> tuple:
+    return _read_contract.functions.dailyLimit().call(), _read_contract.functions.perTxLimit().call()
+
+
+def category_limit(category: int) -> int:
+    return _read_contract.functions.categoryDailyLimit(category).call()
+
+
+def _enforcer_logs(receipt) -> list:
+    enforcer = config.budget_enforcer_address.lower()
+    out = []
+    for log in receipt["logs"]:
+        if str(log["address"]).lower() == enforcer and log["topics"]:
+            out.append([_hex(t) for t in log["topics"]])
+    return out
+
+
+def escalation_key(tx_hash: str):
+    """The invoice key of the escalation created in this transaction (needed to approve or reject it), or None."""
+    for topics in _enforcer_logs(_w3.eth.get_transaction_receipt(tx_hash)):
+        if topics[0] == _ESCALATED_TOPIC and len(topics) > 1:
+            return "0x" + topics[1]
+    return None
+
+
+def inspect_admin_tx(tx_hash: str) -> dict:
+    """What an admin transaction did: {sender, to, success, block, escalation: (event, invoice_key, reasoning_hash) | None}."""
+    receipt = _w3.eth.get_transaction_receipt(tx_hash)
+    escalation = None
+    for topics in _enforcer_logs(receipt):
+        name = _ESCALATION_RESULTS.get(topics[0])
+        if name and len(topics) > 2:
+            escalation = (name, topics[1], topics[2])
+    return {
+        "sender": str(receipt["from"]).lower(),
+        "to": str(receipt["to"]).lower() if receipt["to"] else None,
+        "success": receipt["status"] == 1,
+        "block": receipt["blockNumber"],
+        "escalation": escalation,
+    }

@@ -6,8 +6,9 @@ import asyncio
 import logging
 import re
 import sqlite3
+import time
 from decimal import Decimal
-from typing import Annotated, Optional
+from typing import Annotated, Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Path, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,7 +17,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agent import contract, decision_log, payables, treasury
 from agent.config import config
-from backend import auth, models
+from agent.categories import Category
+from backend import admin_auth, auth, models
 
 log = logging.getLogger("ceedebooks.api")
 
@@ -133,9 +135,9 @@ async def rate_limit(request: Request, call_next):
 app.add_middleware(BodyLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=list(config.cors_origins),
+    allow_origins=list(config.cors_origins) + [config.admin_origin],
     allow_methods=["GET", "POST"],
-    allow_headers=["X-API-Key", "Content-Type"],
+    allow_headers=["X-API-Key", "Authorization", "Content-Type"],
 )
 
 
@@ -147,9 +149,17 @@ async def startup() -> None:
 
 # ---- setup (buyer only)
 
+async def _admin_log(who: auth.Principal, action: str, ref: str) -> None:
+    """Record what a wallet-signed admin did off-chain. API-key callers are not logged here."""
+    if who.admin_address:
+        await models.log_admin_action(who.admin_address, action, ref)
+
+
 @app.post("/vendors")
-async def create_vendor(body: VendorIn, _: auth.Principal = Depends(auth.require("buyer"))):
-    return {"id": await models.save_vendor(body.name, body.wallet_address)}
+async def create_vendor(body: VendorIn, who: auth.Principal = Depends(auth.require("buyer"))):
+    vendor_id = await models.save_vendor(body.name, body.wallet_address)
+    await _admin_log(who, "create_vendor", f"vendor {vendor_id}")
+    return {"id": vendor_id}
 
 
 @app.get("/vendors/{vendor_id}")
@@ -163,13 +173,14 @@ async def get_vendor(vendor_id: int, who: auth.Principal = Depends(auth.require(
 
 
 @app.post("/purchase-orders")
-async def create_purchase_order(body: PurchaseOrderIn, _: auth.Principal = Depends(auth.require("buyer"))):
+async def create_purchase_order(body: PurchaseOrderIn, who: auth.Principal = Depends(auth.require("buyer"))):
     if await models.get_vendor(body.vendor_id) is None:
         raise HTTPException(404, "Vendor not found")
     try:
         po_id = await models.save_purchase_order(body.po_number, body.vendor_id, float(body.amount_usdc), body.category)
     except sqlite3.IntegrityError:
         raise HTTPException(409, f"PO number '{body.po_number}' already exists")
+    await _admin_log(who, "create_purchase_order", body.po_number)
     return {"id": po_id}
 
 
@@ -180,7 +191,9 @@ async def create_receipt(body: ReceiptIn, who: auth.Principal = Depends(auth.req
         raise HTTPException(404, "Purchase order not found")
     if await models.get_receipt(body.po_id) is not None:
         raise HTTPException(409, "A receipt is already on file for this purchase order")
-    return {"id": await models.save_receipt(body.po_id, body.confirmed_by or who.label, who.role)}
+    receipt_id = await models.save_receipt(body.po_id, body.confirmed_by or who.label, who.role)
+    await _admin_log(who, "confirm_receipt", f"po {body.po_id}")
+    return {"id": receipt_id}
 
 
 # ---- invoices (buyer, or the vendor itself)
@@ -344,3 +357,182 @@ async def agent_manifest():
         ],
         "openapi": "/openapi.json",
     }
+
+
+# ---- admin site (wallet-signed session; see backend/admin_auth.py)
+
+_TX_RE = r"^0x[0-9a-fA-F]{64}$"
+
+
+class AdminChallengeIn(_Strict):
+    address: str
+
+    @field_validator("address")
+    @classmethod
+    def _addr(cls, v: str) -> str:
+        return _check_address(v)
+
+
+class AdminVerifyIn(_Strict):
+    nonce: str = Field(min_length=32, max_length=32)
+    signature: str = Field(min_length=132, max_length=132)
+
+
+AdminActionName = Literal[
+    "set_vendor", "set_category_limit", "set_paused", "approve_escalation", "reject_escalation", "accept_approver"
+]
+
+
+class AdminActionIn(_Strict):
+    action: AdminActionName
+    tx_hash: str = Field(pattern=_TX_RE)
+    invoice_id: Optional[int] = None
+
+
+@app.get("/admin/auth/state")
+async def admin_auth_state():
+    """Public on-chain facts the connect screen needs: who is the approver, who is waiting to accept the role."""
+    try:
+        approver, pending = await asyncio.gather(
+            asyncio.to_thread(contract.approver), asyncio.to_thread(contract.pending_approver)
+        )
+    except Exception:
+        log.exception("admin auth state read failed")
+        raise HTTPException(503, "Could not read the chain right now")
+    return {"approver": approver.lower(), "pending_approver": pending.lower(), "chain_id": admin_auth.CHAIN_ID,
+            "domain": admin_auth.domain()}
+
+
+@app.post("/admin/auth/challenge")
+async def admin_challenge(body: AdminChallengeIn, request: Request):
+    if not auth.request_limiter.allow("admin-challenge:" + auth.client_ip(request), 10, 60.0):
+        raise HTTPException(429, "Too many sign-in attempts; try again in a minute")
+    return admin_auth.make_challenge(body.address)
+
+
+@app.post("/admin/auth/verify")
+async def admin_verify(body: AdminVerifyIn, request: Request):
+    ip = auth.client_ip(request)
+    if auth.failed_auth_limiter.blocked(ip, config.failed_auth_per_min, 60.0):
+        raise HTTPException(429, "Too many failed attempts; try again later", headers={"Retry-After": "60"})
+    session = await admin_auth.verify(body.nonce, body.signature)
+    if session is None:
+        auth.failed_auth_limiter.allow(ip, config.failed_auth_per_min, 60.0)
+        raise HTTPException(401, "Sign-in failed")
+    await models.log_admin_action(session["address"], "sign_in", None)
+    return session
+
+
+@app.post("/admin/auth/logout")
+async def admin_logout(request: Request, _: auth.Principal = Depends(auth.require_admin)):
+    admin_auth.logout(request.headers.get("authorization", "")[7:].strip())
+    return {"ok": True}
+
+
+def _chain_snapshot() -> dict:
+    snap = {"chain_ok": True}
+    try:
+        daily, per_tx = contract.budget_limits()
+        snap.update(
+            approver=contract.approver().lower(),
+            pending_approver=contract.pending_approver().lower(),
+            paused=contract.is_paused(),
+            balance_usdc=contract.usdc_balance() / 1_000_000,
+            daily_limit_usdc=daily / 1_000_000,
+            per_tx_limit_usdc=per_tx / 1_000_000,
+        )
+        cats = []
+        for c in Category:
+            overall, in_cat = contract.remaining_today(int(c))
+            cats.append({"id": int(c), "name": c.name.replace("_", " ").title(),
+                         "daily_limit_usdc": contract.category_limit(int(c)) / 1_000_000, "remaining_usdc": in_cat / 1_000_000})
+        snap["categories"] = cats
+    except Exception:
+        log.exception("admin overview chain read failed")
+        snap["chain_ok"] = False
+    return snap
+
+
+@app.get("/admin/overview")
+async def admin_overview(_: auth.Principal = Depends(auth.require_admin)):
+    snap, counts, vendors, pos = await asyncio.gather(
+        asyncio.to_thread(_chain_snapshot), models.invoice_counts(), models.list_vendors(), models.list_purchase_orders()
+    )
+    return {"chain": snap, "invoices": counts, "vendors": len(vendors), "purchase_orders": len(pos)}
+
+
+@app.get("/admin/vendors")
+async def admin_vendors(_: auth.Principal = Depends(auth.require_admin)):
+    vendors = await models.list_vendors()
+
+    def approved(w: str):
+        try:
+            return contract.is_vendor_approved(w)
+        except Exception:
+            return None  # unknown, shown as such
+
+    flags = await asyncio.gather(*[asyncio.to_thread(approved, v["wallet_address"]) for v in vendors])
+    return {"vendors": [{**v, "approved_onchain": f} for v, f in zip(vendors, flags)]}
+
+
+@app.get("/admin/purchase-orders")
+async def admin_purchase_orders(_: auth.Principal = Depends(auth.require_admin)):
+    return {"purchase_orders": await models.list_purchase_orders()}
+
+
+@app.get("/admin/invoices")
+async def admin_invoices(_: auth.Principal = Depends(auth.require_admin)):
+    return {"invoices": await models.list_invoices()}
+
+
+@app.get("/admin/actions")
+async def admin_actions(_: auth.Principal = Depends(auth.require_admin)):
+    return {"actions": await models.list_admin_actions()}
+
+
+@app.get("/admin/invoices/{invoice_id}/escalation")
+async def admin_escalation(invoice_id: int, _: auth.Principal = Depends(auth.require_admin)):
+    """The on-chain key the wallet needs to approve or reject this escalated invoice."""
+    invoice = await models.get_invoice(invoice_id)
+    if invoice is None or invoice["status"] != "escalated" or not invoice["reasoning_hash"]:
+        raise HTTPException(404, "No escalation waiting for this invoice")
+    decision = await decision_log.get_decision(invoice["reasoning_hash"])
+    if decision is None or not decision["chain_tx_hash"]:
+        raise HTTPException(404, "This escalation has no recorded on-chain transaction (it predates v1.2.4)")
+    try:
+        key = await asyncio.to_thread(contract.escalation_key, decision["chain_tx_hash"])
+    except Exception:
+        log.exception("escalation key lookup failed")
+        raise HTTPException(503, "Could not read the chain right now")
+    if key is None:
+        raise HTTPException(404, "No escalation event found in that transaction")
+    return {"invoice_key": key}
+
+
+@app.post("/admin/actions")
+async def admin_record_action(body: AdminActionIn, who: auth.Principal = Depends(auth.require_admin)):
+    """Record an on-chain admin transaction after the wallet sent it. The server checks the chain itself: the transaction
+    must be to BudgetEnforcer, from this admin, and successful. An escalation result also settles the invoice's status,
+    but only if the event on-chain carries that invoice's own reasoning hash."""
+    try:
+        tx = await asyncio.to_thread(contract.inspect_admin_tx, body.tx_hash)
+    except Exception:
+        raise HTTPException(404, "That transaction is not confirmed on-chain yet")
+    if tx["sender"] != who.admin_address or tx["to"] != config.budget_enforcer_address.lower() or not tx["success"]:
+        raise HTTPException(422, "That transaction is not a successful call to the contract from your wallet")
+
+    ref = None
+    if body.action in ("approve_escalation", "reject_escalation"):
+        invoice = await models.get_invoice(body.invoice_id) if body.invoice_id is not None else None
+        wanted = "EscalationApproved" if body.action == "approve_escalation" else "EscalationRejected"
+        if invoice is None or tx["escalation"] is None or tx["escalation"][0] != wanted \
+                or tx["escalation"][2] != (invoice["reasoning_hash"] or ""):
+            raise HTTPException(422, "The transaction does not settle that invoice's escalation")
+        ref = f"invoice {invoice['id']}"
+    try:
+        await models.log_admin_action(who.admin_address, body.action, ref, body.tx_hash.lower(), tx["block"])
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, "That transaction is already recorded")
+    if ref:
+        await models.update_invoice_status(invoice["id"], "paid" if body.action == "approve_escalation" else "rejected")
+    return {"ok": True, "block": tx["block"]}

@@ -38,3 +38,7 @@ jobs:
           node-version: "22"
       - name: proof page tests
         run: node site/verify.test.js
+      - name: admin site tests
+        run: |
+          node admin/wallet.test.js
+          node admin/admin.test.js
