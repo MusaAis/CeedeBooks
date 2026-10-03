@@ -13,7 +13,7 @@ An autonomous financial-operations agent for African SMEs on Arc: pays invoices,
 
 Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 – Oct 10, 2026.
 
-**Current: Phase 2 plus API hardening, the public proof page and invoice pre-flight (v1.2.6): AP/AR engine confirmed live on Arc Testnet; the API is key-authenticated and served over HTTPS at `api.ceedebooks.xyz`.** See [Roadmap](#roadmap) and the [Changelog](#changelog).
+**Current: Phase 2 plus API hardening, the public proof page and invoice pre-flight (v1.2.5.1): AP/AR engine confirmed live on Arc Testnet; the API is key-authenticated and served over HTTPS at `api.ceedebooks.xyz`.** See [Roadmap](#roadmap) and the [Changelog](#changelog).
 
 ---
 
