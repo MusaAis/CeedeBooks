@@ -1,4 +1,5 @@
 """Three-way match, rules-baseline payment decisions, and payment execution."""
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
@@ -7,6 +8,8 @@ from agent import contract, decision_log
 from agent.config import config
 from agent.llm import escalation_reasoning
 from backend import models
+
+log = logging.getLogger(__name__)
 
 
 class Decision(str, Enum):
@@ -57,6 +60,24 @@ async def decide(invoice: Invoice, treasury_runway_days: float) -> tuple[Decisio
     return Decision.PAY, "Matched PO and receipt, treasury healthy, vendor registered"
 
 
+def _chain_hash(tx_id: str):
+    """On-chain tx hash for the public audit page; None if Circle has not reported it (never blocks a payment)."""
+    try:
+        return contract.chain_tx_hash(tx_id)
+    except Exception:
+        return None
+
+
+async def _anchor_refusal(reasoning_hash_hex: str) -> None:
+    """Put a hold's reasoning hash on-chain (logDecision) so refusals are provable too. Best effort: a hold is safe either way."""
+    try:
+        tx_id = contract.log_decision(bytes.fromhex(reasoning_hash_hex))
+        contract.wait_for_transaction(tx_id)
+        await decision_log.record_onchain_tx(reasoning_hash_hex, tx_id, _chain_hash(tx_id))
+    except Exception:
+        log.exception("Could not anchor hold %s on-chain; it stays in the off-chain audit log only", reasoning_hash_hex)
+
+
 async def _log_and_escalate(
     invoice: Invoice, reason: str, model_used: str, amount_units: int, doc_hash: bytes, invoice_number_b32: bytes
 ) -> None:
@@ -68,7 +89,7 @@ async def _log_and_escalate(
         invoice.category, bytes.fromhex(reasoning_hash_hex), reason,
     )
     contract.wait_for_transaction(tx_id)
-    await decision_log.record_onchain_tx(reasoning_hash_hex, tx_id)
+    await decision_log.record_onchain_tx(reasoning_hash_hex, tx_id, _chain_hash(tx_id))
     await models.update_invoice_status(invoice.id, "escalated", reasoning_hash=reasoning_hash_hex, onchain_tx_id=tx_id)
 
 
@@ -98,6 +119,7 @@ async def process_invoice(invoice: Invoice, treasury_runway_days: float) -> Deci
             "INVOICE_HELD", invoice.invoice_number, reason, model_used="rules", amount=invoice.amount_usdc
         )
         await models.update_invoice_status(invoice.id, "held", reasoning_hash=reasoning_hash_hex)
+        await _anchor_refusal(reasoning_hash_hex)
         return decision
 
     reasoning_hash_hex = await decision_log.log_decision(
@@ -113,7 +135,7 @@ async def process_invoice(invoice: Invoice, treasury_runway_days: float) -> Deci
         invoice.vendor_wallet, amount_units, invoice_number_b32, doc_hash, invoice.category, reasoning_hash
     )
     contract.wait_for_transaction(tx_id)
-    await decision_log.record_onchain_tx(reasoning_hash_hex, tx_id)
+    await decision_log.record_onchain_tx(reasoning_hash_hex, tx_id, _chain_hash(tx_id))
     await models.update_invoice_status(invoice.id, "paid", reasoning_hash=reasoning_hash_hex, onchain_tx_id=tx_id)
     return decision
 

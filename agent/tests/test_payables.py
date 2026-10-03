@@ -39,6 +39,13 @@ def test_three_way_match_passes_on_matching_po_and_receipt():
     assert matched
 
 
+@pytest.fixture(autouse=True)
+def _no_chain_lookups(monkeypatch):
+    monkeypatch.setattr(payables.contract, "chain_tx_hash", lambda tx: None)
+    monkeypatch.setattr(payables.contract, "log_decision", lambda h: "tx-log")
+    monkeypatch.setattr(payables.contract, "wait_for_transaction", lambda tx: None)
+
+
 def test_three_way_match_fails_without_po():
     matched, reason = asyncio.run(payables.three_way_match(_invoice(po_number="PO-MISSING")))
     assert not matched

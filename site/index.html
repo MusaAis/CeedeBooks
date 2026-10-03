@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CeedeBooks: an agent that pays your bills and shows its work</title>
+<meta name="description" content="CeedeBooks pays an invoice only if a smart contract allows it, writes down why before any money moves, and lets anyone check the record against the blockchain.">
+<meta name="theme-color" content="#0d1633">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232f5bff'/%3E%3Cpath d='M21 11.5a6.5 6.5 0 1 0 0 9' fill='none' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#verify">Skip to the verifier</a>
+
+<header class="top">
+  <div class="wrap top-in">
+    <a class="brand" href="#top" aria-label="CeedeBooks home">
+      <svg width="28" height="28" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#2f5bff"/><path d="M21 11.5a6.5 6.5 0 1 0 0 9" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round"/></svg>
+      <span>CeedeBooks</span>
+    </a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#verify">Verify</a>
+      <a href="#how">How it works</a>
+      <a href="#rules">Rules</a>
+      <a href="#evidence">Evidence</a>
+      <a href="https://github.com/MusaAis/CeedeBooks" target="_blank" rel="noopener noreferrer">Source</a>
+    </nav>
+    <span class="net"><i aria-hidden="true"></i>Arc Testnet</span>
+  </div>
+</header>
+
+<main id="top">
+<section class="hero">
+  <div class="wrap hero-in">
+    <div class="hero-copy">
+      <h1>An agent that pays your bills and shows its work.</h1>
+      <p class="lead">CeedeBooks pays an invoice only if a smart contract allows it. Before any money moves, it writes down why, and anyone can check that record against the blockchain.</p>
+      <div class="cta">
+        <a class="btn primary" href="#verify">Verify a decision</a>
+        <a class="btn ghost" href="https://github.com/MusaAis/CeedeBooks" target="_blank" rel="noopener noreferrer">Read the code</a>
+      </div>
+      <p class="fine">Runs on Arc Testnet with test USDC. No real money moves.</p>
+    </div>
+
+    <aside class="receipt" aria-labelledby="rc-title">
+      <div class="rc-head">
+        <h2 id="rc-title">Live check</h2>
+        <span class="rc-run" id="hero-state">Running in your browser</span>
+      </div>
+      <p class="rc-what"><strong>ceedebooks.xyz domain</strong><br><span>2.20 USDC, paid by hand through the contract</span></p>
+      <ol class="checks" id="hero-checks" aria-live="polite"></ol>
+      <p class="verdict" id="hero-verdict" hidden></p>
+      <p class="rc-hash" title="Reasoning hash">46f65d77…fa6f14a</p>
+    </aside>
+  </div>
+</section>
+
+<section class="band" aria-labelledby="stats-title">
+  <div class="wrap">
+    <h2 id="stats-title" class="h2">What the agent has decided so far</h2>
+    <div class="ledger" id="stats">
+      <dl class="tally">
+        <div><dt>Paid</dt><dd id="n-paid">-</dd></div>
+        <div><dt>Held</dt><dd id="n-held">-</dd></div>
+        <div><dt>Escalated</dt><dd id="n-esc">-</dd></div>
+        <div><dt>Refused</dt><dd id="n-rate">-</dd></div>
+      </dl>
+      <div class="bar" id="bar" role="img" aria-label="Share of paid, held and escalated decisions">
+        <span class="seg paid"></span><span class="seg held"></span><span class="seg esc"></span>
+      </div>
+      <p class="note" id="stats-note">Loading the latest counts…</p>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="how" aria-labelledby="how-title">
+  <div class="wrap">
+    <h2 id="how-title" class="h2">How a payment is decided</h2>
+    <ol class="flow">
+      <li><h3>An invoice arrives</h3><p>A vendor submits it with its own API key. The wallet that gets paid is the one on file, never one sent with the invoice.</p></li>
+      <li><h3>It is matched</h3><p>The agent checks the purchase order and a delivery receipt confirmed by the buyer. It will not accept a receipt it confirmed itself.</p></li>
+      <li><h3>It writes down why</h3><p>The reasoning is saved and fingerprinted with SHA-256 before any money moves.</p></li>
+      <li><h3>The contract decides</h3><p>The agent commits the fingerprint on-chain, then asks the contract to pay. The contract refuses anything outside its rules.</p></li>
+      <li><h3>Anyone can check</h3><p>The fingerprint sits in a public blockchain event. Paste it below and your browser does the rest.</p></li>
+    </ol>
+  </div>
+</section>
+
+<section class="sec tint" id="verify" aria-labelledby="verify-title">
+  <div class="wrap two">
+    <div>
+      <h2 id="verify-title" class="h2">Check any decision</h2>
+      <p class="sub">Paste a reasoning hash. Your browser recomputes the fingerprint, confirms the record was not edited, then looks for the same hash in a public blockchain event.</p>
+      <label class="lab" for="hash">Reasoning hash (64 hex characters)</label>
+      <input id="hash" class="field" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="46f65d7786a368e6e0814c938b8af9a7…">
+      <div class="cta">
+        <button class="btn primary" id="go" type="button">Verify</button>
+        <button class="btn ghost dark" type="button" data-hash="46f65d7786a368e6e0814c938b8af9a7f6bed20bb1196478ac0a32708fa6f14a">Use the domain payment</button>
+      </div>
+      <div id="result" class="result" aria-live="polite"></div>
+    </div>
+    <div>
+      <h2 class="h2 minor">Recent decisions</h2>
+      <div id="feed" class="feed">Loading…</div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="rules" aria-labelledby="rules-title">
+  <div class="wrap two">
+    <div>
+      <h2 id="rules-title" class="h2">What the contract refuses</h2>
+      <p class="sub">These rules live in the BudgetEnforcer smart contract, so the agent cannot talk its way past them.</p>
+    </div>
+    <ul class="rules">
+      <li>Vendors that are not approved on-chain.</li>
+      <li>Payments above the per-payment limit or the daily limit.</li>
+      <li>Spending in a category with no limit set. A category nobody registered has a limit of zero.</li>
+      <li>A payment without a matching commitment made in an earlier block.</li>
+      <li>Everything, while the owner has paused it.</li>
+    </ul>
+  </div>
+</section>
+
+<section class="sec tint" id="evidence" aria-labelledby="ev-title">
+  <div class="wrap">
+    <h2 id="ev-title" class="h2">Evidence you can open</h2>
+    <div class="ev">
+      <a class="evi" data-explorer="/address/0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB" href="#"><strong>The contract</strong><span>BudgetEnforcer on Arc Testnet, with its source in the repository.</span></a>
+      <a class="evi" data-explorer="/tx/0x8c176242a84235a884d5790edf4a9aed403d87619359373e11f2e27141ce5d0d" href="#"><strong>First bill paid</strong><span>The ceedebooks.xyz domain, 2.20 USDC. Run by hand and labelled manual, not an agent decision.</span></a>
+      <a class="evi" href="https://github.com/MusaAis/CeedeBooks/actions" target="_blank" rel="noopener noreferrer"><strong>Tests on every push</strong><span>Contract and backend tests run in public CI.</span></a>
+      <div class="evi pending"><strong>First outside vendor</strong><span>Not paid yet. It will appear in the feed above when it happens.</span></div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" aria-labelledby="not-title">
+  <div class="wrap two">
+    <h2 id="not-title" class="h2">What this page does not prove</h2>
+    <ul class="rules plain">
+      <li>That the agent's reasoning was right. It proves the reasoning was recorded first and has not changed since.</li>
+      <li>That any outside business uses it yet. Every decision so far comes from the my own test invoices.</li>
+      <li>That held decisions made before v1.2.4 are on-chain. Those exist in the off-chain log only.</li>
+      <li>Anything about real money. This is testnet USDC.</li>
+    </ul>
+  </div>
+</section>
+</main>
+
+<footer class="foot">
+  <div class="wrap foot-in">
+    <span>CeedeBooks, built for the Tameion Agents Hackathon.</span>
+    <span class="links">
+      <a href="https://github.com/MusaAis/CeedeBooks" target="_blank" rel="noopener noreferrer">Source</a>
+      <a href="https://x.com/CeedeBooks" target="_blank" rel="noopener noreferrer">X(Twitter)</a>
+      <a href="https://api.ceedebooks.xyz/docs" target="_blank" rel="noopener noreferrer">API reference</a>
+    </span>
+  </div>
+</footer>
+
+<script src="verify.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

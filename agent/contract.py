@@ -120,3 +120,50 @@ def escalate(
         [vendor, str(amount), Web3.to_hex(invoice_number), Web3.to_hex(doc_hash), category, Web3.to_hex(reasoning_hash), reason],
     )
 
+
+
+# ---- reading the audit events back (Phase C). topic0 = keccak256 of the event signature.
+_REASONING_EVENTS = {
+    "1c9d044335a4a11ba5017f5152049ff125e54489e1f73345177810d658c624d0": ("PaymentMade", 2),
+    "8b958ddaf670e221a55a2f21042994d5613123b0230429b5763e2178979ed045": ("PaymentEscalated", 2),
+    "15eb229f5b2ce7ced26c2ceefe969a9c01e6e867545204be4053b0195c4fc4ec": ("DecisionLogged", 1),
+}
+EVENT_SIGNATURES = {
+    "PaymentMade": "PaymentMade(bytes32,bytes32,address,uint256,uint8,bytes32,uint256)",
+    "PaymentEscalated": "PaymentEscalated(bytes32,bytes32,address,uint256,uint8,string)",
+    "DecisionLogged": "DecisionLogged(bytes32,uint256)",
+}
+
+
+def _hex(value) -> str:
+    text = value.hex() if hasattr(value, "hex") else str(value)
+    return (text[2:] if text.startswith("0x") else text).lower()
+
+
+def chain_tx_hash(circle_tx_id: str):
+    """The on-chain transaction hash for a Circle transaction id, or None if it is not available yet."""
+    try:
+        txn = _transactions_api.get_transaction(id=circle_tx_id).data.transaction
+        value = getattr(txn, "tx_hash", None)
+        return str(value) if value else None
+    except Exception:
+        return None
+
+
+def reasoning_events(tx_hash: str) -> list:
+    """BudgetEnforcer audit events in one transaction: [{event, reasoning_hash, block, success}]."""
+    receipt = _w3.eth.get_transaction_receipt(tx_hash)
+    enforcer = config.budget_enforcer_address.lower()
+    found = []
+    for log in receipt["logs"]:
+        if str(log["address"]).lower() != enforcer:
+            continue
+        topics = [_hex(t) for t in log["topics"]]
+        if not topics or topics[0] not in _REASONING_EVENTS:
+            continue
+        name, index = _REASONING_EVENTS[topics[0]]
+        if len(topics) > index:
+            found.append(
+                {"event": name, "reasoning_hash": topics[index], "block": receipt["blockNumber"], "success": receipt["status"] == 1}
+            )
+    return found

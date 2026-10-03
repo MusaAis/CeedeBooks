@@ -2,6 +2,7 @@
 
 Access model (see backend/auth.py): buyer key for setup and receipts, vendor key for its own invoices only, no key for the read-only audit endpoints. No client-supplied value can influence a payment decision: the receipt role comes from the key, the vendor wallet from the vendor on file, and the treasury runway from the chain.
 """
+import asyncio
 import logging
 import re
 import sqlite3
@@ -13,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from agent import decision_log, payables, treasury
+from agent import contract, decision_log, payables, treasury
 from agent.config import config
 from backend import auth, models
 
@@ -248,6 +249,38 @@ async def get_decision(reasoning_hash: DecisionHash):
     return dict(decision)
 
 
+async def _onchain_check(decision) -> dict:
+    """Does the stored hash appear in a BudgetEnforcer event of the recorded on-chain transaction?"""
+    tx_hash = decision["chain_tx_hash"]
+    if not tx_hash:
+        return {"checked": False, "match": None, "detail": "No on-chain transaction recorded for this decision"}
+    try:
+        events = await asyncio.to_thread(contract.reasoning_events, tx_hash)
+    except Exception:
+        log.exception("On-chain lookup failed for %s", tx_hash)
+        return {"checked": False, "match": None, "chain_tx_hash": tx_hash, "detail": "Could not read the chain right now"}
+    hit = next((e for e in events if e["reasoning_hash"] == decision["reasoning_hash"] and e["success"]), None)
+    if hit is None:
+        return {"checked": True, "match": False, "chain_tx_hash": tx_hash, "detail": "No matching event in that transaction"}
+    return {"checked": True, "match": True, "chain_tx_hash": tx_hash, "event": hit["event"], "block": hit["block"]}
+
+
 @app.get("/decisions/{reasoning_hash}/verify")
 async def verify_decision(reasoning_hash: DecisionHash):
-    return {"reasoning_hash": reasoning_hash, "verified": await decision_log.verify_roundtrip(reasoning_hash)}
+    """verified: the stored hash_input hashes to the stored reasoning_hash. onchain: the same hash is in a chain event.
+    The independent check is the one in the public page, which reads the chain directly from the browser."""
+    verified = await decision_log.verify_roundtrip(reasoning_hash)
+    decision = await decision_log.get_decision(reasoning_hash)
+    onchain = await _onchain_check(decision) if decision is not None else None
+    return {"reasoning_hash": reasoning_hash, "verified": verified, "onchain": onchain}
+
+
+@app.get("/decisions")
+async def list_decisions(limit: int = 20):
+    """Most recent audit entries, newest first (no reasoning text; fetch one by hash for that)."""
+    return {"decisions": await decision_log.recent(max(1, min(limit, 50)))}
+
+
+@app.get("/stats")
+async def get_stats():
+    return await decision_log.stats()

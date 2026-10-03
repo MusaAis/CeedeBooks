@@ -233,7 +233,7 @@ def test_invoice_category_must_match_the_purchase_order(client, world, pipeline)
 
 def test_audit_endpoints_need_no_key(client):
     assert client.get("/decisions/" + "0" * 64).status_code == 404
-    assert client.get("/decisions/" + "0" * 64 + "/verify").json() == {"reasoning_hash": "0" * 64, "verified": False}
+    assert client.get("/decisions/" + "0" * 64 + "/verify").json() == {"reasoning_hash": "0" * 64, "verified": False, "onchain": None}
     assert client.get("/decisions/not-a-hash").status_code == 422
 
 

@@ -212,7 +212,9 @@ Run with a **single worker**: `uvicorn backend.main:app` (the rate limiter is pe
 | `POST /invoices` | buyer, or a vendor for its own `vendor_id` | Full pipeline: retry guard, three-way match, decision, commit-then-pay or escalate. Always pays the wallet on file; the invoice category must match the PO's; the runway is computed server-side from the pool balance and trailing spend (`treasury_runway_days` in the body is rejected). Duplicate invoice numbers return 409 |
 | `GET /invoices/{id}` | buyer; a vendor for its own invoices | Status and `reasoning_hash`. Another vendor's invoice returns 404 |
 | `GET /decisions/{hash}` | public | The stored audit record, including the full reasoning text |
-| `GET /decisions/{hash}/verify` | public | Recomputes the SHA-256 of the stored `hash_input` and compares it to the stored hash |
+| `GET /decisions/{hash}/verify` | public | Recomputes the SHA-256 of the stored `hash_input`, and (`onchain`) checks that the same hash is in a BudgetEnforcer event of the recorded transaction |
+| `GET /decisions` | public | Latest audit entries, newest first (no reasoning text) |
+| `GET /stats` | public | Counts of paid, held and escalated agent decisions; manual entries are reported separately and never counted as agent decisions |
 
 Hardening: amounts are exact decimals (positive, at most 6 places); request bodies over `MAX_BODY_BYTES` return 413; per-IP rate limit (`RATE_LIMIT_PER_MIN`) and a stricter limit on failed keys (`FAILED_AUTH_PER_MIN`) return 429; CORS allows only `CORS_ORIGINS` (default `https://ceedebooks.xyz`). Behind a reverse proxy set `TRUST_PROXY=1` so limits apply per real client.
 
@@ -325,6 +327,13 @@ Amounts are USDC in its 6-decimal ERC-20 form (`100000000` = $100.00).
 ---
 
 ## Changelog
+
+**v1.3.0: Phase C, public proof page**
+- Static proof page at `ceedebooks.xyz` (`site/`): live decision counts, a feed of recent decisions, and a Verify button that recomputes the SHA-256 in the browser, checks the displayed record is what was hashed, and reads the matching `PaymentMade`, `PaymentEscalated` or `DecisionLogged` event straight from a public Arc RPC
+- New public endpoints `GET /stats` and `GET /decisions`; `GET /decisions/{hash}/verify` now also checks the recorded on-chain transaction (this closes the "verify is off-chain only" limitation)
+- Audit rows now store the on-chain transaction hash (`chain_tx_hash`; existing databases are migrated on startup)
+- Held decisions are now also written on-chain with `logDecision`, so refusals are provable like payments (best effort: a failed anchor never blocks or changes the hold)
+- Page logic tested in Node (`site/verify.test.js`, run by CI) against records produced by the Python hashing code
 
 **v1.2.3: Phase B, deployment**
 - Added `deploy/` (nginx site config, systemd unit, DEPLOY.md): API behind nginx with a Let's Encrypt certificate at `api.ceedebooks.xyz`, one uvicorn worker under systemd, `TRUST_PROXY=1`
