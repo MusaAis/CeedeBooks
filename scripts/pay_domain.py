@@ -77,7 +77,7 @@ async def main() -> None:
     print("\nDone.")
     print(f"Circle tx id:   {pay_tx}")
     print(f"On-chain hash:  {getattr(txn, 'tx_hash', None)}")
-    print(f"reasoning_hash: {reasoning_hash_hex}")
+    print(f"On-chain hash:  {chain_hash}")
 
 
 if __name__ == "__main__":

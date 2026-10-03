@@ -93,6 +93,61 @@ async def _log_and_escalate(
     await models.update_invoice_status(invoice.id, "escalated", reasoning_hash=reasoning_hash_hex, onchain_tx_id=tx_id)
 
 
+async def preflight(invoice: Invoice, treasury_runway_days: float) -> dict:
+    """Dry run of process_invoice: what would happen to this invoice right now, and why. Writes nothing.
+
+    No audit row, no invoice row, no chain transaction. Every check is evaluated on its own (no short-circuit) so a
+    vendor sees all the problems at once. Only booleans are returned: no balances, limits or other vendors' data.
+    Chain reads that fail raise, so the caller can answer 503 instead of guessing.
+    """
+    amount_units = int(round(invoice.amount_usdc * 1_000_000))
+    invoice_number_b32 = contract.to_bytes32(invoice.invoice_number)
+    already_paid = contract.is_paid(contract.invoice_key(invoice.vendor_wallet, invoice_number_b32))
+
+    po = await models.get_purchase_order(invoice.po_number) if invoice.po_number else None
+    receipt = await models.get_receipt(po["id"]) if po is not None else None
+    vendor_registered = contract.is_vendor_approved(invoice.vendor_wallet)
+    overall_left, category_left = contract.remaining_today(invoice.category)
+
+    checks = {
+        "not_already_paid": not already_paid,
+        "po_found": po is not None,
+        "amount_matches_po": po is not None and abs(po["amount_usdc"] - invoice.amount_usdc) <= 0.01,
+        "receipt_on_file": receipt is not None,
+        "receipt_independent": receipt is not None and receipt["confirmed_by_role"] != "agent",
+        "vendor_registered_onchain": vendor_registered,
+        "runway_ok": treasury_runway_days >= 7,
+        "within_daily_limits": amount_units <= overall_left and amount_units <= category_left,
+    }
+
+    reasons = []
+    if already_paid:
+        return {"outcome": "already_paid", "reasons": ["This invoice number was already paid on-chain"], "checks": checks}
+    if not invoice.po_number:
+        reasons.append("No PO number on the invoice")
+    elif po is None:
+        reasons.append(f"No matching PO for {invoice.po_number}")
+    elif not checks["amount_matches_po"]:
+        reasons.append("Invoice amount does not match the PO")
+    if po is not None and receipt is None:
+        reasons.append("No receipt on file: the buyer must confirm delivery first")
+    elif receipt is not None and not checks["receipt_independent"]:
+        reasons.append("The receipt was confirmed by the agent itself, not an independent party")
+    if reasons:
+        return {"outcome": "would_escalate", "reasons": reasons, "checks": checks}
+    if not vendor_registered:
+        return {"outcome": "would_escalate", "reasons": ["Vendor is not registered on-chain yet"], "checks": checks}
+    if not checks["runway_ok"]:
+        return {"outcome": "would_hold", "reasons": ["Treasury runway is under the 7-day minimum"], "checks": checks}
+    if not checks["within_daily_limits"]:
+        return {
+            "outcome": "would_be_refused_by_contract",
+            "reasons": ["The amount exceeds today's remaining budget for this category, so the contract would refuse it"],
+            "checks": checks,
+        }
+    return {"outcome": "would_pay", "reasons": ["PO, receipt and vendor match; treasury healthy; within limits"], "checks": checks}
+
+
 async def process_invoice(invoice: Invoice, treasury_runway_days: float) -> Decision:
     amount_units = int(round(invoice.amount_usdc * 1_000_000))
     doc_hash = contract.to_bytes32(invoice.doc_hash)

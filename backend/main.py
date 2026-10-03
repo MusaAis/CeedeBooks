@@ -185,8 +185,8 @@ async def create_receipt(body: ReceiptIn, who: auth.Principal = Depends(auth.req
 
 # ---- invoices (buyer, or the vendor itself)
 
-@app.post("/invoices")
-async def submit_invoice(body: InvoiceIn, who: auth.Principal = Depends(auth.require("buyer", "vendor"))):
+async def _checked_submission(body: InvoiceIn, who: auth.Principal):
+    """Access and consistency checks shared by /invoices and /invoices/preflight. Returns (vendor, po)."""
     if who.role == "vendor" and who.vendor_id != body.vendor_id:
         raise HTTPException(403, "A vendor key can only submit invoices for its own vendor_id")
 
@@ -202,7 +202,31 @@ async def submit_invoice(body: InvoiceIn, who: auth.Principal = Depends(auth.req
 
     if po is not None and po["category"] != body.category:
         raise HTTPException(422, "Invoice category does not match the purchase order's category")
+    return vendor, po
 
+
+@app.post("/invoices/preflight")
+async def preflight_invoice(body: InvoiceIn, who: auth.Principal = Depends(auth.require("buyer", "vendor"))):
+    """Dry run: would this invoice be paid, held or escalated right now, and why? Nothing is saved, logged or sent
+    on-chain, so an agent can fix problems before submitting. Same access rules as POST /invoices."""
+    vendor, _ = await _checked_submission(body, who)
+    amount = float(body.amount_usdc)
+    invoice = payables.Invoice(
+        id=0, invoice_number=body.invoice_number, vendor_wallet=vendor["wallet_address"],
+        amount_usdc=amount, category=body.category, doc_hash=body.doc_hash, po_number=body.po_number,
+    )
+    try:
+        runway = await treasury.runway_days(amount)
+        result = await payables.preflight(invoice, runway)
+    except Exception:
+        log.exception("Preflight failed for %s", body.invoice_number)
+        raise HTTPException(503, "Could not read the chain right now; try again shortly")
+    return {**result, "dry_run": True}
+
+
+@app.post("/invoices")
+async def submit_invoice(body: InvoiceIn, who: auth.Principal = Depends(auth.require("buyer", "vendor"))):
+    vendor, po = await _checked_submission(body, who)
     amount = float(body.amount_usdc)
     try:
         invoice_id = await models.save_invoice(
@@ -284,3 +308,39 @@ async def list_decisions(limit: int = 20):
 @app.get("/stats")
 async def get_stats():
     return await decision_log.stats()
+
+
+@app.get("/.well-known/agent.json")
+async def agent_manifest():
+    """Machine-readable description so another agent can discover how to work with this one. Public, static."""
+    return {
+        "name": "CeedeBooks",
+        "description": "Autonomous accounts-payable agent. It pays an invoice only if a smart contract allows it.",
+        "network": "Arc Testnet",
+        "settlement": "testnet USDC (no market value)",
+        "contract": config.budget_enforcer_address,
+        "auth": {"header": "X-API-Key", "roles": ["buyer", "vendor"], "public": ["/decisions", "/stats"]},
+        "vendor_flow": [
+            {"step": 1, "who": "buyer", "action": "register the vendor (POST /vendors) and approve its wallet on-chain"},
+            {"step": 2, "who": "buyer", "action": "raise a purchase order (POST /purchase-orders)"},
+            {"step": 3, "who": "vendor", "action": "deliver; the deliverable's SHA-256 becomes the invoice doc_hash"},
+            {"step": 4, "who": "buyer", "action": "confirm receipt (POST /receipts); a vendor can never confirm its own delivery"},
+            {"step": 5, "who": "vendor", "action": "optionally dry-run the invoice (POST /invoices/preflight)"},
+            {"step": 6, "who": "vendor", "action": "submit the invoice (POST /invoices); the agent decides and pays or refuses"},
+            {"step": 7, "who": "anyone", "action": "verify the decision (GET /decisions/{hash}/verify)"},
+        ],
+        "endpoints": {
+            "POST /invoices/preflight": "vendor or buyer; dry run, writes nothing",
+            "POST /invoices": "vendor (own invoices) or buyer; runs the full pipeline",
+            "GET /invoices/{id}": "vendor (own) or buyer",
+            "GET /decisions/{hash}": "public",
+            "GET /decisions/{hash}/verify": "public",
+            "GET /stats": "public",
+        },
+        "guarantees": [
+            "The agent cannot pay outside the on-chain vendor registry, per-transaction, daily or category limits",
+            "The reasoning hash is committed on-chain in an earlier block than the payment",
+            "Refusals (holds and escalations) are logged and anchored, not hidden",
+        ],
+        "openapi": "/openapi.json",
+    }

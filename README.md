@@ -211,6 +211,8 @@ Run with a **single worker**: `uvicorn backend.main:app` (the rate limiter is pe
 | `POST /receipts` | buyer | Confirm delivery of a PO. The role is set by the server from the key; `confirmed_by_role` in the body is rejected (422). One receipt per PO (409) |
 | `POST /invoices` | buyer, or a vendor for its own `vendor_id` | Full pipeline: retry guard, three-way match, decision, commit-then-pay or escalate. Always pays the wallet on file; the invoice category must match the PO's; the runway is computed server-side from the pool balance and trailing spend (`treasury_runway_days` in the body is rejected). Duplicate invoice numbers return 409 |
 | `GET /invoices/{id}` | buyer; a vendor for its own invoices | Status and `reasoning_hash`. Another vendor's invoice returns 404 |
+| `POST /invoices/preflight` | buyer, or a vendor for its own `vendor_id` | Dry run of `POST /invoices`: returns `would_pay`, `would_hold`, `would_escalate`, `would_be_refused_by_contract` or `already_paid`, with every check and the reasons. Writes nothing (no invoice row, no audit row, no chain transaction) and returns only booleans, never balances or limits |
+| `GET /.well-known/agent.json` | public | Machine-readable manifest: the vendor flow step by step, endpoints with their roles, and the guarantees, so another agent can discover how to invoice CeedeBooks |
 | `GET /decisions/{hash}` | public | The stored audit record, including the full reasoning text |
 | `GET /decisions/{hash}/verify` | public | Recomputes the SHA-256 of the stored `hash_input`, and (`onchain`) checks that the same hash is in a BudgetEnforcer event of the recorded transaction |
 | `GET /decisions` | public | Latest audit entries, newest first (no reasoning text) |
@@ -327,6 +329,11 @@ Amounts are USDC in its 6-decimal ERC-20 form (`100000000` = $100.00).
 ---
 
 ## Changelog
+
+**v1.2.5: invoice pre-flight and agent manifest**
+- `POST /invoices/preflight`: a dry run of the payment pipeline that tells a vendor (or the buyer) whether an invoice would be paid, held or escalated, and why, before anything is saved or sent on-chain. It also flags an invoice that would exceed today's budget, which the contract would otherwise refuse at payment time
+- `GET /.well-known/agent.json`: public manifest of the vendor flow and guarantees for agent-to-agent use
+- The invoice access checks are shared between `/invoices` and `/invoices/preflight`, with 17 new tests (79 in total)
 
 **v1.2.4: Phase C, public proof page**
 - Static proof page at `ceedebooks.xyz` (`site/`): live decision counts, a feed of recent decisions, and a Verify button that recomputes the SHA-256 in the browser, checks the displayed record is what was hashed, and reads the matching `PaymentMade`, `PaymentEscalated` or `DecisionLogged` event straight from a public Arc RPC
