@@ -4,7 +4,7 @@
 ![CI](https://github.com/MusaAis/CeedeBooks/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Foundry tests](https://img.shields.io/badge/forge%20tests-24%2F24%20passing-brightgreen)
-![Python tests](https://img.shields.io/badge/pytest-108%2F108%20passing-brightgreen)
+![Python tests](https://img.shields.io/badge/pytest-109%2F109%20passing-brightgreen)
 ![Network](https://img.shields.io/badge/Arc-Testnet-informational)
 
 *"Ceede" means money in Pulaar/Fulfulde.*
@@ -13,7 +13,7 @@ An autonomous financial-operations agent for African SMEs on Arc: pays invoices,
 
 Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 – Oct 10, 2026.
 
-**Current: Phase 2 plus API hardening, the public proof page, invoice pre-flight and the wallet-signed admin site (v1.2.6): AP/AR engine confirmed live on Arc Testnet; the API is key-authenticated and served over HTTPS at `api.ceedebooks.xyz`.** See [Roadmap](#roadmap) and the [Changelog](#changelog).
+**Current: v1.2.6.2. The AP/AR engine is live on Arc Testnet behind a key-authenticated HTTPS API (`api.ceedebooks.xyz`), with a public proof page (`ceedebooks.xyz`) and a wallet-signed admin site (`admin.ceedebooks.xyz`). No outside business or paying user yet: every payment so far is self-owned.** See [Roadmap](#roadmap) and the [Changelog](#changelog).
 
 ---
 
@@ -40,13 +40,21 @@ It isn't "an LLM with a wallet." The agent proposes; a smart contract, not a pro
 - **Retry-safe payments**: before doing anything, the pipeline asks the contract whether the invoice key is already paid, so a crash-and-retry cannot pay twice
 - **Confirmed, not assumed, settlement**: every commit, payment, and escalation is polled to a terminal on-chain state before it's recorded as succeeded — a reverted transaction is never logged as paid
 - **Audit trail with round-trip check**: every decision (paid, held, escalated) is stored with its exact serialized hash input; `GET /decisions/{hash}/verify` recomputes the hash
+- **Public proof page** (`ceedebooks.xyz`, no login): live paid / held / escalated counts, a feed of recent decisions, and a Verify button that recomputes the hash in the browser and checks it against the on-chain event
+- **Refusals shown first-class**: held decisions are anchored on-chain with `logDecision`, and the page counts holds and escalations next to payments
+- **Invoice pre-flight**: `POST /invoices/preflight` is a dry run that says whether an invoice would be paid, held or escalated, and why, without writing anything
+- **Agent manifest**: `GET /.well-known/agent.json` describes the vendor flow, roles and guarantees for other agents
+- **Wallet-signed admin site** (`admin.ceedebooks.xyz`): a session is accepted only if its signature recovers to the contract's current `approver()`; vendor approval, POs, receipts, escalations, limits and pause are signed in the admin's own wallet
 
 **Planned**
 
-- Laya fast-path decision model (kit built separately, not yet wired in)
-- Contractor milestone escrow
+- Vendor portal with signed vendor applications (v1.2.7)
+- Hash-chained audit ledger, on-chain red-team log, key-custody check, re-evaluate action for stuck invoices (v1.2.8)
+- Circle Gateway unified balance (v1.3.0)
 - Idle-treasury auto-yield via a pooled USYC wrapper
-- Public proof page, refusal-first metrics, hash-chained audit ledger, on-chain red-team log
+- Agent-to-agent reference client for vendors (demo runs labelled `demo`)
+- Contractor milestone escrow, only if time allows
+- Laya fast-path decision model (kit built separately, not wired in)
 
 ---
 
@@ -72,8 +80,17 @@ Everything below is checkable on-chain. Nothing here is estimated.
 | What | Evidence |
 |---|---|
 | Contract deployed and verified on Arc Testnet | [`BudgetEnforcer`](https://explorer.testnet.arc.io/address/0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB) |
-| Test suites | 24 Foundry + 108 Python tests + browser-side JS tests, run by CI on every push |
+| Test suites | 24 Foundry + 109 Python tests + browser-side JS tests, run by CI on every push |
 | First self-owned vendor bill paid through the contract | `ceedebooks.xyz` registration, 2.20 USDC, category 1 |
+| Outside businesses or paying users | None yet |
+
+**Live snapshot** (read from the admin Overview on Oct 4, 2026; the proof page is the live source):
+
+| Pool balance | Paid invoices | Escalations waiting | Vendors | Purchase orders |
+|---|---|---|---|---|
+| 108.79 USDC (testnet) | 2 | 3 | 2 | 2 |
+
+The escalations are self-owned test invoices that the agent parked for review, as designed. Testnet USDC has no market value.
 
 **The domain payment.** CeedeBooks' own domain was bought by card (Namecheap order 215679394, $2.00 + $0.20 ICANN fee), and the registrar cannot take USDC, so the founder was reimbursed through the contract: vendor registered with `setVendor`, category 1 given a 20 USDC/day limit, the receipt hashed into `docHash`, the reasoning hash logged off-chain first, then `commitDecision` and `pay` from the Circle agent wallet in separate blocks.
 
@@ -101,7 +118,7 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 - **Model output is an input, never a release condition.** Circle's own `arc-escrow` sample releases contractor funds on a bare JSON response from GPT-4o with no structural check behind it. CeedeBooks is built specifically not to repeat that pattern.
 - **Independent receipt witness.** A three-way match proves nothing if the agent can confirm its own receipts. It can't.
 - **Settlement is confirmed, not hoped for.** Circle's transaction API is asynchronous — accepting a request isn't the same as it succeeding on-chain. CeedeBooks waits for a terminal state before trusting any result, closing a real phantom-payment risk most demos never test for.
-- **Tested, not just described.** 24 Foundry tests plus 108 Python tests, both passing against the deployed contract and the live decision pipeline.
+- **Tested, not just described.** 24 Foundry tests plus 109 Python tests, both passing against the deployed contract and the live decision pipeline.
 
 ---
 
@@ -140,17 +157,25 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 
 ## Roadmap
 
-| Phase | Scope | Status |
-|---|---|---|
-| 1. Foundation | Repo, Circle treasury wallet, `BudgetEnforcer.sol` deployed, verified, tested | ✅ Done |
-| 2. AP/AR Engine | Three-way match, independent receipt witness, rules baseline, escalation, retry safety, confirmed settlement, API | ✅ Built — confirmed with a real payment on Arc Testnet |
-| 3. Treasury Brain | Gateway unified balance, `CeedeBooksYield.sol` pooled USYC wrapper, runway forecasting | ⏳ Planned |
-| 4. Contractor Milestones | `MilestoneEscrow.sol`, at least 1 real contractor paid | ⏳ Planned |
-| 5. Audit Trail + Traction | Public proof page, refusal-first metrics, hash-chained ledger, on-chain red-team log, 5+ businesses | ⏳ Planned |
-| 6. Submit | Demo video, final README, submission (due Oct 10, 11:59 PM ET) | ⏳ Planned |
-| Later | Agent-posted decision bond | 💡 Idea |
+| Phase | Scope | Version | Status |
+|---|---|---|---|
+| 1. Foundation | Repo, Circle treasury wallet, `BudgetEnforcer.sol` deployed, verified, tested | v1.1 | ✅ Built |
+| 2. AP/AR engine | Three-way match, independent receipt witness, rules baseline, escalation, retry safety, confirmed settlement | v1.2 | ✅ Built, confirmed with a real payment on Arc Testnet |
+| A. API auth | `X-API-Key` roles, server-side runway, body cap, rate limits | v1.2.2 | ✅ Built |
+| B. Deployment | nginx + certbot + systemd at `api.ceedebooks.xyz` | v1.2.3 | ✅ Built |
+| C. Proof page | Public verify button, refusal counts, on-chain check in `verify` | v1.2.4 | ✅ Built |
+| Pre-flight and manifest | Invoice dry run, `agent.json` | v1.2.5 | ✅ Built |
+| K1. Admin site | Wallet-signed admin at `admin.ceedebooks.xyz`, approver hand-over | v1.2.6 | ✅ Built |
+| K2. Vendor portal | Signed vendor applications, submission metrics | v1.2.7 | ⏳ Next |
+| E. Audit hardening | Hash-chained ledger, on-chain red-team log, key-custody check, re-evaluate | v1.2.8 | ⏳ Planned |
+| F. Gateway | `POST /v1/balances` unified balance on the dashboard | v1.3.0 | ⏳ Planned |
+| G. Treasury brain | `CeedeBooksYield.sol` pooled USYC wrapper, runway alerts | v1.3.x | ⏳ Planned |
+| N. Agent-to-agent | Reference vendor client; traction counts an outside agent only | v1.3.x | ⏳ Planned |
+| H. Milestone escrow | `MilestoneEscrow.sol` with a `requirementsHash` fixed at funding | v1.4.0 | 💡 Only if time allows |
+| Submit | Demo video, final README, submission (due Oct 10, 11:59 PM ET) | | ⏳ Planned |
+| Later | Agent-posted decision bond | | 💡 Idea |
 
-**Still open in Phase 2:** Laya isn't wired into `payables.py` yet (built and tested separately; live decisions run on the rules baseline until it is). First real outside-business invoices are next — so far the pipeline has only processed self-owned test flows.
+**Still open in Phase 2:** Laya isn't wired into `payables.py` yet (built and tested separately; live decisions run on the rules baseline until it is). So far the pipeline has only processed self-owned flows; an outside business or agent is the next thing to land.
 
 ---
 
@@ -160,11 +185,11 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 |---|---|---|
 | Agent Wallet | ✅ live | Developer-controlled wallet, Arc Testnet; signs every contract call |
 | USDC | ✅ live | Native ERC-20 at `0x3600000000000000000000000000000000000000` |
-| Gateway | Planned Phase 3 | `POST /v1/balances` |
-| USYC | Planned Phase 3 | Via own pooled wrapper (Arc's Teller has a $100k / allowlist gate) |
+| Gateway | Planned (Phase F, v1.3.0) | `POST /v1/balances` |
+| USYC | Planned (Phase G) | Via own pooled wrapper (Arc's Teller has a $100k / allowlist gate) |
 | CCTP | Stretch | Domain 26, `minFinalityThreshold: 2000`, V2 7-param `depositForBurn` only |
 | EURC | Stretch | European vendor payments |
-| ~~Paymaster~~ | Dropped |
+| ~~Paymaster~~ | Dropped | Not supported on Arc |
 
 ---
 
@@ -227,7 +252,7 @@ Deploy steps (nginx + certbot + systemd, and the admin site): [deploy/DEPLOY.md]
 
 Limits: runway uses ledger history only (paid invoices in the last 30 days), so a fresh ledger gets the 365-day cap.
 
-Today `verify` proves the stored record is internally consistent. Comparing against the on-chain event and a hash-chain link is planned (see Roadmap).
+`verify` checks the stored record and, where a transaction is recorded, the matching on-chain event. A hash-chain link between entries is planned (Phase E).
 
 ---
 
@@ -242,6 +267,7 @@ ceedebooks/
 │   ├── decision_log.py     # canonical-JSON SHA-256 audit log, hash-before-action
 │   ├── contract.py         # reads + Circle-signed writes, wait_for_transaction
 │   ├── payables.py         # three-way match, rules baseline, commit-then-pay, retry guard
+│   ├── treasury.py         # server-side runway from the pool balance and trailing spend
 │   ├── wallet_setup.py     # one-off Circle developer-controlled wallet creation
 │   └── tests/
 │       ├── test_payables.py
@@ -260,6 +286,8 @@ ceedebooks/
 │   ├── admin_auth.py       # wallet sign-in for the admin site (session bound to the on-chain approver)
 │   └── models.py           # SQLite schema + queries (incl. api_keys)
 ├── admin/                  # admin site: static app, wallet call encoding, Node tests
+├── site/                   # public proof page and its in-browser hash check
+├── deploy/                 # nginx configs, systemd unit, DEPLOY.md
 ├── contracts/
 │   └── BudgetEnforcer.sol
 ├── test/
@@ -304,7 +332,7 @@ pytest agent/tests/
 
 **24 Foundry tests**, one per revert path or acceptance scenario: unregistered and revoked vendor, over per-tx / daily / category limits, unset category (fail-closed), same invoice resubmitted as a different file, missing / reused / mismatched commit, crash-and-retry, simulated prompt injection (contract refuses even if the agent were fooled), the escalate → approve / reject flow, escalated invoices blocked from direct payment, pause, withdraw, agent rotation, two-step approver rotation, and the `reasoningHash` round-trip via the `PaymentMade` event.
 
-**108 Python tests** covering the three-way match, rules-baseline decisions (pay / hold / escalate), retry safety (reprocessing a paid invoice is a no-op), API access control (every denied path), server-side runway, input validation, the public audit endpoints and on-chain verification, the invoice pre-flight dry run (it writes nothing and reveals no balances or limits), and the admin wallet sign-in and routes. Browser-side tests check the proof page's hash recomputation (`site/verify.test.js`) and the admin app's call encoding and rendering (`admin/*.test.js`).
+**109 Python tests** covering the three-way match, rules-baseline decisions (pay / hold / escalate), retry safety (reprocessing a paid invoice is a no-op), API access control (every denied path), server-side runway, input validation, the public audit endpoints and on-chain verification, the invoice pre-flight dry run (it writes nothing and reveals no balances or limits), and the admin wallet sign-in and routes. Browser-side tests check the proof page's hash recomputation (`site/verify.test.js`) and the admin app's call encoding and rendering (`admin/*.test.js`).
 
 ### Deploy
 
@@ -337,6 +365,12 @@ Amounts are USDC in its 6-decimal ERC-20 form (`100000000` = $100.00).
 ---
 
 ## Changelog
+
+**v1.2.6.2: admin site on phones, README brought up to date**
+- Admin header stays on one row (the wallet address shortens instead of pushing Sign out down)
+- Tables become labelled cards under 40rem, so the reasoning hash and action buttons are no longer clipped; action buttons are larger to tap
+- README: built features moved out of Planned, roadmap now lists every phase with its version and status, live snapshot added to Traction, stale `verify` note fixed, test count corrected to 109
+- Test: table cells carry their column label (the phone layout reads it)
 
 **v1.2.6.1: admin overview fix**
 - Fixed the admin Overview and Limits pages, which showed no spending categories because a name in `backend/main.py` hid the category list. Added a regression test that runs the real chain snapshot

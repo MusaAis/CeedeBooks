@@ -232,7 +232,7 @@
   function table(head, rows) {
     return h("div", { class: "scroll" }, [h("table", { class: "tbl" }, [
       h("thead", null, [h("tr", null, head.map(function (c) { return h("th", null, [c]); }))]),
-      h("tbody", null, rows.map(function (r) { return h("tr", null, r.map(function (c) { return h("td", null, [c]); })); }))])]);
+      h("tbody", null, rows.map(function (r) { return h("tr", null, r.map(function (c, i) { return h("td", head[i] ? { "data-label": head[i] } : null, [c]); })); }))])]);
   }
   function chip(text, kind) { return h("span", { class: "chip " + kind }, [text]); }
   function card(label, value) { return h("div", { class: "card" }, [h("div", { class: "l" }, [label]), h("div", { class: "v" }, [String(value)])]); }
