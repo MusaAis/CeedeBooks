@@ -9,11 +9,23 @@
 
 *"Ceede" means money in Pulaar/Fulfulde.*
 
-An autonomous financial-operations agent for African SMEs on Arc: pays invoices, runs contractor milestone escrow, and parks idle treasury into yield, with spending limits enforced **on-chain** (never in a prompt) and every decision hash-logged before money moves.
+An autonomous accounts-payable agent for African SMEs on Arc: it validates and pays invoices, with spending limits enforced **on-chain** (never in a prompt) and every decision hash-logged before money moves. Contractor escrow and idle-cash yield are planned, not built.
 
 Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 – Oct 10, 2026.
 
-**Current: v1.2.7. The AP/AR engine is live on Arc Testnet behind a key-authenticated HTTPS API (`api.ceedebooks.xyz`), with a public proof page (`ceedebooks.xyz`) a wallet-signed admin site (`admin.ceedebooks.xyz`) and a vendor portal (`portal.ceedebooks.xyz`) where a vendor applies and signs in with its wallet. No outside business or paying user yet: every payment so far is self-owned.** See [Roadmap](#roadmap) and the [Changelog](#changelog).
+**Current: v1.2.7.1 (docs only; the last code release is v1.2.7). The AP/AR engine is live on Arc Testnet behind a key-authenticated HTTPS API (`api.ceedebooks.xyz`), with a public proof page (`ceedebooks.xyz`) a wallet-signed admin site (`admin.ceedebooks.xyz`) and a vendor portal (`portal.ceedebooks.xyz`) where a vendor applies and signs in with its wallet. No outside business or paying user yet: every payment so far is self-owned.** See [Roadmap](#roadmap) and the [Changelog](#changelog).
+
+## 60-second tour for reviewers
+
+1. **See it:** open [ceedebooks.xyz](https://ceedebooks.xyz) (no login). Live paid, held and escalated counts, and a feed of decisions.
+2. **Check it yourself:** press **Verify** on any decision. Your browser recomputes the hash and compares it to the event on Arc. Or from a terminal:
+   ```bash
+   curl -s https://api.ceedebooks.xyz/decisions/46f65d7786a368e6e0814c938b8af9a7f6bed20bb1196478ac0a32708fa6f14a/verify
+   ```
+   (the real domain bill; expect `verified: true` and `onchain.match: true`).
+3. **Read the contract:** [`contracts/BudgetEnforcer.sol`](contracts/BudgetEnforcer.sol) and its 24 tests in [`test/`](test/BudgetEnforcer.t.sol).
+4. **Run the tests:** `forge test -vv` and `pytest agent/tests/` (setup below).
+5. **See how an agent would use it:** [`/.well-known/agent.json`](https://api.ceedebooks.xyz/.well-known/agent.json).
 
 ---
 
@@ -48,14 +60,17 @@ It isn't "an LLM with a wallet." The agent proposes; a smart contract, not a pro
 - **Vendor portal** (`portal.ceedebooks.xyz`): a vendor applies with a wallet signature that proves it controls the payee address, the admin reviews the application, and once approved the vendor signs in with the same wallet. It sees only its own purchase orders and invoices, runs a dry run first, submits, and links to the proof page for the decision. No key or password is issued, and the portal never asks for a transaction. Spam controls: one pending application per wallet, at most 3 pending per IP, 5 submissions per hour per IP, small body cap
 - **Submission metrics on the proof page**: invoices processed, USDC paid and duplicates caught, split by origin (`agent`, `manual`, `demo`) so hand-run payments and demo runs never count as agent traffic
 
-**Planned**
+**Planned** (see the [Roadmap](#roadmap) for order and status; nothing below is live)
 
-- Hash-chained audit ledger, on-chain red-team log, key-custody check, re-evaluate action for stuck invoices (v1.2.8)
-- Circle Gateway unified balance (v1.3.0)
-- Idle-treasury auto-yield via a pooled USYC wrapper
+- **Multi-business:** a factory that creates one `BudgetEnforcer` per business (own pool, approver, agent and limits), a weekly limit, a way for an approver to return an escalation to the agent, and an on-chain ledger anchor
+- **Audit hardening:** hash-chained ledger per business anchored on-chain, a log comparing the model's verdict with the rules' verdict, on-chain red-team log, key-custody check, re-evaluate for stuck invoices
+- **Oversight:** maker-checker approvals, pause with a stated reason, every figure in a narrative written by code
+- Circle Gateway unified balance
+- Treasury: economics-gated yield sweep via a pooled USYC wrapper, continuous vendor screening, other-currency invoices
 - Agent-to-agent reference client for vendors (demo runs labelled `demo`)
+- Invoice intake from PDF or email, a Telegram status bot, receivables
 - Contractor milestone escrow, only if time allows
-- Laya fast-path decision model (kit built separately, not wired in)
+- Laya fast-path decision model (built separately, not wired in)
 
 ---
 
@@ -156,6 +171,19 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 
 ---
 
+## Trust model and limits (read this before relying on it)
+
+- **What the contract guarantees:** only registered vendors are paid, within per-transaction, daily and per-category limits, once per invoice, and only after a commitment from an earlier block. The agent cannot change any of that, whatever it is told.
+- **What it does not guarantee:** that an invoice is genuine. A human approves vendors and confirms receipts; the three-way match is only as honest as those people.
+- **One operator.** The agent wallet is a Circle developer-controlled wallet under one account. "A second wallet" is not an independent agent.
+- **The audit log is a database.** Each record's hash is checked against an on-chain event, but the log is not yet hash-chained, so a deleted row would not be detected. This is planned (Audit hardening).
+- **The admin key.** The approver is a wallet held off the server. If it is lost, nobody can approve vendors or change limits.
+- **Testnet.** Everything runs on Arc Testnet with test USDC. No outside business or paying user yet; every payment so far is self-owned.
+- **Single business.** The deployed contract serves one business. Multi-business is a planned redeploy, not a toggle.
+- **Public reasoning.** `GET /decisions/{hash}` returns the full reasoning text, so no private data belongs in it.
+
+---
+
 ## Roadmap
 
 | Phase | Scope | Version | Status |
@@ -168,12 +196,16 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 | Pre-flight and manifest | Invoice dry run, `agent.json` | v1.2.5 | ✅ Built |
 | K1. Admin site | Wallet-signed admin at `admin.ceedebooks.xyz`, approver hand-over | v1.2.6 | ✅ Built |
 | K2. Vendor portal | Signed vendor applications, wallet sign-in, vendor view, submission metrics | v1.2.7 | ✅ Built |
-| E. Audit hardening | Hash-chained ledger, on-chain red-team log, key-custody check, re-evaluate | v1.2.8 | ⏳ Planned |
+| L. Multi-business | `BudgetEnforcer` v2 (weekly limit, return-to-agent), `BudgetFactory` (one enforcer per business), `LedgerAnchor`; v1 contract kept as archived business #1 | v1.2.8 | ⏳ Planned, next |
+| E. Audit hardening | Per-business hash-chained ledger anchored on-chain, model-vs-rules log, on-chain red-team log, key-custody check, re-evaluate | v1.2.9 | ⏳ Planned |
+| O. Oversight | Maker-checker, pause with reason, figures written by code | v1.2.10 | ⏳ Planned |
 | F. Gateway | `POST /v1/balances` unified balance on the dashboard | v1.3.0 | ⏳ Planned |
-| G. Treasury brain | `CeedeBooksYield.sol` pooled USYC wrapper, runway alerts | v1.3.x | ⏳ Planned |
+| P. Proof and evidence | Outcomes numbers, "try it in 5 minutes" demo path, rollout records | | ⏳ Planned |
+| G. Treasury brain | Economics-gated sweep, vendor screening, `CeedeBooksYield.sol` pooled USYC wrapper, EURC, CCTP | v1.3.x | ⏳ Planned |
 | N. Agent-to-agent | Reference vendor client; traction counts an outside agent only | v1.3.x | ⏳ Planned |
+| Q. Reach | PDF and email intake, Telegram bot, receivables, webhooks | | ⏳ Planned |
 | H. Milestone escrow | `MilestoneEscrow.sol` with a `requirementsHash` fixed at funding | v1.4.0 | 💡 Only if time allows |
-| Submit | Demo video, final README, submission (due Oct 10, 11:59 PM ET) | | ⏳ Planned |
+| Submit | Demo video, final README, form answers with real numbers only | | ⏳ Planned |
 | Later | Agent-posted decision bond | | 💡 Idea |
 
 **Still open in Phase 2:** Laya isn't wired into `payables.py` yet (built and tested separately; live decisions run on the rules baseline until it is). So far the pipeline has only processed self-owned flows; an outside business or agent is the next thing to land.
@@ -192,6 +224,8 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 | EURC | Stretch | European vendor payments |
 | ~~Paymaster~~ | Dropped |
 
+Honest count: 2 live (Agent Wallet, USDC), 4 planned (Gateway, USYC, CCTP, EURC).
+
 ---
 
 ## Contracts
@@ -209,13 +243,14 @@ The on-chain spending authority. Funds are **held by the contract**, not the age
 
 `reasoningHash` (this decision was logged before money moved) and the invoice key (this invoice wasn't paid twice) are deliberately separate guarantees in separate fields.
 
-One instance per business. This deployment is not multi-tenant: onboarding a second business means deploying a second `BudgetEnforcer`.
+One instance per business. This deployment is not multi-tenant, and a second business is not onboarded on it. **Planned (Phase L):** a `BudgetFactory` creates one enforcer per business from the owner's own wallet, each with its own pool, approver, agent and limits; this contract stays as an archived, still-verifiable business #1.
 
 ### Contracts (Arc Testnet)
 
 | Contract | Address |
 |----------|---------|
 | BudgetEnforcer | [`0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB`](https://explorer.testnet.arc.io/address/0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB) |
+| BudgetFactory, LedgerAnchor | planned (Phase L), not deployed |
 | CeedeBooksYield | not built yet |
 | MilestoneEscrow | not built yet |
 
@@ -279,7 +314,8 @@ ceedebooks/
 │       ├── test_api_auth.py
 │       ├── test_audit_public.py
 │       ├── test_preflight.py
-│       └── test_admin.py
+│       ├── test_admin.py
+│       └── test_portal.py
 ├── scripts/
 │   ├── create_api_key.py   # create / revoke API keys (printed once, stored hashed)
 │   └── pay_domain.py       # one-off: manual commit-then-pay of the ceedebooks.xyz domain bill
@@ -372,6 +408,13 @@ Amounts are USDC in its 6-decimal ERC-20 form (`100000000` = $100.00).
 ---
 
 ## Changelog
+
+**v1.2.7.1: README polish (docs only, no code change)**
+- A 60-second reviewer tour with a copy-paste verification command
+- A "Trust model and limits" section: what the contract guarantees, what it does not, one operator, database audit log, testnet only
+- The tagline no longer implies escrow and yield are built; the Planned list and Roadmap now show the multi-business redeploy, audit hardening, oversight, treasury, proof and reach phases with their order
+- Contracts section describes the planned factory design; Circle tools show the honest live and planned count
+- Project tree lists `test_portal.py`
 
 **v1.2.7: Phase K2, vendor portal**
 - Vendors apply with a wallet signature (proof of control of the payee address) at `portal.ceedebooks.xyz`; the admin site has a new Applications tab. Accepting creates the vendor record only; approving the wallet on-chain stays a separate admin signature. `/vendors` stays buyer-only
