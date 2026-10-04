@@ -267,3 +267,20 @@ def test_a_flood_of_challenges_cannot_lock_the_admin_out(client, monkeypatch):
         admin_auth.make_challenge(OTHER.address)
     assert len(admin_auth._challenges) == 5
     assert _login(client).status_code == 200
+
+
+ORIGINAL_SNAPSHOT = main._chain_snapshot  # captured at import, before the fixtures stub it
+
+
+def test_the_real_chain_snapshot_lists_the_spend_categories(monkeypatch):
+    c = main.contract
+    monkeypatch.setattr(c, "budget_limits", lambda: (100_000_000, 20_000_000))
+    monkeypatch.setattr(c, "approver", lambda: ADMIN.address)
+    monkeypatch.setattr(c, "pending_approver", lambda: "0x" + "00" * 20)
+    monkeypatch.setattr(c, "is_paused", lambda: False)
+    monkeypatch.setattr(c, "usdc_balance", lambda: 5_000_000)
+    monkeypatch.setattr(c, "remaining_today", lambda cat: (1, 2_000_000))
+    monkeypatch.setattr(c, "category_limit", lambda cat: 3_000_000)
+    snap = ORIGINAL_SNAPSHOT()
+    assert snap["chain_ok"] is True
+    assert [x["name"] for x in snap["categories"]] == ["Data Oracle", "Infrastructure"]

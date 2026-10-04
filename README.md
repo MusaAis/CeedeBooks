@@ -338,6 +338,9 @@ Amounts are USDC in its 6-decimal ERC-20 form (`100000000` = $100.00).
 
 ## Changelog
 
+**v1.2.6.1: admin overview fix**
+- Fixed the admin Overview and Limits pages, which showed no spending categories because a name in `backend/main.py` hid the category list. Added a regression test that runs the real chain snapshot
+
 **v1.2.6: Phase K1, admin site**
 - `admin.ceedebooks.xyz`: a private admin app. Before a wallet connects it shows only a Connect wallet button; every action after sign-in is a wallet signature, and the admin never types an API key
 - Admin identity is the contract itself: the `/admin` API accepts a session only if its signature recovers to the current on-chain `approver()`, and a session ends the moment the approver changes (or the chain cannot be read). One-time challenges, 15-minute idle and 2-hour absolute session limits, tokens held in browser memory only

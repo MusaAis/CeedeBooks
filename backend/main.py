@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agent import contract, decision_log, payables, treasury
 from agent.config import config
-from agent.categories import Category
+from agent.categories import Category as SpendCategory
 from backend import admin_auth, auth, models
 
 log = logging.getLogger("ceedebooks.api")
@@ -442,7 +442,7 @@ def _chain_snapshot() -> dict:
             per_tx_limit_usdc=per_tx / 1_000_000,
         )
         cats = []
-        for c in Category:
+        for c in SpendCategory:
             overall, in_cat = contract.remaining_today(int(c))
             cats.append({"id": int(c), "name": c.name.replace("_", " ").title(),
                          "daily_limit_usdc": contract.category_limit(int(c)) / 1_000_000, "remaining_usdc": in_cat / 1_000_000})
