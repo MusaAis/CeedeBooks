@@ -3,7 +3,7 @@
 ![Release](https://img.shields.io/github/v/release/MusaAis/CeedeBooks?label=release)
 ![CI](https://github.com/MusaAis/CeedeBooks/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
-![Foundry tests](https://img.shields.io/badge/forge%20tests-24%2F24%20passing-brightgreen)
+![Foundry tests](https://img.shields.io/badge/forge%20tests-69%2F69%20passing-brightgreen)
 ![Python tests](https://img.shields.io/badge/pytest-140%2F140%20passing-brightgreen)
 ![Network](https://img.shields.io/badge/Arc-Testnet-informational)
 
@@ -13,7 +13,7 @@ An autonomous accounts-payable agent for African SMEs on Arc: it validates and p
 
 Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 – Oct 10, 2026.
 
-**Current: v1.2.7.1 (docs only; the last code release is v1.2.7). The AP/AR engine is live on Arc Testnet behind a key-authenticated HTTPS API (`api.ceedebooks.xyz`), with a public proof page (`ceedebooks.xyz`) a wallet-signed admin site (`admin.ceedebooks.xyz`) and a vendor portal (`portal.ceedebooks.xyz`) where a vendor applies and signs in with its wallet. No outside business or paying user yet: every payment so far is self-owned.** See [Roadmap](#roadmap) and the [Changelog](#changelog).
+**Current: v1.2.8 (Phase L1, multi-business contracts).** `BudgetFactory` and `LedgerAnchor` are deployed and verified on Arc Testnet; the live API and pool still run on the v1 `BudgetEnforcer`, and the backend and onboarding follow in v1.2.8.1 and v1.2.8.2. The AP/AR engine is live on Arc Testnet behind a key-authenticated HTTPS API (`api.ceedebooks.xyz`), with a public proof page (`ceedebooks.xyz`), a wallet-signed admin site (`admin.ceedebooks.xyz`) and a vendor portal (`portal.ceedebooks.xyz`). No outside business or paying user yet: every payment so far is self-owned. See [Roadmap](#roadmap) and the [Changelog](#changelog).
 
 ## 60-second tour for reviewers
 
@@ -23,7 +23,7 @@ Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 �
    curl -s https://api.ceedebooks.xyz/decisions/46f65d7786a368e6e0814c938b8af9a7f6bed20bb1196478ac0a32708fa6f14a/verify
    ```
    (the real domain bill; expect `verified: true` and `onchain.match: true`).
-3. **Read the contract:** [`contracts/BudgetEnforcer.sol`](contracts/BudgetEnforcer.sol) and its 24 tests in [`test/`](test/BudgetEnforcer.t.sol).
+3. **Read the contract:** [`contracts/BudgetEnforcer.sol`](contracts/BudgetEnforcer.sol) and its 24 tests in [`test/`](test/BudgetEnforcer.t.sol); the multi-business contracts are deployed: factory [`0x97b9A3802bA6B258cBeF6070532a265656bb391C`](https://explorer.testnet.arc.io/address/0x97b9A3802bA6B258cBeF6070532a265656bb391C), anchor [`0x008217BeC86462E76126F94e50eBe68fb4a41444`](https://explorer.testnet.arc.io/address/0x008217BeC86462E76126F94e50eBe68fb4a41444).
 4. **Run the tests:** `forge test -vv` and `pytest agent/tests/` (setup below).
 5. **See how an agent would use it:** [`/.well-known/agent.json`](https://api.ceedebooks.xyz/.well-known/agent.json).
 
@@ -32,7 +32,7 @@ Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 �
 ## What is CeedeBooks
 
 Most African SMEs run their finances the way most small businesses everywhere do: a spreadsheet, a WhatsApp thread with a bookkeeper, and someone manually checking a bank app before every payment.
-CeedeBooks is an agent that takes over the repetitive parts of that job (validating and paying invoices, tracking contractor milestones, moving idle cash into yield when it isn't needed for a few days) while the business owner keeps hard, contract-level control over what the agent is allowed to spend, on whom, and how much.
+CeedeBooks is an agent that takes over the repetitive parts of that job: it checks each invoice against a purchase order and a confirmed receipt, then pays, holds or escalates it, while the business owner keeps hard, contract-level control over what the agent is allowed to spend, on whom, and how much. Contractor milestone escrow and moving idle cash into yield are planned, not built.
 
 It isn't "an LLM with a wallet." The agent proposes; a smart contract, not a prompt, decides whether a payment is actually allowed to go through.
 
@@ -62,14 +62,14 @@ It isn't "an LLM with a wallet." The agent proposes; a smart contract, not a pro
 
 **Planned** (see the [Roadmap](#roadmap) for order and status; nothing below is live)
 
-- **Multi-business:** a factory that creates one `BudgetEnforcer` per business (own pool, approver, agent and limits), a weekly limit, a way for an approver to return an escalation to the agent, and an on-chain ledger anchor
+- **Multi-business (contracts deployed, not wired in):** `BudgetFactory` and `LedgerAnchor` are live on Arc Testnet (a factory that creates one enforcer per business, a weekly limit, return-to-agent, an on-chain ledger anchor). The backend does not use them yet and no business has been created through the factory; the multi-tenant backend, onboarding and migration are next
 - **Audit hardening:** hash-chained ledger per business anchored on-chain, a log comparing the model's verdict with the rules' verdict, on-chain red-team log, key-custody check, re-evaluate for stuck invoices
 - **Oversight:** maker-checker approvals, pause with a stated reason, every figure in a narrative written by code
 - Circle Gateway unified balance
 - Treasury: economics-gated yield sweep via a pooled USYC wrapper, continuous vendor screening, other-currency invoices
 - Agent-to-agent reference client for vendors (demo runs labelled `demo`)
 - Invoice intake from PDF or email, a Telegram status bot, receivables
-- Contractor milestone escrow, only if time allows
+- Contractor milestone escrow
 - Laya fast-path decision model (built separately, not wired in)
 
 ---
@@ -96,17 +96,12 @@ Everything below is checkable on-chain. Nothing here is estimated.
 | What | Evidence |
 |---|---|
 | Contract deployed and verified on Arc Testnet | [`BudgetEnforcer`](https://explorer.testnet.arc.io/address/0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB) |
-| Test suites | 24 Foundry + 140 Python tests + browser-side JS tests, run by CI on every push |
+| Test suites | 69 Foundry (24 on the v1 contract, 45 on the multi-business contracts) + 140 Python tests + browser-side JS tests, run by CI on every push |
 | First self-owned vendor bill paid through the contract | `ceedebooks.xyz` registration, 2.20 USDC, category 1 |
+| Multi-business contracts deployed and verified (v1.2.8) | [`BudgetFactory`](https://explorer.testnet.arc.io/address/0x97b9A3802bA6B258cBeF6070532a265656bb391C), [`LedgerAnchor`](https://explorer.testnet.arc.io/address/0x008217BeC86462E76126F94e50eBe68fb4a41444) |
 | Outside businesses or paying users | None yet |
 
-**Live snapshot** (the proof page is the live source):
-
-| Pool balance | Paid invoices | Escalations waiting | Vendors | Purchase orders |
-|---|---|---|---|---|
-| 108.79 USDC (testnet) | 2 | 3 | 2 | 2 |
-
-The escalations are self-owned test invoices that the agent parked for review, as designed. Testnet USDC has no market value.
+**Live numbers** (pool balance, paid, held and escalated counts, vendors, purchase orders) change with every payment, so the [proof page](https://ceedebooks.xyz) and `GET /stats` are the only source. The escalations on it are self-owned test invoices that the agent parked for review, as designed. Testnet USDC has no market value.
 
 **The domain payment.** CeedeBooks' own domain was bought by card (Namecheap order 215679394, $2.00 + $0.20 ICANN fee), and the registrar cannot take USDC, so the founder was reimbursed through the contract: vendor registered with `setVendor`, category 1 given a 20 USDC/day limit, the receipt hashed into `docHash`, the reasoning hash logged off-chain first, then `commitDecision` and `pay` from the Circle agent wallet in separate blocks.
 
@@ -134,7 +129,7 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 - **Model output is an input, never a release condition.** Circle's own `arc-escrow` sample releases contractor funds on a bare JSON response from GPT-4o with no structural check behind it. CeedeBooks is built specifically not to repeat that pattern.
 - **Independent receipt witness.** A three-way match proves nothing if the agent can confirm its own receipts. It can't.
 - **Settlement is confirmed, not hoped for.** Circle's transaction API is asynchronous — accepting a request isn't the same as it succeeding on-chain. CeedeBooks waits for a terminal state before trusting any result, closing a real phantom-payment risk most demos never test for.
-- **Tested, not just described.** 24 Foundry tests plus 140 Python tests, both passing against the deployed contract and the live decision pipeline.
+- **Tested, not just described.** 69 Foundry tests (24 cover the v1 contract, 45 cover the multi-business contracts) plus 140 Python tests covering the decision pipeline.
 
 ---
 
@@ -145,7 +140,7 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 │                      CeedeBooks Agent                            │
 ├──────────────────┬──────────────────┬───────────────────────────┤
 │  Treasury Brain   │  AP/AR Engine    │  Contractor Manager       │
-│  (Phase 3)        │  (Phase 2: BUILT)│  (Phase 4)                │
+│  (planned)        │  (BUILT)         │  (planned)                │
 ├──────────────────┼──────────────────┼───────────────────────────┤
 │ Circle Gateway    │ Three-way match  │ MilestoneEscrow.sol       │
 │ POST /v1/balances │ rules baseline   │ holds USDC per milestone  │
@@ -179,7 +174,7 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 - **The audit log is a database.** Each record's hash is checked against an on-chain event, but the log is not yet hash-chained, so a deleted row would not be detected. This is planned (Audit hardening).
 - **The admin key.** The approver is a wallet held off the server. If it is lost, nobody can approve vendors or change limits.
 - **Testnet.** Everything runs on Arc Testnet with test USDC. No outside business or paying user yet; every payment so far is self-owned.
-- **Single business.** The deployed contract serves one business. Multi-business is a planned redeploy, not a toggle.
+- **Single business.** The live pool is the one v1 contract. The multi-business contracts are deployed but not used by the backend yet, and no business has been created through the factory.
 - **Public reasoning.** `GET /decisions/{hash}` returns the full reasoning text, so no private data belongs in it.
 
 ---
@@ -196,15 +191,17 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 | Pre-flight and manifest | Invoice dry run, `agent.json` | v1.2.5 | ✅ Built |
 | K1. Admin site | Wallet-signed admin at `admin.ceedebooks.xyz`, approver hand-over | v1.2.6 | ✅ Built |
 | K2. Vendor portal | Signed vendor applications, wallet sign-in, vendor view, submission metrics | v1.2.7 | ✅ Built |
-| L. Multi-business | `BudgetEnforcer` v2 (weekly limit, return-to-agent), `BudgetFactory` (one enforcer per business), `LedgerAnchor`; v1 contract kept as archived business #1 | v1.2.8 | ⏳ Planned, next |
+| L1. Multi-business contracts | `BudgetEnforcerV2` (weekly limit, return-to-agent, commitments bound to the contract), `BudgetFactory` (one enforcer per business), `LedgerAnchor` | v1.2.8 | ✅ Built; factory and anchor deployed and verified |
+| L2. Multi-tenant backend | `business_id` on every table, per-business contract and agent wallet, scoped auth, cross-business tests | v1.2.8.1 | ⏳ Next |
+| L3. Onboarding and migration | Business applications, on-chain checked registration, deploy factory and anchor, move the pool, v1 kept as archived business #1 | v1.2.8.2 | ⏳ Planned |
 | E. Audit hardening | Per-business hash-chained ledger anchored on-chain, model-vs-rules log, on-chain red-team log, key-custody check, re-evaluate | v1.2.9 | ⏳ Planned |
 | O. Oversight | Maker-checker, pause with reason, figures written by code | v1.2.10 | ⏳ Planned |
 | F. Gateway | `POST /v1/balances` unified balance on the dashboard | v1.3.0 | ⏳ Planned |
-| P. Proof and evidence | Outcomes numbers, "try it in 5 minutes" demo path, rollout records | | ⏳ Planned |
+| P. Proof and evidence | Outcomes numbers (decisions made vs escalated, human agreement rate, duplicates caught), "try it in 5 minutes" demo path, rollout records | | ⏳ Planned |
 | G. Treasury brain | Economics-gated sweep, vendor screening, `CeedeBooksYield.sol` pooled USYC wrapper, EURC, CCTP | v1.3.x | ⏳ Planned |
 | N. Agent-to-agent | Reference vendor client; traction counts an outside agent only | v1.3.x | ⏳ Planned |
 | Q. Reach | PDF and email intake, Telegram bot, receivables, webhooks | | ⏳ Planned |
-| H. Milestone escrow | `MilestoneEscrow.sol` with a `requirementsHash` fixed at funding | v1.4.0 | 💡 Only if time allows |
+| H. Milestone escrow | `MilestoneEscrow.sol` with a `requirementsHash` fixed at funding | | ⏳ Planned, after Proof and evidence |
 | Submit | Demo video, final README, form answers with real numbers only | | ⏳ Planned |
 | Later | Agent-posted decision bond | | 💡 Idea |
 
@@ -222,7 +219,7 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 | USYC | Planned (Phase G) | Via own pooled wrapper (Arc's Teller has a $100k / allowlist gate) |
 | CCTP | Stretch | Domain 26, `minFinalityThreshold: 2000`, V2 7-param `depositForBurn` only |
 | EURC | Stretch | European vendor payments |
-| ~~Paymaster~~ | Dropped |
+| ~~Paymaster~~ | Dropped | Not used |
 
 Honest count: 2 live (Agent Wallet, USDC), 4 planned (Gateway, USYC, CCTP, EURC).
 
@@ -243,14 +240,22 @@ The on-chain spending authority. Funds are **held by the contract**, not the age
 
 `reasoningHash` (this decision was logged before money moved) and the invoice key (this invoice wasn't paid twice) are deliberately separate guarantees in separate fields.
 
-One instance per business. This deployment is not multi-tenant, and a second business is not onboarded on it. **Planned (Phase L):** a `BudgetFactory` creates one enforcer per business from the owner's own wallet, each with its own pool, approver, agent and limits; this contract stays as an archived, still-verifiable business #1.
+One instance per business. This deployment is not multi-tenant, and a second business is not onboarded on it. The `BudgetFactory` below creates one enforcer per business from the owner's own wallet, each with its own pool, approver, agent and limits; no business has been created through it yet, and this contract stays as the live pool and, later, an archived, still-verifiable business #1.
+
+### `BudgetEnforcerV2.sol`, `BudgetFactory.sol`, `LedgerAnchor.sol` (v1.2.8)
+
+- **`BudgetEnforcerV2`** keeps everything above and adds a rolling 7-day limit (`setBudget(daily, perTx, weekly)` requires `0 < perTx <= daily <= weekly`), `reopenEscalation` (approver only, only for a Pending escalation, so the agent can re-evaluate and then pay through every normal limit or escalate again), commitments bound to the contract address and chain id, and distinct agent and approver roles.
+- **`BudgetFactory`**: `createBusiness(agent, daily, perTx, weekly)` deploys one enforcer per business, and the caller becomes its approver. The factory has no admin function, holds no funds and cannot touch any enforcer.
+- **`LedgerAnchor`**: `anchor(head, sequence)` records a ledger head per sender, and the sequence must increase. A verifier trusts only events from a business's agent address.
 
 ### Contracts (Arc Testnet)
 
 | Contract | Address |
 |----------|---------|
 | BudgetEnforcer | [`0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB`](https://explorer.testnet.arc.io/address/0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB) |
-| BudgetFactory, LedgerAnchor | planned (Phase L), not deployed |
+| BudgetFactory (v1.2.8) | [`0x97b9A3802bA6B258cBeF6070532a265656bb391C`](https://explorer.testnet.arc.io/address/0x97b9A3802bA6B258cBeF6070532a265656bb391C) |
+| LedgerAnchor (v1.2.8) | [`0x008217BeC86462E76126F94e50eBe68fb4a41444`](https://explorer.testnet.arc.io/address/0x008217BeC86462E76126F94e50eBe68fb4a41444) |
+| BudgetEnforcerV2 | created per business by the factory; none created yet |
 | CeedeBooksYield | not built yet |
 | MilestoneEscrow | not built yet |
 
@@ -273,7 +278,7 @@ Run with a **single worker**: `uvicorn backend.main:app` (the rate limiter is pe
 | `POST /invoices` | buyer, or a vendor (key or wallet session) for its own `vendor_id` | Full pipeline: retry guard, three-way match, decision, commit-then-pay or escalate. Always pays the wallet on file; the invoice category must match the PO's; the runway is computed server-side from the pool balance and trailing spend (`treasury_runway_days` in the body is rejected). Duplicate invoice numbers return 409 |
 | `GET /invoices/{id}` | buyer; a vendor for its own invoices | Status and `reasoning_hash`. Another vendor's invoice returns 404 |
 | `POST /invoices/preflight` | buyer, or a vendor for its own `vendor_id` | Dry run of `POST /invoices`: returns `would_pay`, `would_hold`, `would_escalate`, `would_be_refused_by_contract` or `already_paid`, with every check and the reasons. Writes nothing (no invoice row, no audit row, no chain transaction) and returns only booleans, never balances or limits |
-| `GET /admin/auth/state`, `POST /admin/auth/challenge`, `POST /admin/auth/verify` | public | Wallet sign-in for the admin site: a one-time challenge is signed with the wallet and accepted only if it recovers to the contract's current `approver()`. Challenge requests are rate-limited; failures count toward the failed-auth throttle |
+| `GET /admin/auth/state`, `POST /admin/auth/challenge`, `POST /admin/auth/verify`, `POST /admin/auth/logout` | public / admin session | Wallet sign-in for the admin site: a one-time challenge is signed with the wallet and accepted only if it recovers to the contract's current `approver()`. Challenge requests are rate-limited; failures count toward the failed-auth throttle |
 | `GET /admin/overview`, `/admin/vendors`, `/admin/purchase-orders`, `/admin/invoices`, `/admin/actions`, `/admin/invoices/{id}/escalation` | admin session | Admin dashboard data. A buyer API key is refused (403); no session is a 401 |
 | `POST /admin/actions` | admin session | Records an on-chain admin transaction after the wallet sent it. The server checks the chain itself (to the contract, from the admin, successful); settling an escalation also needs the on-chain event to carry that invoice's own reasoning hash |
 | `POST /apply/challenge`, `POST /apply` | public | Apply to become a vendor. A one-time challenge is signed with the payee wallet (EIP-191 `personal_sign`, nothing sent on-chain); the signature must recover to the wallet being applied for. A sign-in signature cannot be replayed here. Applications are private, 1 pending per wallet, 3 pending per IP, 5 per hour per IP |
@@ -332,11 +337,18 @@ ceedebooks/
 ├── site/                   # public proof page and its in-browser hash check
 ├── deploy/                 # nginx configs, systemd unit, DEPLOY.md
 ├── contracts/
-│   └── BudgetEnforcer.sol
+│   ├── BudgetEnforcer.sol      # v1, deployed
+│   ├── BudgetEnforcerV2.sol    # multi-business version, created by the factory
+│   ├── BudgetFactory.sol       # one enforcer per business, deployed
+│   └── LedgerAnchor.sol        # public ledger-head anchor, deployed
 ├── test/
 │   ├── BudgetEnforcer.t.sol
+│   ├── BudgetEnforcerV2.t.sol
+│   ├── BudgetFactory.t.sol
+│   ├── LedgerAnchor.t.sol
 │   └── mocks/MockUSDC.sol
 ├── foundry.toml
+├── lib/                    # forge-std, cloned in Setup, git-ignored
 ├── README.md
 └── .env.example
 ```
@@ -351,7 +363,7 @@ cd CeedeBooks
 cp .env.example .env   # fill in real values
 
 pip install -r agent/requirements.txt
-forge install foundry-rs/forge-std   # if not already present
+git clone --depth 1 https://github.com/foundry-rs/forge-std lib/forge-std   # test library, git-ignored
 
 set -a; source .env; set +a
 ```
@@ -373,7 +385,7 @@ forge test -vv
 pytest agent/tests/
 ```
 
-**24 Foundry tests**, one per revert path or acceptance scenario: unregistered and revoked vendor, over per-tx / daily / category limits, unset category (fail-closed), same invoice resubmitted as a different file, missing / reused / mismatched commit, crash-and-retry, simulated prompt injection (contract refuses even if the agent were fooled), the escalate → approve / reject flow, escalated invoices blocked from direct payment, pause, withdraw, agent rotation, two-step approver rotation, and the `reasoningHash` round-trip via the `PaymentMade` event.
+**69 Foundry tests** (24 for the v1 contract, 35 for `BudgetEnforcerV2`, 6 for `BudgetFactory`, 4 for `LedgerAnchor`), one per revert path or acceptance scenario: unregistered and revoked vendor, over per-tx / daily / category limits, unset category (fail-closed), same invoice resubmitted as a different file, missing / reused / mismatched commit, crash-and-retry, simulated prompt injection (contract refuses even if the agent were fooled), the escalate → approve / reject flow, escalated invoices blocked from direct payment, pause, withdraw, agent rotation, two-step approver rotation, and the `reasoningHash` round-trip via the `PaymentMade` event.
 
 **140 Python tests** covering the three-way match, rules-baseline decisions (pay / hold / escalate), retry safety (reprocessing a paid invoice is a no-op), API access control (every denied path), server-side runway, input validation, the public audit endpoints and on-chain verification, the invoice pre-flight dry run (it writes nothing and reveals no balances or limits), and the admin wallet sign-in and routes. Browser-side tests check the proof page's hash recomputation (`site/verify.test.js`) and the admin app's call encoding and rendering (`admin/*.test.js`). The vendor portal suite covers: a signature from another wallet is refused, a sign-in signature cannot be replayed as an application, challenges are single use, the pending and per-IP limits, accepting once only, vendor sessions seeing only their own data, sessions ending on wallet change, idle time and logout, a vendor never labelling its own origin, and the metrics split by origin.
 
@@ -405,9 +417,34 @@ cast send $BUDGET_ENFORCER_ADDRESS "setVendor(address,bool)" <VENDOR_ADDRESS> tr
 
 Amounts are USDC in its 6-decimal ERC-20 form (`100000000` = $100.00).
 
+**Multi-business contracts (v1.2.8).** Neither has an owner, so the deployer key has no power over them. Deployed Oct 4, 2026:
+
+```bash
+forge create contracts/LedgerAnchor.sol:LedgerAnchor \
+  --rpc-url $ARC_TESTNET_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY --broadcast \
+  --verify --verifier blockscout --verifier-url https://explorer.testnet.arc.io/api/
+
+forge create contracts/BudgetFactory.sol:BudgetFactory \
+  --rpc-url $ARC_TESTNET_RPC_URL --private-key $DEPLOYER_PRIVATE_KEY --broadcast \
+  --verify --verifier blockscout --verifier-url https://explorer.testnet.arc.io/api/ \
+  --constructor-args 0x3600000000000000000000000000000000000000
+```
+
+Deployment transactions: [LedgerAnchor `0x45c031cd...9f9f4d`](https://explorer.testnet.arc.io/tx/0x45c031cda95d0e688b967e8f2a52abd4d00b801bb1240f4a314477497a9f9f4d), [BudgetFactory `0x4e69b06e...b61fbb`](https://explorer.testnet.arc.io/tx/0x4e69b06eac8b349a320ca29276e3739177409db018af46a84659f32237b61fbb); both verified on the explorer. A business owner then calls `createBusiness(agent, daily, perTx, weekly)` from their own wallet (Phase L3); each business's enforcer address will be listed in the Contracts table.
+
 ---
 
 ## Changelog
+
+**v1.2.8: Phase L1, multi-business contracts (factory and anchor deployed and verified on Arc Testnet)**
+- Deployed and verified: `BudgetFactory` [`0x97b9A3802bA6B258cBeF6070532a265656bb391C`](https://explorer.testnet.arc.io/address/0x97b9A3802bA6B258cBeF6070532a265656bb391C) and `LedgerAnchor` [`0x008217BeC86462E76126F94e50eBe68fb4a41444`](https://explorer.testnet.arc.io/address/0x008217BeC86462E76126F94e50eBe68fb4a41444). Checked on-chain after deployment: the factory's USDC address is the Arc USDC, `businessCount` is 0, the anchor's sequence starts at 0. `BudgetEnforcerV2` has no standalone deployment: the factory creates one per business
+- `BudgetEnforcerV2.sol`: weekly rolling limit via `setBudget(daily, perTx, weekly)`, `reopenEscalation` (approver only, Pending only), commitments bound to the contract and chain, distinct agent and approver roles
+- `BudgetFactory.sol`: one enforcer per business, the caller becomes its approver; no admin and no funds
+- `LedgerAnchor.sol`: public anchor for a ledger head, sequence must increase per sender
+- 45 new Foundry tests (69 in total); the deployed v1 contract and its 24 tests are unchanged
+- README audited against the repo: current-version line, "what is CeedeBooks" no longer implies escrow and yield are built, architecture labels, roadmap rows and versions, Circle tools table, project tree, API table (admin logout), Setup (forge-std), live snapshot replaced by a pointer to the proof page
+- `lib/` is git-ignored so a local forge-std clone is never committed
+- The running API and the live v1 contract are unchanged; no business has been created through the factory yet (Phase L2 and L3)
 
 **v1.2.7.1: README polish (docs only, no code change)**
 - A 60-second reviewer tour with a copy-paste verification command

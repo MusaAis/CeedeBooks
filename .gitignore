@@ -26,3 +26,6 @@ dist/
 
 .DS_Store
 *.log
+
+# forge-std checkout (see README Setup)
+lib/
