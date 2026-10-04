@@ -7,7 +7,7 @@
   var C = W.CONFIG;
   var root = document.getElementById("root");
   var S = { providers: [], provider: null, account: null, token: null, overview: null, tab: "overview", bound: false };
-  var TABS = [["overview", "Overview"], ["vendors", "Vendors"], ["pos", "Purchase orders"], ["invoices", "Invoices"], ["limits", "Limits and safety"], ["activity", "Activity"]];
+  var TABS = [["overview", "Overview"], ["applications", "Applications"], ["vendors", "Vendors"], ["pos", "Purchase orders"], ["invoices", "Invoices"], ["limits", "Limits and safety"], ["activity", "Activity"]];
 
   function h(tag, attrs, kids) {
     var n = document.createElement(tag);
@@ -38,7 +38,7 @@
     document.body.appendChild(statusEl);
     if (kind === "ok") setTimeout(function () { if (statusEl && statusEl.textContent.indexOf(text) === 0) say(null); }, 6000);
   }
-  function confirmAction(title, lines) {
+  function confirmAction(title, lines, okLabel) {
     var dlg = document.getElementById("dlg");
     return new Promise(function (resolve) {
       dlg.textContent = "";
@@ -47,7 +47,7 @@
       lines.forEach(function (l) { dlg.appendChild(h("p", null, [l])); });
       dlg.appendChild(h("div", { class: "acts" }, [
         h("button", { class: "btn ghost sm", onclick: function () { done(false); } }, ["Cancel"]),
-        h("button", { class: "btn sm", onclick: function () { done(true); } }, ["Continue to wallet"])
+        h("button", { class: "btn sm", onclick: function () { done(true); } }, [okLabel || "Continue to wallet"])
       ]));
       if (dlg.showModal) dlg.showModal();
     });
@@ -128,7 +128,7 @@
   // ---------- gate: the only thing visible before the admin signs in
   function brand() {
     return h("div", { class: "brand" }, [
-      h("span", { "aria-hidden": "true" }, ["\u25A0 "]), "CeedeBooks admin"]);
+      h("img", { src: "logo.png", alt: "", width: "28", height: "28", class: "logo" }), "CeedeBooks admin"]);
   }
   function mountGate(parts) {
     root.textContent = "";
@@ -251,12 +251,36 @@
           card("Pool balance", usdc(c.balance_usdc)), card("Payments", c.paused ? "PAUSED" : "Active"),
           card("Daily limit", usdc(c.daily_limit_usdc)), card("Per-payment limit", usdc(c.per_tx_limit_usdc)),
           card("Escalations waiting", inv.escalated || 0), card("Paid invoices", inv.paid || 0),
-          card("Vendors", o.vendors), card("Purchase orders", o.purchase_orders)]));
+          card("Vendors", o.vendors), card("Purchase orders", o.purchase_orders),
+          card("Applications waiting", o.pending_applications || 0)]));
         wrap.appendChild(h("h3", null, ["Spending categories"]));
         wrap.appendChild(table(["Category", "Daily limit", "Left today"], c.categories.map(function (x) { return [x.name, usdc(x.daily_limit_usdc), usdc(x.remaining_usdc)]; })));
         wrap.appendChild(h("p", { class: "note" }, ["Admin wallet: " + c.approver]));
       }
       return wrap;
+    },
+
+    applications: async function () {
+      var data = await api("/admin/applications");
+      var kind = { pending: "warn", accepted: "ok", rejected: "bad" };
+      var decide = function (a, verb) {
+        return h("button", { class: "btn ghost sm", onclick: guard(async function () {
+          var accept = verb === "accept";
+          if (!(await confirmAction(accept ? "Accept this application" : "Reject this application",
+            [a.business_name, a.wallet, accept ? "A vendor record is created. It still cannot be paid until you approve its wallet on-chain in the Vendors tab." : "The applicant can apply again."],
+            accept ? "Accept" : "Reject"))) return;
+          await api("/admin/applications/" + a.id + "/" + verb, { method: "POST" });
+          say(accept ? "Vendor added. Now approve it on-chain in the Vendors tab." : "Application rejected.", "ok");
+          await show("applications");
+        }) }, [verb === "accept" ? "Accept" : "Reject"]);
+      };
+      var rows = data.applications.map(function (a) {
+        var act = a.status === "pending" ? h("span", { class: "actions" }, [decide(a, "accept"), " ", decide(a, "reject")]) : "";
+        return [a.business_name, h("span", { class: "mono" }, [a.wallet]), a.contact || "", when(a.created_at), chip(a.status, kind[a.status] || "warn"), act];
+      });
+      return h("div", null, [h("h2", null, ["Applications"]),
+        h("p", { class: "note" }, ["People who proved they control a payee wallet by signing a message. Contact details are visible only here."]),
+        rows.length ? table(["Business", "Wallet", "Contact", "Applied", "Status", ""], rows) : h("p", { class: "note" }, ["No applications yet."])]);
     },
 
     vendors: async function () {

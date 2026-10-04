@@ -44,6 +44,26 @@ CREATE TABLE IF NOT EXISTS invoices (
     created_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS vendor_applications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_name TEXT NOT NULL,
+    wallet TEXT NOT NULL,
+    contact TEXT,
+    ip_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected')),
+    vendor_id INTEGER REFERENCES vendors(id),
+    created_at REAL NOT NULL,
+    decided_at REAL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_application_pending_wallet ON vendor_applications(wallet) WHERE status = 'pending';
+
+CREATE TABLE IF NOT EXISTS rejected_submissions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    reason TEXT NOT NULL,
+    origin TEXT NOT NULL DEFAULT 'agent',
+    created_at REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS admin_actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     admin_address TEXT NOT NULL,
@@ -70,7 +90,24 @@ CREATE TABLE IF NOT EXISTS api_keys (
 async def init_db() -> None:
     async with aiosqlite.connect(config.db_path) as db:
         await db.executescript(_SCHEMA)
+        async with db.execute("PRAGMA table_info(invoices)") as cur:
+            columns = [r[1] for r in await cur.fetchall()]
+        if "origin" not in columns:  # v1.2.7: where an invoice came from (agent, manual, demo)
+            await db.execute("ALTER TABLE invoices ADD COLUMN origin TEXT NOT NULL DEFAULT 'agent'")
         await db.commit()
+
+
+async def backfill_origin() -> None:
+    """Invoices paid by hand through scripts (audit model_used = 'manual') are labelled manual, once. Idempotent."""
+    async with aiosqlite.connect(config.db_path) as db:
+        try:
+            await db.execute(
+                "UPDATE invoices SET origin = 'manual' WHERE origin = 'agent' AND reasoning_hash IN "
+                "(SELECT reasoning_hash FROM audit_log WHERE model_used = 'manual')"
+            )
+            await db.commit()
+        except aiosqlite.OperationalError:
+            pass  # audit_log not created yet (fresh database): nothing to backfill
 
 
 async def get_vendor(vendor_id: int) -> Optional[aiosqlite.Row]:
@@ -95,13 +132,14 @@ async def get_receipt(po_id: int) -> Optional[aiosqlite.Row]:
 
 
 async def save_invoice(
-    invoice_number: str, vendor_id: int, po_id: Optional[int], amount_usdc: float, category: int, doc_hash: str
+    invoice_number: str, vendor_id: int, po_id: Optional[int], amount_usdc: float, category: int, doc_hash: str,
+    origin: str = "agent",
 ) -> int:
     async with aiosqlite.connect(config.db_path) as db:
         cur = await db.execute(
-            """INSERT INTO invoices (invoice_number, vendor_id, po_id, amount_usdc, category, doc_hash, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (invoice_number, vendor_id, po_id, amount_usdc, category, doc_hash, time.time()),
+            """INSERT INTO invoices (invoice_number, vendor_id, po_id, amount_usdc, category, doc_hash, origin, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (invoice_number, vendor_id, po_id, amount_usdc, category, doc_hash, origin, time.time()),
         )
         await db.commit()
         return cur.lastrowid
@@ -260,3 +298,144 @@ async def invoice_counts() -> dict:
     async with aiosqlite.connect(config.db_path) as db:
         async with db.execute("SELECT status, COUNT(*) FROM invoices GROUP BY status") as cur:
             return {status: n for status, n in await cur.fetchall()}
+
+
+# ---- vendor portal (v1.2.7)
+
+ORIGINS = ("agent", "manual", "demo")
+
+
+async def get_vendor_by_wallet(wallet: str) -> Optional[aiosqlite.Row]:
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM vendors WHERE lower(wallet_address) = ? ORDER BY id LIMIT 1", (wallet.lower(),)
+        ) as cur:
+            return await cur.fetchone()
+
+
+async def list_vendor_purchase_orders(vendor_id: int) -> list:
+    """A vendor's own POs only. `received`: a receipt is on file. `invoiced`: an invoice already exists for it."""
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT p.id, p.po_number, p.amount_usdc, p.category,
+                      EXISTS(SELECT 1 FROM receipts r WHERE r.po_id = p.id) AS received,
+                      EXISTS(SELECT 1 FROM invoices i WHERE i.po_id = p.id) AS invoiced
+               FROM purchase_orders p WHERE p.vendor_id = ? ORDER BY p.id DESC LIMIT 100""",
+            (vendor_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def list_vendor_invoices(vendor_id: int, limit: int = 50) -> list:
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT id, invoice_number, amount_usdc, category, status, reasoning_hash, created_at
+               FROM invoices WHERE vendor_id = ? ORDER BY id DESC LIMIT ?""",
+            (vendor_id, limit),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def save_application(business_name: str, wallet: str, contact: Optional[str], ip_hash: str) -> int:
+    """Raises sqlite3.IntegrityError if this wallet already has a pending application."""
+    async with aiosqlite.connect(config.db_path) as db:
+        cur = await db.execute(
+            "INSERT INTO vendor_applications (business_name, wallet, contact, ip_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+            (business_name, wallet.lower(), contact, ip_hash, time.time()),
+        )
+        await db.commit()
+        return cur.lastrowid
+
+
+async def pending_applications_from(ip_hash: str) -> int:
+    async with aiosqlite.connect(config.db_path) as db:
+        async with db.execute(
+            "SELECT COUNT(*) FROM vendor_applications WHERE status = 'pending' AND ip_hash = ?", (ip_hash,)
+        ) as cur:
+            return int((await cur.fetchone())[0])
+
+
+async def count_pending_applications() -> int:
+    async with aiosqlite.connect(config.db_path) as db:
+        async with db.execute("SELECT COUNT(*) FROM vendor_applications WHERE status = 'pending'") as cur:
+            return int((await cur.fetchone())[0])
+
+
+async def list_applications(limit: int = 100) -> list:
+    """Private: admin only. The ip hash is never returned."""
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            """SELECT id, business_name, wallet, contact, status, vendor_id, created_at, decided_at
+               FROM vendor_applications ORDER BY (status = 'pending') DESC, id DESC LIMIT ?""",
+            (limit,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_application(application_id: int) -> Optional[aiosqlite.Row]:
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM vendor_applications WHERE id = ?", (application_id,)) as cur:
+            return await cur.fetchone()
+
+
+async def accept_application(application_id: int) -> Optional[int]:
+    """Creates the vendor and marks the application accepted in one transaction. Returns the new vendor id, or None if
+    the application is not pending any more (so two admin clicks cannot create two vendors)."""
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute("BEGIN IMMEDIATE")
+        async with db.execute("SELECT * FROM vendor_applications WHERE id = ? AND status = 'pending'", (application_id,)) as cur:
+            app_row = await cur.fetchone()
+        if app_row is None:
+            await db.rollback()
+            return None
+        cur = await db.execute("INSERT INTO vendors (name, wallet_address) VALUES (?, ?)", (app_row["business_name"], app_row["wallet"]))
+        vendor_id = cur.lastrowid
+        await db.execute(
+            "UPDATE vendor_applications SET status = 'accepted', vendor_id = ?, decided_at = ? WHERE id = ?",
+            (vendor_id, time.time(), application_id),
+        )
+        await db.commit()
+        return vendor_id
+
+
+async def reject_application(application_id: int) -> bool:
+    async with aiosqlite.connect(config.db_path) as db:
+        cur = await db.execute(
+            "UPDATE vendor_applications SET status = 'rejected', decided_at = ? WHERE id = ? AND status = 'pending'",
+            (time.time(), application_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def log_rejected_submission(reason: str, origin: str = "agent") -> None:
+    """Counts only (no vendor, amount or invoice data): feeds the 'duplicates caught' metric."""
+    async with aiosqlite.connect(config.db_path) as db:
+        await db.execute("INSERT INTO rejected_submissions (reason, origin, created_at) VALUES (?, ?, ?)", (reason, origin, time.time()))
+        await db.commit()
+
+
+async def submission_stats() -> dict:
+    """Invoices processed, USDC paid and duplicates caught, split by origin. All three origins are always present."""
+    out = {o: {"invoices_processed": 0, "payment_volume_usdc": 0.0, "duplicates_caught": 0} for o in ORIGINS}
+    async with aiosqlite.connect(config.db_path) as db:
+        async with db.execute(
+            "SELECT origin, COUNT(*), COALESCE(SUM(CASE WHEN status = 'paid' THEN amount_usdc ELSE 0 END), 0) "
+            "FROM invoices WHERE status IN ('paid', 'held', 'escalated', 'rejected') GROUP BY origin"
+        ) as cur:
+            for origin, n, volume in await cur.fetchall():
+                if origin in out:
+                    out[origin]["invoices_processed"], out[origin]["payment_volume_usdc"] = n, round(float(volume), 6)
+        async with db.execute("SELECT origin, COUNT(*) FROM rejected_submissions WHERE reason = 'duplicate_invoice' GROUP BY origin") as cur:
+            for origin, n in await cur.fetchall():
+                if origin in out:
+                    out[origin]["duplicates_caught"] = n
+    total = {k: sum(out[o][k] for o in ORIGINS) for k in ("invoices_processed", "payment_volume_usdc", "duplicates_caught")}
+    total["payment_volume_usdc"] = round(total["payment_volume_usdc"], 6)
+    return {**total, "by_origin": out}

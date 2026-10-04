@@ -55,3 +55,4 @@ dialog::backdrop{background:rgba(13,22,51,.6)}dialog h3{margin:0 0 .5rem}dialog 
   .actions .btn.sm{min-height:2.6rem}
   .status{padding-bottom:calc(.7rem + env(safe-area-inset-bottom,0px))}
 }
+.brand{display:flex;align-items:center;gap:.55rem}.brand .logo{width:28px;height:28px;display:block;flex:none}

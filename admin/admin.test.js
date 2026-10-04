@@ -45,6 +45,8 @@ global.fetch = async (url, opt = {}) => {
     if (auth !== "Bearer tok" || expireSession) return { ok: false, status: 401, json: async () => ({ detail: "no" }) };
     if (path === "/admin/overview") return ok({ chain: { chain_ok: true, approver: ADMIN, paused: false, balance_usdc: 108.79, daily_limit_usdc: 100, per_tx_limit_usdc: 20, categories: [{ id: 1, name: "Infrastructure", daily_limit_usdc: 20, remaining_usdc: 20 }] }, invoices: { escalated: 3 }, vendors: 1, purchase_orders: 0 });
     if (path === "/admin/vendors") return ok({ vendors: [{ id: 1, name: "Ops", wallet_address: "0x" + "d7".repeat(20), approved_onchain: false }] });
+    if (path === "/admin/applications" && method === "GET") return ok({ applications: [{ id: 4, business_name: "Acme Data", wallet: "0x" + "ee".repeat(20), contact: "acme@example.com", status: "pending", created_at: 1 }] });
+    if (path === "/admin/applications/4/accept" && method === "POST") { posts.push({ accepted: 4 }); return ok({ ok: true, vendor_id: 3 }); }
     if (path === "/admin/actions" && method === "POST") { posts.push(JSON.parse(opt.body)); return ok({ ok: true }); }
   }
   throw new Error("unexpected fetch " + method + " " + path);
@@ -75,6 +77,15 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
   assert.strictEqual(tx.data, W.CALLS.setVendor("0x" + "d7".repeat(20), true));
   assert.strictEqual(tx.from, ADMIN);
   assert.deepStrictEqual(posts[0], { action: "set_vendor", tx_hash: "0x" + "cd".repeat(32) });
+
+  // applications tab: review, accept (no wallet transaction: it only creates the vendor record)
+  let apptab = []; walk(root, (x) => { if (x.attrs && x.attrs["data-tab"] === "applications") apptab.push(x); });
+  await apptab[0].listeners.click(); await tick();
+  assert.ok(/Acme Data/.test(root.textContent) && /acme@example.com/.test(root.textContent));
+  const txBefore = calls.filter((c) => c.method === "eth_sendTransaction").length;
+  await findBtn(root, "Accept").listeners.click(); await tick(100);
+  assert.deepStrictEqual(posts[posts.length - 1], { accepted: 4 });
+  assert.strictEqual(calls.filter((c) => c.method === "eth_sendTransaction").length, txBefore, "accepting an application sends no transaction");
 
   // a session the server ends sends the admin back to the gate
   expireSession = true;

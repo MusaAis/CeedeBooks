@@ -43,3 +43,19 @@ The approver was the deployer key in the server `.env`. Rotate it so a server br
 3. Open the admin site with the new wallet: it shows **Accept admin role**. One transaction later it is the approver.
 4. Check with `cast call <BudgetEnforcer> "approver()(address)"`.
 Keep the new wallet's seed phrase offline. If the approver wallet is lost, nobody can approve vendors or change limits.
+
+## Vendor portal at portal.ceedebooks.xyz
+
+Vendors apply and sign in with a wallet signature. No keys or passwords are issued, and the portal never asks a wallet for a transaction.
+
+1. DNS: add an `A` record, host `portal`, value = the server's public IPv4.
+2. Files: `sudo mkdir -p /var/www/ceedebooks-portal && sudo cp portal/index.html portal/portal.css portal/lib.js portal/portal.js portal/logo.png portal/favicon.png portal/apple-touch-icon.png /var/www/ceedebooks-portal/` (re-run after any change to `portal/`).
+3. nginx: `sudo cp deploy/nginx-portal.conf /etc/nginx/sites-available/ceedebooks-portal && sudo ln -s /etc/nginx/sites-available/ceedebooks-portal /etc/nginx/sites-enabled/ && sudo nginx -t && sudo systemctl reload nginx`
+4. HTTPS: `sudo certbot --nginx -d portal.ceedebooks.xyz`
+5. Restart the API so CORS includes the portal origin (it is the default; set `PORTAL_ORIGIN` only to change it): `sudo systemctl restart ceedebooks-api`. The first start after v1.2.7 adds the `origin` column to `invoices`, creates the application tables, and relabels the hand-run domain payment as `manual`.
+6. Check from outside: `curl -s -X POST https://api.ceedebooks.xyz/apply/challenge -H 'Content-Type: application/json' -d '{"address":"0x0000000000000000000000000000000000000001"}'` returns a challenge, and `curl -i https://api.ceedebooks.xyz/admin/applications` returns 401.
+
+Reviewing applications: the admin site has an **Applications** tab. Accepting one only creates the vendor record. The vendor cannot be paid until you approve its wallet on-chain in the **Vendors** tab with your own signature.
+
+The portal loads its typeface (Bricolage Grotesque, the same as the proof page) from Google Fonts, so its Content-Security-Policy allows `fonts.googleapis.com` and `fonts.gstatic.com`. If you set the portal up before that line existed, update the live config in place (do not copy the repo file over it: certbot has edited the live one):
+`sudo sed -i "s#style-src 'self'; img-src#style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src#" /etc/nginx/sites-available/ceedebooks-portal && sudo nginx -t && sudo systemctl reload nginx`

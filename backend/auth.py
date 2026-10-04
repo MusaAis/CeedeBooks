@@ -16,7 +16,7 @@ from typing import Optional
 from fastapi import Depends, Header, HTTPException, Request
 
 from agent.config import config
-from backend import admin_auth, models
+from backend import admin_auth, models, vendor_auth
 from backend.ratelimit import RateLimiter
 
 BUYER = "buyer"
@@ -64,8 +64,14 @@ async def authenticate(
     if failed_auth_limiter.blocked(ip, config.failed_auth_per_min, 60.0):
         raise HTTPException(429, "Too many failed attempts; try again later", headers={"Retry-After": "60"})
 
-    if authorization is not None:  # wallet-signed admin session: acts as the buyer, plus the /admin routes
+    if authorization is not None:  # wallet-signed session: a vendor (own data only) or the admin (acts as the buyer)
         token = authorization[7:].strip() if authorization[:7].lower() == "bearer " else ""
+        if token.startswith("cdb_vendor_") and len(token) <= _MAX_KEY_LEN:
+            vsession = await vendor_auth.validate_token(token)
+            if vsession is None:
+                failed_auth_limiter.allow(ip, config.failed_auth_per_min, 60.0)
+                raise HTTPException(401, "Vendor session missing, expired or no longer valid")
+            return Principal(key_id=0, role=VENDOR, vendor_id=vsession["vendor_id"], label="vendor:" + vsession["address"])
         session = await admin_auth.validate_token(token) if 0 < len(token) <= _MAX_KEY_LEN else None
         if session is None:
             failed_auth_limiter.allow(ip, config.failed_auth_per_min, 60.0)

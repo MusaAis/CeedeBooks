@@ -3,6 +3,7 @@
 Access model (see backend/auth.py): buyer key for setup and receipts, vendor key for its own invoices only, no key for the read-only audit endpoints. No client-supplied value can influence a payment decision: the receipt role comes from the key, the vendor wallet from the vendor on file, and the treasury runway from the chain.
 """
 import asyncio
+import hashlib
 import logging
 import re
 import sqlite3
@@ -18,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from agent import contract, decision_log, payables, treasury
 from agent.config import config
 from agent.categories import Category as SpendCategory
-from backend import admin_auth, auth, models
+from backend import admin_auth, auth, models, vendor_auth
 
 log = logging.getLogger("ceedebooks.api")
 
@@ -71,6 +72,7 @@ class InvoiceIn(_Strict):
     category: Category
     doc_hash: Annotated[str, Field(min_length=1, max_length=128)]
     po_number: Optional[Ref] = None
+    origin: Optional[Literal["agent", "demo"]] = None  # buyer only: label a demo run so it never counts as real traffic
 
     @field_validator("vendor_wallet")
     @classmethod
@@ -135,7 +137,7 @@ async def rate_limit(request: Request, call_next):
 app.add_middleware(BodyLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=list(config.cors_origins) + [config.admin_origin],
+    allow_origins=list(config.cors_origins) + [config.admin_origin, config.portal_origin],
     allow_methods=["GET", "POST"],
     allow_headers=["X-API-Key", "Authorization", "Content-Type"],
 )
@@ -145,6 +147,7 @@ app.add_middleware(
 async def startup() -> None:
     await models.init_db()
     await decision_log.init_db()
+    await models.backfill_origin()
 
 
 # ---- setup (buyer only)
@@ -202,6 +205,8 @@ async def _checked_submission(body: InvoiceIn, who: auth.Principal):
     """Access and consistency checks shared by /invoices and /invoices/preflight. Returns (vendor, po)."""
     if who.role == "vendor" and who.vendor_id != body.vendor_id:
         raise HTTPException(403, "A vendor key can only submit invoices for its own vendor_id")
+    if body.origin is not None and who.role != "buyer":
+        raise HTTPException(403, "Only the buyer can label an invoice's origin")
 
     vendor = await models.get_vendor(body.vendor_id)
     if vendor is None:
@@ -243,9 +248,11 @@ async def submit_invoice(body: InvoiceIn, who: auth.Principal = Depends(auth.req
     amount = float(body.amount_usdc)
     try:
         invoice_id = await models.save_invoice(
-            body.invoice_number, body.vendor_id, po["id"] if po else None, amount, body.category, body.doc_hash
+            body.invoice_number, body.vendor_id, po["id"] if po else None, amount, body.category, body.doc_hash,
+            body.origin or "agent",
         )
     except sqlite3.IntegrityError:
+        await models.log_rejected_submission("duplicate_invoice", body.origin or "agent")
         raise HTTPException(409, f"Invoice number '{body.invoice_number}' already exists")
 
     invoice = payables.Invoice(
@@ -320,7 +327,8 @@ async def list_decisions(limit: int = 20):
 
 @app.get("/stats")
 async def get_stats():
-    return await decision_log.stats()
+    """Decision counts (as before) plus the submission metrics, split by origin: agent, manual (run by hand) and demo."""
+    return {**await decision_log.stats(), "submissions": await models.submission_stats()}
 
 
 @app.get("/.well-known/agent.json")
@@ -332,9 +340,12 @@ async def agent_manifest():
         "network": "Arc Testnet",
         "settlement": "testnet USDC (no market value)",
         "contract": config.budget_enforcer_address,
-        "auth": {"header": "X-API-Key", "roles": ["buyer", "vendor"], "public": ["/decisions", "/stats"]},
+        "auth": {
+            "header": "X-API-Key", "roles": ["buyer", "vendor"], "public": ["/decisions", "/stats"],
+            "wallet_signin": "A vendor can also sign in by signing a one-time message with its payee wallet (POST /vendor/auth/challenge then /vendor/auth/verify, EIP-191 personal_sign) and send the returned token as 'Authorization: Bearer <token>'. No key is issued.",
+        },
         "vendor_flow": [
-            {"step": 1, "who": "buyer", "action": "register the vendor (POST /vendors) and approve its wallet on-chain"},
+            {"step": 1, "who": "vendor", "action": "apply with a wallet signature (POST /apply/challenge then POST /apply); the buyer reviews it, registers the vendor and approves its wallet on-chain. /vendors itself is buyer-only"},
             {"step": 2, "who": "buyer", "action": "raise a purchase order (POST /purchase-orders)"},
             {"step": 3, "who": "vendor", "action": "deliver; the deliverable's SHA-256 becomes the invoice doc_hash"},
             {"step": 4, "who": "buyer", "action": "confirm receipt (POST /receipts); a vendor can never confirm its own delivery"},
@@ -455,10 +466,12 @@ def _chain_snapshot() -> dict:
 
 @app.get("/admin/overview")
 async def admin_overview(_: auth.Principal = Depends(auth.require_admin)):
-    snap, counts, vendors, pos = await asyncio.gather(
-        asyncio.to_thread(_chain_snapshot), models.invoice_counts(), models.list_vendors(), models.list_purchase_orders()
+    snap, counts, vendors, pos, pending = await asyncio.gather(
+        asyncio.to_thread(_chain_snapshot), models.invoice_counts(), models.list_vendors(), models.list_purchase_orders(),
+        models.count_pending_applications(),
     )
-    return {"chain": snap, "invoices": counts, "vendors": len(vendors), "purchase_orders": len(pos)}
+    return {"chain": snap, "invoices": counts, "vendors": len(vendors), "purchase_orders": len(pos),
+            "pending_applications": pending}
 
 
 @app.get("/admin/vendors")
@@ -536,3 +549,150 @@ async def admin_record_action(body: AdminActionIn, who: auth.Principal = Depends
     if ref:
         await models.update_invoice_status(invoice["id"], "paid" if body.action == "approve_escalation" else "rejected")
     return {"ok": True, "block": tx["block"]}
+
+
+# ---- vendor applications and the vendor portal (v1.2.7; wallet signatures, see backend/vendor_auth.py)
+
+MAX_PENDING_PER_IP = 3
+APPLICATIONS_PER_HOUR_PER_IP = 5
+
+
+def _ip_hash(request: Request) -> str:
+    """Only used to count pending applications per client. Not reversible in practice, never returned by any route."""
+    return hashlib.sha256(("ceedebooks-apply|" + auth.client_ip(request)).encode()).hexdigest()
+
+
+class WalletChallengeIn(_Strict):
+    address: str
+
+    @field_validator("address")
+    @classmethod
+    def _addr(cls, v: str) -> str:
+        return _check_address(v)
+
+
+class ApplicationIn(_Strict):
+    business_name: Annotated[str, Field(min_length=2, max_length=120)]
+    wallet_address: str
+    contact: Optional[Annotated[str, Field(min_length=3, max_length=120)]] = None
+    nonce: str = Field(min_length=32, max_length=32)
+    signature: str = Field(min_length=132, max_length=132)
+
+    _addr = field_validator("wallet_address")(_check_address)
+
+    @field_validator("business_name", "contact")
+    @classmethod
+    def _tidy(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        v = " ".join(v.split())
+        if len(v) < 2 or any(ord(ch) < 32 for ch in v):
+            raise ValueError("invalid text")
+        return v
+
+
+@app.post("/apply/challenge")
+async def apply_challenge(body: WalletChallengeIn, request: Request):
+    if not auth.request_limiter.allow("apply-challenge:" + auth.client_ip(request), 10, 60.0):
+        raise HTTPException(429, "Too many attempts; try again in a minute")
+    return vendor_auth.make_challenge(body.address, vendor_auth.APPLY)
+
+
+@app.post("/apply")
+async def apply_to_be_a_vendor(body: ApplicationIn, request: Request):
+    """Public. The wallet signature proves the applicant controls the payee address. Applications are private and
+    start nothing by themselves: the admin accepts one, then approves the wallet on-chain with their own signature."""
+    ip = auth.client_ip(request)
+    if auth.failed_auth_limiter.blocked(ip, config.failed_auth_per_min, 60.0):
+        raise HTTPException(429, "Too many failed attempts; try again later", headers={"Retry-After": "60"})
+    if not auth.request_limiter.allow("apply:" + ip, APPLICATIONS_PER_HOUR_PER_IP, 3600.0):
+        raise HTTPException(429, "Too many applications from this address; try again later", headers={"Retry-After": "3600"})
+    signer = vendor_auth.consume(body.nonce, body.signature, vendor_auth.APPLY)
+    if signer is None or signer != body.wallet_address.lower():
+        auth.failed_auth_limiter.allow(ip, config.failed_auth_per_min, 60.0)
+        raise HTTPException(401, "The wallet signature could not be verified; request a new challenge and sign again")
+    if await models.get_vendor_by_wallet(signer) is not None:
+        raise HTTPException(409, "This wallet is already a registered vendor. Sign in instead")
+    ip_hash = _ip_hash(request)
+    if await models.pending_applications_from(ip_hash) >= MAX_PENDING_PER_IP:
+        raise HTTPException(429, "Too many applications from this address are still waiting for review")
+    try:
+        application_id = await models.save_application(body.business_name, signer, body.contact, ip_hash)
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, "This wallet already has an application waiting for review")
+    return {"id": application_id, "status": "pending"}
+
+
+@app.get("/admin/applications")
+async def admin_applications(_: auth.Principal = Depends(auth.require_admin)):
+    return {"applications": await models.list_applications()}
+
+
+@app.post("/admin/applications/{application_id}/accept")
+async def admin_accept_application(application_id: int, who: auth.Principal = Depends(auth.require_admin)):
+    """Creates the vendor record. It still cannot be paid until the admin approves its wallet on-chain."""
+    application = await models.get_application(application_id)
+    if application is None:
+        raise HTTPException(404, "Application not found")
+    if await models.get_vendor_by_wallet(application["wallet"]) is not None:
+        raise HTTPException(409, "A vendor with this wallet already exists")
+    vendor_id = await models.accept_application(application_id)
+    if vendor_id is None:
+        raise HTTPException(409, "This application was already decided")
+    await _admin_log(who, "accept_application", f"application {application_id} -> vendor {vendor_id}")
+    return {"ok": True, "vendor_id": vendor_id}
+
+
+@app.post("/admin/applications/{application_id}/reject")
+async def admin_reject_application(application_id: int, who: auth.Principal = Depends(auth.require_admin)):
+    if await models.get_application(application_id) is None:
+        raise HTTPException(404, "Application not found")
+    if not await models.reject_application(application_id):
+        raise HTTPException(409, "This application was already decided")
+    await _admin_log(who, "reject_application", f"application {application_id}")
+    return {"ok": True}
+
+
+@app.post("/vendor/auth/challenge")
+async def vendor_challenge(body: WalletChallengeIn, request: Request):
+    """Answers the same for every address, so it cannot be used to find out which wallets are vendors."""
+    if not auth.request_limiter.allow("vendor-challenge:" + auth.client_ip(request), 10, 60.0):
+        raise HTTPException(429, "Too many sign-in attempts; try again in a minute")
+    return vendor_auth.make_challenge(body.address, vendor_auth.SIGN_IN)
+
+
+@app.post("/vendor/auth/verify")
+async def vendor_verify(body: AdminVerifyIn, request: Request):
+    ip = auth.client_ip(request)
+    if auth.failed_auth_limiter.blocked(ip, config.failed_auth_per_min, 60.0):
+        raise HTTPException(429, "Too many failed attempts; try again later", headers={"Retry-After": "60"})
+    signer = vendor_auth.consume(body.nonce, body.signature, vendor_auth.SIGN_IN)
+    vendor = await models.get_vendor_by_wallet(signer) if signer else None
+    if vendor is None:  # bad signature and unknown wallet look the same
+        auth.failed_auth_limiter.allow(ip, config.failed_auth_per_min, 60.0)
+        raise HTTPException(401, "Sign-in failed. If this wallet has not applied yet, apply first")
+    return {**vendor_auth.start_session(vendor["id"], signer), "name": vendor["name"]}
+
+
+@app.post("/vendor/auth/logout")
+async def vendor_logout(request: Request, _: auth.Principal = Depends(auth.require("vendor"))):
+    vendor_auth.logout(request.headers.get("authorization", "")[7:].strip())
+    return {"ok": True}
+
+
+@app.get("/vendor/me")
+async def vendor_me(who: auth.Principal = Depends(auth.require("vendor"))):
+    """Everything the portal shows: the vendor's own record, purchase orders and invoices. Nobody else's."""
+    vendor = await models.get_vendor(who.vendor_id)
+    if vendor is None:
+        raise HTTPException(404, "Vendor not found")
+    try:
+        approved = await asyncio.to_thread(contract.is_vendor_approved, vendor["wallet_address"])
+    except Exception:
+        approved = None  # unknown, shown as such
+    pos, invoices = await asyncio.gather(models.list_vendor_purchase_orders(who.vendor_id), models.list_vendor_invoices(who.vendor_id))
+    categories = {int(c): c.name.replace("_", " ").title() for c in SpendCategory}
+    for po in pos:
+        po["category_name"] = categories.get(po["category"], f"Category {po['category']}")
+    return {"vendor": {"id": vendor["id"], "name": vendor["name"], "wallet_address": vendor["wallet_address"]},
+            "approved_onchain": approved, "purchase_orders": pos, "invoices": invoices}

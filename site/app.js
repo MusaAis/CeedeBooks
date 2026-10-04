@@ -152,6 +152,18 @@
         : "Of " + total + " decisions, the agent refused " + s.refused + ". A refusal is a decision the agent made not to pay. All of them so far come from the builder's own invoices.";
       if (s.manual_paid > 0) note += " " + (s.manual_paid === 1 ? "One payment" : s.manual_paid + " payments") + " (" + usdc(s.manual_paid_usdc) + ") run by hand through the contract " + (s.manual_paid === 1 ? "is" : "are") + " shown apart from the agent's decisions.";
       $("stats-note").textContent = note;
+      var sub = s.submissions;
+      if (sub && sub.by_origin) {
+        var a = sub.by_origin.agent, m = sub.by_origin.manual, d = sub.by_origin.demo;
+        $("n-inv").textContent = a.invoices_processed;
+        $("n-vol").textContent = usdc(a.payment_volume_usdc);
+        $("n-dup").textContent = a.duplicates_caught;
+        var apart = [];
+        if (m.invoices_processed) apart.push(m.invoices_processed + " run by hand (" + usdc(m.payment_volume_usdc) + ")");
+        if (d.invoices_processed || d.duplicates_caught) apart.push(d.invoices_processed + " demo runs (" + usdc(d.payment_volume_usdc) + ")");
+        $("traffic-note").textContent = "Testnet USDC has no market value. A duplicate caught is a repeated invoice number the system refused to take twice."
+          + (apart.length ? " Shown apart, not counted above: " + apart.join(", ") + "." : "");
+      }
     } catch (e) {
       $("stats-note").textContent = "The live counts could not be loaded just now.";
     }
@@ -198,4 +210,7 @@
   heroCheck();
   loadStats();
   loadFeed();
+  // A link from the vendor portal (#check=<64 hex>) opens straight onto that decision's check.
+  var deep = /^#check=([0-9a-f]{64})$/.exec(location.hash || "");
+  if (deep) { $("hash").value = deep[1]; $("verify").scrollIntoView(); runVerify(); }
 })();

@@ -72,6 +72,7 @@ class Config:
     cors_origins: tuple
     trust_proxy: bool
     admin_origin: str
+    portal_origin: str
 
     @classmethod
     def load(cls) -> "Config":
@@ -109,6 +110,7 @@ class Config:
             ),
             trust_proxy=_optional("TRUST_PROXY").lower() in ("1", "true", "yes"),
             admin_origin=_optional("ADMIN_ORIGIN") or "https://admin.ceedebooks.xyz",
+            portal_origin=_optional("PORTAL_ORIGIN") or "https://portal.ceedebooks.xyz",
         )
 
 

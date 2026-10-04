@@ -4,7 +4,7 @@
 ![CI](https://github.com/MusaAis/CeedeBooks/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Foundry tests](https://img.shields.io/badge/forge%20tests-24%2F24%20passing-brightgreen)
-![Python tests](https://img.shields.io/badge/pytest-109%2F109%20passing-brightgreen)
+![Python tests](https://img.shields.io/badge/pytest-140%2F140%20passing-brightgreen)
 ![Network](https://img.shields.io/badge/Arc-Testnet-informational)
 
 *"Ceede" means money in Pulaar/Fulfulde.*
@@ -13,7 +13,7 @@ An autonomous financial-operations agent for African SMEs on Arc: pays invoices,
 
 Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 – Oct 10, 2026.
 
-**Current: v1.2.6.2. The AP/AR engine is live on Arc Testnet behind a key-authenticated HTTPS API (`api.ceedebooks.xyz`), with a public proof page (`ceedebooks.xyz`) and a wallet-signed admin site (`admin.ceedebooks.xyz`). No outside business or paying user yet: every payment so far is self-owned.** See [Roadmap](#roadmap) and the [Changelog](#changelog).
+**Current: v1.2.7. The AP/AR engine is live on Arc Testnet behind a key-authenticated HTTPS API (`api.ceedebooks.xyz`), with a public proof page (`ceedebooks.xyz`) a wallet-signed admin site (`admin.ceedebooks.xyz`) and a vendor portal (`portal.ceedebooks.xyz`) where a vendor applies and signs in with its wallet. No outside business or paying user yet: every payment so far is self-owned.** See [Roadmap](#roadmap) and the [Changelog](#changelog).
 
 ---
 
@@ -45,10 +45,11 @@ It isn't "an LLM with a wallet." The agent proposes; a smart contract, not a pro
 - **Invoice pre-flight**: `POST /invoices/preflight` is a dry run that says whether an invoice would be paid, held or escalated, and why, without writing anything
 - **Agent manifest**: `GET /.well-known/agent.json` describes the vendor flow, roles and guarantees for other agents
 - **Wallet-signed admin site** (`admin.ceedebooks.xyz`): a session is accepted only if its signature recovers to the contract's current `approver()`; vendor approval, POs, receipts, escalations, limits and pause are signed in the admin's own wallet
+- **Vendor portal** (`portal.ceedebooks.xyz`): a vendor applies with a wallet signature that proves it controls the payee address, the admin reviews the application, and once approved the vendor signs in with the same wallet. It sees only its own purchase orders and invoices, runs a dry run first, submits, and links to the proof page for the decision. No key or password is issued, and the portal never asks for a transaction. Spam controls: one pending application per wallet, at most 3 pending per IP, 5 submissions per hour per IP, small body cap
+- **Submission metrics on the proof page**: invoices processed, USDC paid and duplicates caught, split by origin (`agent`, `manual`, `demo`) so hand-run payments and demo runs never count as agent traffic
 
 **Planned**
 
-- Vendor portal with signed vendor applications (v1.2.7)
 - Hash-chained audit ledger, on-chain red-team log, key-custody check, re-evaluate action for stuck invoices (v1.2.8)
 - Circle Gateway unified balance (v1.3.0)
 - Idle-treasury auto-yield via a pooled USYC wrapper
@@ -80,11 +81,11 @@ Everything below is checkable on-chain. Nothing here is estimated.
 | What | Evidence |
 |---|---|
 | Contract deployed and verified on Arc Testnet | [`BudgetEnforcer`](https://explorer.testnet.arc.io/address/0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB) |
-| Test suites | 24 Foundry + 109 Python tests + browser-side JS tests, run by CI on every push |
+| Test suites | 24 Foundry + 140 Python tests + browser-side JS tests, run by CI on every push |
 | First self-owned vendor bill paid through the contract | `ceedebooks.xyz` registration, 2.20 USDC, category 1 |
 | Outside businesses or paying users | None yet |
 
-**Live snapshot** (read from the admin Overview on Oct 4, 2026; the proof page is the live source):
+**Live snapshot** (the proof page is the live source):
 
 | Pool balance | Paid invoices | Escalations waiting | Vendors | Purchase orders |
 |---|---|---|---|---|
@@ -118,7 +119,7 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 - **Model output is an input, never a release condition.** Circle's own `arc-escrow` sample releases contractor funds on a bare JSON response from GPT-4o with no structural check behind it. CeedeBooks is built specifically not to repeat that pattern.
 - **Independent receipt witness.** A three-way match proves nothing if the agent can confirm its own receipts. It can't.
 - **Settlement is confirmed, not hoped for.** Circle's transaction API is asynchronous — accepting a request isn't the same as it succeeding on-chain. CeedeBooks waits for a terminal state before trusting any result, closing a real phantom-payment risk most demos never test for.
-- **Tested, not just described.** 24 Foundry tests plus 109 Python tests, both passing against the deployed contract and the live decision pipeline.
+- **Tested, not just described.** 24 Foundry tests plus 140 Python tests, both passing against the deployed contract and the live decision pipeline.
 
 ---
 
@@ -166,7 +167,7 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 | C. Proof page | Public verify button, refusal counts, on-chain check in `verify` | v1.2.4 | ✅ Built |
 | Pre-flight and manifest | Invoice dry run, `agent.json` | v1.2.5 | ✅ Built |
 | K1. Admin site | Wallet-signed admin at `admin.ceedebooks.xyz`, approver hand-over | v1.2.6 | ✅ Built |
-| K2. Vendor portal | Signed vendor applications, submission metrics | v1.2.7 | ⏳ Next |
+| K2. Vendor portal | Signed vendor applications, wallet sign-in, vendor view, submission metrics | v1.2.7 | ✅ Built |
 | E. Audit hardening | Hash-chained ledger, on-chain red-team log, key-custody check, re-evaluate | v1.2.8 | ⏳ Planned |
 | F. Gateway | `POST /v1/balances` unified balance on the dashboard | v1.3.0 | ⏳ Planned |
 | G. Treasury brain | `CeedeBooksYield.sol` pooled USYC wrapper, runway alerts | v1.3.x | ⏳ Planned |
@@ -189,7 +190,7 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 | USYC | Planned (Phase G) | Via own pooled wrapper (Arc's Teller has a $100k / allowlist gate) |
 | CCTP | Stretch | Domain 26, `minFinalityThreshold: 2000`, V2 7-param `depositForBurn` only |
 | EURC | Stretch | European vendor payments |
-| ~~Paymaster~~ | Dropped | Not supported on Arc |
+| ~~Paymaster~~ | Dropped |
 
 ---
 
@@ -234,17 +235,21 @@ Run with a **single worker**: `uvicorn backend.main:app` (the rate limiter is pe
 | `GET /vendors/{id}` | buyer; a vendor for its own record | Read a vendor |
 | `POST /purchase-orders` | buyer | Create a PO (number, vendor, amount, category). Duplicate PO numbers return 409 |
 | `POST /receipts` | buyer | Confirm delivery of a PO. The role is set by the server from the key; `confirmed_by_role` in the body is rejected (422). One receipt per PO (409) |
-| `POST /invoices` | buyer, or a vendor for its own `vendor_id` | Full pipeline: retry guard, three-way match, decision, commit-then-pay or escalate. Always pays the wallet on file; the invoice category must match the PO's; the runway is computed server-side from the pool balance and trailing spend (`treasury_runway_days` in the body is rejected). Duplicate invoice numbers return 409 |
+| `POST /invoices` | buyer, or a vendor (key or wallet session) for its own `vendor_id` | Full pipeline: retry guard, three-way match, decision, commit-then-pay or escalate. Always pays the wallet on file; the invoice category must match the PO's; the runway is computed server-side from the pool balance and trailing spend (`treasury_runway_days` in the body is rejected). Duplicate invoice numbers return 409 |
 | `GET /invoices/{id}` | buyer; a vendor for its own invoices | Status and `reasoning_hash`. Another vendor's invoice returns 404 |
 | `POST /invoices/preflight` | buyer, or a vendor for its own `vendor_id` | Dry run of `POST /invoices`: returns `would_pay`, `would_hold`, `would_escalate`, `would_be_refused_by_contract` or `already_paid`, with every check and the reasons. Writes nothing (no invoice row, no audit row, no chain transaction) and returns only booleans, never balances or limits |
 | `GET /admin/auth/state`, `POST /admin/auth/challenge`, `POST /admin/auth/verify` | public | Wallet sign-in for the admin site: a one-time challenge is signed with the wallet and accepted only if it recovers to the contract's current `approver()`. Challenge requests are rate-limited; failures count toward the failed-auth throttle |
 | `GET /admin/overview`, `/admin/vendors`, `/admin/purchase-orders`, `/admin/invoices`, `/admin/actions`, `/admin/invoices/{id}/escalation` | admin session | Admin dashboard data. A buyer API key is refused (403); no session is a 401 |
 | `POST /admin/actions` | admin session | Records an on-chain admin transaction after the wallet sent it. The server checks the chain itself (to the contract, from the admin, successful); settling an escalation also needs the on-chain event to carry that invoice's own reasoning hash |
+| `POST /apply/challenge`, `POST /apply` | public | Apply to become a vendor. A one-time challenge is signed with the payee wallet (EIP-191 `personal_sign`, nothing sent on-chain); the signature must recover to the wallet being applied for. A sign-in signature cannot be replayed here. Applications are private, 1 pending per wallet, 3 pending per IP, 5 per hour per IP |
+| `POST /vendor/auth/challenge`, `POST /vendor/auth/verify`, `POST /vendor/auth/logout` | public / vendor | Vendor wallet sign-in. Only a wallet on file as a vendor gets a session (15 minutes idle, 2 hours at most, one live session per vendor); the challenge answers the same for every address. Send the token as `Authorization: Bearer ...`. A session is a vendor principal: it can use the vendor routes above, never `/vendors`, `/receipts`, `/purchase-orders` or `/admin/*` |
+| `GET /vendor/me` | vendor | The vendor's own record, on-chain approval, purchase orders (with receipt and invoiced flags) and invoices. Nobody else's |
+| `GET /admin/applications`, `POST /admin/applications/{id}/accept`, `.../reject` | admin session | Review applications. Accepting only creates the vendor record: it still cannot be paid until the admin approves its wallet on-chain |
 | `GET /.well-known/agent.json` | public | Machine-readable manifest: the vendor flow step by step, endpoints with their roles, and the guarantees, so another agent can discover how to invoice CeedeBooks |
 | `GET /decisions/{hash}` | public | The stored audit record, including the full reasoning text |
 | `GET /decisions/{hash}/verify` | public | Recomputes the SHA-256 of the stored `hash_input`, and (`onchain`) checks that the same hash is in a BudgetEnforcer event of the recorded transaction |
 | `GET /decisions` | public | Latest audit entries, newest first (no reasoning text) |
-| `GET /stats` | public | Counts of paid, held and escalated agent decisions; manual entries are reported separately and never counted as agent decisions |
+| `GET /stats` | public | Counts of paid, held and escalated agent decisions (manual entries are reported separately and never counted as agent decisions), plus `submissions`: invoices processed, USDC paid and duplicates caught, split by origin |
 
 Hardening: amounts are exact decimals (positive, at most 6 places); request bodies over `MAX_BODY_BYTES` return 413; per-IP rate limit (`RATE_LIMIT_PER_MIN`) and a stricter limit on failed keys (`FAILED_AUTH_PER_MIN`) return 429; CORS allows only `CORS_ORIGINS` (default `https://ceedebooks.xyz`). Behind a reverse proxy set `TRUST_PROXY=1` so limits apply per real client.
 
@@ -284,8 +289,10 @@ ceedebooks/
 │   ├── auth.py             # API-key auth, roles, failed-key throttling
 │   ├── ratelimit.py        # in-memory sliding-window limiter
 │   ├── admin_auth.py       # wallet sign-in for the admin site (session bound to the on-chain approver)
+│   ├── vendor_auth.py      # wallet signatures for vendor applications and vendor sign-in
 │   └── models.py           # SQLite schema + queries (incl. api_keys)
 ├── admin/                  # admin site: static app, wallet call encoding, Node tests
+├── portal/                 # vendor portal: apply, sign in, own POs and invoices, Node tests
 ├── site/                   # public proof page and its in-browser hash check
 ├── deploy/                 # nginx configs, systemd unit, DEPLOY.md
 ├── contracts/
@@ -332,7 +339,7 @@ pytest agent/tests/
 
 **24 Foundry tests**, one per revert path or acceptance scenario: unregistered and revoked vendor, over per-tx / daily / category limits, unset category (fail-closed), same invoice resubmitted as a different file, missing / reused / mismatched commit, crash-and-retry, simulated prompt injection (contract refuses even if the agent were fooled), the escalate → approve / reject flow, escalated invoices blocked from direct payment, pause, withdraw, agent rotation, two-step approver rotation, and the `reasoningHash` round-trip via the `PaymentMade` event.
 
-**109 Python tests** covering the three-way match, rules-baseline decisions (pay / hold / escalate), retry safety (reprocessing a paid invoice is a no-op), API access control (every denied path), server-side runway, input validation, the public audit endpoints and on-chain verification, the invoice pre-flight dry run (it writes nothing and reveals no balances or limits), and the admin wallet sign-in and routes. Browser-side tests check the proof page's hash recomputation (`site/verify.test.js`) and the admin app's call encoding and rendering (`admin/*.test.js`).
+**140 Python tests** covering the three-way match, rules-baseline decisions (pay / hold / escalate), retry safety (reprocessing a paid invoice is a no-op), API access control (every denied path), server-side runway, input validation, the public audit endpoints and on-chain verification, the invoice pre-flight dry run (it writes nothing and reveals no balances or limits), and the admin wallet sign-in and routes. Browser-side tests check the proof page's hash recomputation (`site/verify.test.js`) and the admin app's call encoding and rendering (`admin/*.test.js`). The vendor portal suite covers: a signature from another wallet is refused, a sign-in signature cannot be replayed as an application, challenges are single use, the pending and per-IP limits, accepting once only, vendor sessions seeing only their own data, sessions ending on wallet change, idle time and logout, a vendor never labelling its own origin, and the metrics split by origin.
 
 ### Deploy
 
@@ -365,6 +372,16 @@ Amounts are USDC in its 6-decimal ERC-20 form (`100000000` = $100.00).
 ---
 
 ## Changelog
+
+**v1.2.7: Phase K2, vendor portal**
+- Vendors apply with a wallet signature (proof of control of the payee address) at `portal.ceedebooks.xyz`; the admin site has a new Applications tab. Accepting creates the vendor record only; approving the wallet on-chain stays a separate admin signature. `/vendors` stays buyer-only
+- Vendors sign in with the same wallet (15-minute sessions, no keys issued) and see only their own purchase orders and invoices; dry run first, then submit; each decision links to the proof page (`#check=<hash>` opens the check directly)
+- Spam controls on applications: 1 pending per wallet, 3 pending per IP, 5 per hour per IP, body cap; applications and contact details are private
+- Invoices now carry an `origin` (`agent`, `manual`, `demo`); the hand-run domain payment is relabelled `manual` on first start. Only the buyer can label a demo run. Rejected duplicate submissions are counted (counts only, no vendor data)
+- `/stats` and the proof page show invoices processed, USDC paid and duplicates caught, split by origin
+- Agent manifest updated: vendors apply with a signature; wallet sign-in described
+- One look across the proof page, the vendor portal and the admin site: the CeedeBooks logo (favicon and touch icon included), the same typeface and palette, the receipt as the action card. The portal is mobile first: the headline, then the Connect button, then the reassurance points
+- 31 new Python tests (140 in total) and a Node test for the portal; CI runs it
 
 **v1.2.6.2: admin site on phones, README brought up to date**
 - Admin header stays on one row (the wallet address shortens instead of pushing Sign out down)
