@@ -25,8 +25,9 @@ def client():
         yield c
 
 
-def _log(action, model="rules", amount=5.0, subject="INV-1", reasoning="because"):
-    return asyncio.run(decision_log.log_decision(action, subject, reasoning, model_used=model, amount=amount))
+def _log(action, model="rules", amount=5.0, subject="INV-1", reasoning="because", business_id=1):
+    business = asyncio.run(models.get_business(business_id))
+    return asyncio.run(decision_log.log_decision(action, subject, reasoning, model_used=model, amount=amount, business=business))
 
 
 def test_event_topic_constants_match_the_contract_signatures():
@@ -69,24 +70,22 @@ def test_old_databases_gain_the_chain_tx_column(tmp_path, monkeypatch):
     asyncio.run(decision_log.init_db())
     asyncio.run(decision_log.init_db())  # idempotent
     cols = [r[1] for r in sqlite3.connect(path).execute("PRAGMA table_info(audit_log)")]
-    assert "chain_tx_hash" in cols
+    assert "chain_tx_hash" in cols and "business_id" in cols and "hash_version" in cols
 
 
-def test_verify_reports_onchain_match(client, monkeypatch):
+def test_verify_reports_onchain_match(client, chain):
     h = _log("INVOICE_PAID")
     asyncio.run(decision_log.record_onchain_tx(h, "circle-1", "0xabc"))
-    monkeypatch.setattr(main.contract, "reasoning_events",
-                        lambda tx: [{"event": "PaymentMade", "reasoning_hash": h, "block": 7, "success": True}])
+    chain.events = [{"event": "PaymentMade", "reasoning_hash": h, "block": 7, "success": True}]
     body = client.get(f"/decisions/{h}/verify").json()
     assert body["verified"] is True
     assert body["onchain"] == {"checked": True, "match": True, "chain_tx_hash": "0xabc", "event": "PaymentMade", "block": 7}
 
 
-def test_verify_flags_a_hash_that_is_not_in_the_transaction(client, monkeypatch):
+def test_verify_flags_a_hash_that_is_not_in_the_transaction(client, chain):
     h = _log("INVOICE_PAID")
     asyncio.run(decision_log.record_onchain_tx(h, "circle-1", "0xabc"))
-    monkeypatch.setattr(main.contract, "reasoning_events",
-                        lambda tx: [{"event": "PaymentMade", "reasoning_hash": "f" * 64, "block": 7, "success": True}])
+    chain.events = [{"event": "PaymentMade", "reasoning_hash": "f" * 64, "block": 7, "success": True}]
     assert client.get(f"/decisions/{h}/verify").json()["onchain"]["match"] is False
 
 
@@ -95,33 +94,30 @@ def test_verify_without_a_chain_tx_is_unchecked_not_matched(client):
     assert client.get(f"/decisions/{h}/verify").json()["onchain"]["match"] is None
 
 
-def test_verify_survives_an_rpc_failure(client, monkeypatch):
+def test_verify_survives_an_rpc_failure(client, chain):
     h = _log("INVOICE_PAID")
     asyncio.run(decision_log.record_onchain_tx(h, "circle-1", "0xabc"))
 
     def boom(tx):
         raise RuntimeError("rpc down secret-detail")
 
-    monkeypatch.setattr(main.contract, "reasoning_events", boom)
+    chain.reasoning_events = boom
     r = client.get(f"/decisions/{h}/verify")
     assert r.status_code == 200 and r.json()["onchain"]["match"] is None
     assert "secret-detail" not in r.text
 
 
-def test_a_hold_is_anchored_on_chain_and_its_tx_recorded(monkeypatch):
-    seen = {}
-    monkeypatch.setattr(payables.contract, "log_decision", lambda h: seen.setdefault("hash", h) and "tx-9")
-    monkeypatch.setattr(payables.contract, "wait_for_transaction", lambda t: None)
+def test_a_hold_is_anchored_on_chain_and_its_tx_recorded(chain, monkeypatch):
     monkeypatch.setattr(payables.contract, "chain_tx_hash", lambda t: "0xdead")
     h = _log("INVOICE_HELD")
-    asyncio.run(payables._anchor_refusal(h))
-    assert seen["hash"] == bytes.fromhex(h)
+    asyncio.run(payables._anchor_refusal(chain, h))
+    assert chain.calls == [("log", bytes.fromhex(h))]
     assert asyncio.run(decision_log.get_decision(h))["chain_tx_hash"] == "0xdead"
 
 
-def test_a_failed_anchor_never_breaks_the_hold(monkeypatch):
+def test_a_failed_anchor_never_breaks_the_hold(chain):
     def boom(h):
         raise RuntimeError("circle down")
 
-    monkeypatch.setattr(payables.contract, "log_decision", boom)
-    asyncio.run(payables._anchor_refusal(_log("INVOICE_HELD")))  # must not raise
+    chain.log_decision = boom
+    asyncio.run(payables._anchor_refusal(chain, _log("INVOICE_HELD")))  # must not raise

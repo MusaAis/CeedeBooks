@@ -18,7 +18,7 @@ CHAIN = {"approver": ADMIN.address}
 
 
 @pytest.fixture(autouse=True)
-def _env(tmp_path, monkeypatch):
+def _env(tmp_path, monkeypatch, chain):
     monkeypatch.setattr(config, "db_path", str(tmp_path / "admin.db"))
     asyncio.run(models.init_db())
     asyncio.run(decision_log.init_db())
@@ -28,10 +28,8 @@ def _env(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "rate_limit_per_min", 1000)
     monkeypatch.setattr(config, "failed_auth_per_min", 1000)
     CHAIN["approver"] = ADMIN.address
-    monkeypatch.setattr(admin_auth.contract, "approver", lambda: CHAIN["approver"])
-    monkeypatch.setattr(main.contract, "pending_approver", lambda: "0x" + "00" * 20)
-    monkeypatch.setattr(main.contract, "is_vendor_approved", lambda w: True)
-    monkeypatch.setattr(main, "_chain_snapshot", lambda: {"chain_ok": True, "approver": CHAIN["approver"].lower()})
+    chain.approver = lambda: CHAIN["approver"]
+    monkeypatch.setattr(main, "_chain_snapshot", lambda business: {"chain_ok": True, "approver": CHAIN["approver"].lower()})
 
 
 @pytest.fixture
@@ -116,11 +114,11 @@ def test_challenges_are_rate_limited(client):
     assert codes[:10] == [200] * 10 and codes[10] == 429
 
 
-def test_if_the_chain_cannot_be_read_nobody_signs_in(client, monkeypatch):
+def test_if_the_chain_cannot_be_read_nobody_signs_in(client, chain):
     def boom():
         raise RuntimeError("rpc down")
 
-    monkeypatch.setattr(admin_auth.contract, "approver", boom)
+    chain.approver = boom
     assert _login(client).status_code == 401
 
 
@@ -136,21 +134,21 @@ def test_every_admin_route_refuses_without_a_session(client):
 
 def test_a_buyer_api_key_is_not_an_admin(client):
     key = auth.generate_key("buyer")
-    asyncio.run(models.save_api_key(auth.hash_key(key), "buyer", None, "t"))
+    asyncio.run(models.save_api_key(1, auth.hash_key(key), "buyer", None, "t"))
     assert client.get("/admin/overview", headers={"X-API-Key": key}).status_code == 403
 
 
 def test_a_session_ends_when_the_approver_changes(client):
     h = _bearer(client)
     CHAIN["approver"] = OTHER.address
-    admin_auth._approver_cache["at"] = 0  # let the next request re-read the chain
+    admin_auth._approver_cache.clear()  # let the next request re-read the chain
     assert client.get("/admin/overview", headers=h).status_code == 401
 
 
-def test_a_session_ends_when_the_chain_cannot_be_read(client, monkeypatch):
+def test_a_session_ends_when_the_chain_cannot_be_read(client, chain):
     h = _bearer(client)
-    monkeypatch.setattr(admin_auth.contract, "approver", lambda: (_ for _ in ()).throw(RuntimeError("down")))
-    admin_auth._approver_cache["at"] = 0
+    chain.approver = lambda: (_ for _ in ()).throw(RuntimeError("down"))
+    admin_auth._approver_cache.clear()
     assert client.get("/admin/overview", headers=h).status_code == 401
 
 
@@ -196,61 +194,61 @@ def test_the_admin_runs_the_buyer_flow_and_it_is_logged(client):
     assert client.get("/admin/vendors", headers=h).json()["vendors"][0]["name"] == "Acme"
 
 
-def _tx(monkeypatch, sender=None, to=None, success=True, escalation=None, block=77):
-    monkeypatch.setattr(main.contract, "inspect_admin_tx", lambda h: {
+def _tx(chain, sender=None, to=None, success=True, escalation=None, block=77):
+    chain.admin_tx = {
         "sender": (sender or ADMIN.address).lower(), "to": (to or config.budget_enforcer_address).lower(),
-        "success": success, "block": block, "escalation": escalation})
+        "success": success, "block": block, "escalation": escalation}
 
 
-def test_an_admin_transaction_is_recorded_once(client, monkeypatch):
+def test_an_admin_transaction_is_recorded_once(client, chain):
     h = _bearer(client)
-    _tx(monkeypatch)
+    _tx(chain)
     body = {"action": "set_vendor", "tx_hash": "0x" + "ab" * 32}
     assert client.post("/admin/actions", json=body, headers=h).json() == {"ok": True, "block": 77}
     assert client.post("/admin/actions", json=body, headers=h).status_code == 409
 
 
 @pytest.mark.parametrize("kw", [{"sender": OTHER.address}, {"to": "0x" + "9" * 40}, {"success": False}])
-def test_a_transaction_that_is_not_ours_or_failed_is_refused(client, monkeypatch, kw):
+def test_a_transaction_that_is_not_ours_or_failed_is_refused(client, chain, kw):
     h = _bearer(client)
-    _tx(monkeypatch, **kw)
+    _tx(chain, **kw)
     assert client.post("/admin/actions", json={"action": "set_paused", "tx_hash": "0x" + "cd" * 32}, headers=h).status_code == 422
 
 
-def test_an_unconfirmed_transaction_is_a_404(client, monkeypatch):
+def test_an_unconfirmed_transaction_is_a_404(client, chain):
     h = _bearer(client)
-    monkeypatch.setattr(main.contract, "inspect_admin_tx", lambda h: (_ for _ in ()).throw(RuntimeError("not found")))
+    chain.admin_tx = None  # the fake raises "not found"
     assert client.post("/admin/actions", json={"action": "set_paused", "tx_hash": "0x" + "cd" * 32}, headers=h).status_code == 404
 
 
 def _escalated_invoice():
-    vid = asyncio.run(models.save_vendor("V", WALLET_V))
-    iid = asyncio.run(models.save_invoice("INV-X", vid, None, 5.0, 1, "doc"))
-    asyncio.run(models.update_invoice_status(iid, "escalated", reasoning_hash="e" * 64))
+    vid = asyncio.run(models.save_vendor(1, "V", WALLET_V))
+    iid = asyncio.run(models.save_invoice(1, "INV-X", vid, None, 5.0, 1, "doc"))
+    asyncio.run(models.update_invoice_status(1, iid, "escalated", reasoning_hash="e" * 64))
     return iid
 
 
-def test_approving_an_escalation_settles_only_the_matching_invoice(client, monkeypatch):
+def test_approving_an_escalation_settles_only_the_matching_invoice(client, chain):
     h = _bearer(client)
     iid = _escalated_invoice()
-    _tx(monkeypatch, escalation=("EscalationApproved", "1" * 64, "f" * 64))  # a different invoice's hash
+    _tx(chain, escalation=("EscalationApproved", "1" * 64, "f" * 64))  # a different invoice's hash
     body = {"action": "approve_escalation", "tx_hash": "0x" + "ee" * 32, "invoice_id": iid}
     assert client.post("/admin/actions", json=body, headers=h).status_code == 422
-    assert asyncio.run(models.get_invoice(iid))["status"] == "escalated"
-    _tx(monkeypatch, escalation=("EscalationApproved", "1" * 64, "e" * 64))
+    assert asyncio.run(models.get_invoice(1, iid))["status"] == "escalated"
+    _tx(chain, escalation=("EscalationApproved", "1" * 64, "e" * 64))
     assert client.post("/admin/actions", json=body, headers=h).status_code == 200
-    assert asyncio.run(models.get_invoice(iid))["status"] == "paid"
+    assert asyncio.run(models.get_invoice(1, iid))["status"] == "paid"
 
 
-def test_rejecting_needs_a_rejection_event(client, monkeypatch):
+def test_rejecting_needs_a_rejection_event(client, chain):
     h = _bearer(client)
     iid = _escalated_invoice()
-    _tx(monkeypatch, escalation=("EscalationApproved", "1" * 64, "e" * 64))
+    _tx(chain, escalation=("EscalationApproved", "1" * 64, "e" * 64))
     body = {"action": "reject_escalation", "tx_hash": "0x" + "ee" * 32, "invoice_id": iid}
     assert client.post("/admin/actions", json=body, headers=h).status_code == 422
-    _tx(monkeypatch, escalation=("EscalationRejected", "1" * 64, "e" * 64))
+    _tx(chain, escalation=("EscalationRejected", "1" * 64, "e" * 64))
     assert client.post("/admin/actions", json=body, headers=h).status_code == 200
-    assert asyncio.run(models.get_invoice(iid))["status"] == "rejected"
+    assert asyncio.run(models.get_invoice(1, iid))["status"] == "rejected"
 
 
 def test_cors_allows_the_admin_origin_and_the_bearer_header(client):
@@ -264,7 +262,7 @@ def test_cors_allows_the_admin_origin_and_the_bearer_header(client):
 def test_a_flood_of_challenges_cannot_lock_the_admin_out(client, monkeypatch):
     monkeypatch.setattr(admin_auth, "MAX_CHALLENGES", 5)
     for _ in range(20):
-        admin_auth.make_challenge(OTHER.address)
+        admin_auth.make_challenge(OTHER.address, asyncio.run(models.get_business(1)))
     assert len(admin_auth._challenges) == 5
     assert _login(client).status_code == 200
 
@@ -272,15 +270,25 @@ def test_a_flood_of_challenges_cannot_lock_the_admin_out(client, monkeypatch):
 ORIGINAL_SNAPSHOT = main._chain_snapshot  # captured at import, before the fixtures stub it
 
 
-def test_the_real_chain_snapshot_lists_the_spend_categories(monkeypatch):
-    c = main.contract
-    monkeypatch.setattr(c, "budget_limits", lambda: (100_000_000, 20_000_000))
-    monkeypatch.setattr(c, "approver", lambda: ADMIN.address)
-    monkeypatch.setattr(c, "pending_approver", lambda: "0x" + "00" * 20)
-    monkeypatch.setattr(c, "is_paused", lambda: False)
-    monkeypatch.setattr(c, "usdc_balance", lambda: 5_000_000)
-    monkeypatch.setattr(c, "remaining_today", lambda cat: (1, 2_000_000))
-    monkeypatch.setattr(c, "category_limit", lambda cat: 3_000_000)
-    snap = ORIGINAL_SNAPSHOT()
+def test_the_real_chain_snapshot_lists_the_spend_categories(chain):
+    chain.approver_addr = ADMIN.address
+    chain.balance, chain.remaining, chain.category_cap = 5_000_000, (1, 2_000_000), 3_000_000
+    snap = ORIGINAL_SNAPSHOT(asyncio.run(models.get_business(1)))
     assert snap["chain_ok"] is True
     assert [x["name"] for x in snap["categories"]] == ["Data Oracle", "Infrastructure"]
+    assert "weekly_limit_usdc" not in snap  # the v1 contract has no weekly cap
+
+
+def test_a_v2_business_snapshot_shows_the_weekly_limit(chains):
+    import aiosqlite
+
+    async def make():
+        async with aiosqlite.connect(config.db_path) as db:
+            await db.execute("INSERT INTO businesses (name, slug, enforcer_address, contract_version, status, created_at) "
+                             "VALUES ('Acme', 'acme', ?, 2, 'active', 0)", ("0x" + "bb" * 20,))
+            await db.commit()
+        return await models.get_business_by_slug("acme")
+
+    biz = asyncio.run(make())
+    snap = ORIGINAL_SNAPSHOT(biz)
+    assert snap["chain_ok"] is True and snap["weekly_limit_usdc"] == 500.0 and snap["contract_version"] == 2

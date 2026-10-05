@@ -25,6 +25,30 @@ const zero = "0x" + "00".repeat(32);
   assert.ok(!c3.fieldsMatch);
   assert.ok(!(await V.checkRecord(r1, "0".repeat(64))).hashMatches);
 
+  // ---- hash format 2 (v1.2.8.1): a record from another business, produced by the real Python hashing code
+  const r3 = {"action": "INVOICE_PAID", "subject": "INV-1", "reasoning": "Matched PO and receipt", "amount_usdc": 5.0, "model_used": "rules", "timestamp": 1759400000.5, "hash_input": "{\"action\":\"INVOICE_PAID\",\"amount_usdc\":5.0,\"business_id\":2,\"enforcer_address\":\"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"hash_version\":2,\"model_used\":\"rules\",\"reasoning\":\"Matched PO and receipt\",\"subject\":\"INV-1\",\"timestamp\":1759400000.5}", "reasoning_hash": "1869a4d81eba5c517c54a7d5ede760c02d98ea68683cd62376618d65ef4b9170", "business_id": 2, "hash_version": 2, "contract_address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "contract_version": 2};
+  const ok3 = await V.checkRecord(r3, r3.reasoning_hash);
+  assert.ok(ok3.hashMatches && ok3.fieldsMatch && ok3.version === 2 && ok3.enforcer === "0x" + "bb".repeat(20), JSON.stringify(ok3));
+  const okOld = await V.checkRecord(r1, r1.reasoning_hash);
+  assert.ok(okOld.version === 1 && okOld.enforcer === V.CONFIG.enforcer.toLowerCase());          // old records still read as business 1
+  assert.ok(!(await V.checkRecord({ ...r3, business_id: 3 }, r3.reasoning_hash)).fieldsMatch);          // displayed business differs from the hashed one
+  assert.ok(!(await V.checkRecord({ ...r3, contract_address: "0x" + "cc".repeat(20) }, r3.reasoning_hash)).fieldsMatch);
+  assert.ok(!(await V.checkRecord({ ...r3, hash_input: r3.hash_input.replace('"hash_version":2,', "") }, r3.reasoning_hash)).hashMatches);
+  const mkAt = (addr) => ({ blockNumber: "0x2a", status: "0x1", logs: [{ address: addr, topics: [topicOf("PaymentMade"), zero, pad(r3.reasoning_hash), zero] }] });
+  assert.ok(V.findEvent(mkAt("0x" + "bb".repeat(20)), r3.reasoning_hash, ok3.enforcer).found);
+  assert.ok(!V.findEvent(mkAt(E), r3.reasoning_hash, ok3.enforcer).found);                              // business 1's events never confirm business 2's record
+  assert.ok(!V.findEvent(mkAt("0x" + "bb".repeat(20)), r3.reasoning_hash).found);                       // and the default is still business 1 only
+  const factoryAnswers = (result, chainId = V.CONFIG.chainId) => async (url, opt) => {
+    const b = JSON.parse(opt.body);
+    return { ok: true, json: async () => ({ result: b.method === "eth_chainId" ? chainId : result }) };
+  };
+  const yes = "0x" + "0".repeat(63) + "1", no = "0x" + "0".repeat(64);
+  assert.strictEqual(await V.isKnownBusiness("0x" + "bb".repeat(20), factoryAnswers(yes), ["https://r"]), true);
+  assert.strictEqual(await V.isKnownBusiness("0x" + "bb".repeat(20), factoryAnswers(no), ["https://r"]), false);
+  assert.strictEqual(await V.isKnownBusiness(E, factoryAnswers(no), ["https://r"]), true);              // the original business needs no lookup
+  assert.strictEqual(await V.isKnownBusiness("nope", factoryAnswers(yes), ["https://r"]), false);
+  await assert.rejects(V.isKnownBusiness("0x" + "bb".repeat(20), factoryAnswers(yes, "0x1"), ["https://r"]));   // wrong chain: not trusted
+
   const h = r1.reasoning_hash;
   const mkReceipt = (name, status = "0x1", addr = E) => ({
     blockNumber: "0x2a", status,

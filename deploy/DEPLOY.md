@@ -59,3 +59,15 @@ Reviewing applications: the admin site has an **Applications** tab. Accepting on
 
 The portal loads its typeface (Bricolage Grotesque, the same as the proof page) from Google Fonts, so its Content-Security-Policy allows `fonts.googleapis.com` and `fonts.gstatic.com`. If you set the portal up before that line existed, update the live config in place (do not copy the repo file over it: certbot has edited the live one):
 `sudo sed -i "s#style-src 'self'; img-src#style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src#" /etc/nginx/sites-available/ceedebooks-portal && sudo nginx -t && sudo systemctl reload nginx`
+
+## Upgrading to v1.2.8.1 (multi-tenant backend)
+
+The first start migrates the database in place: it adds `business_id` to every table, rebuilds `purchase_orders` and `invoices` so their numbers are unique per business, and records the live contract as business 1. Take a copy first and rehearse it on the copy:
+
+1. Back up: `cp "$CEEDEBOOKS_DB_PATH" "$CEEDEBOOKS_DB_PATH.pre-1.2.8.1"` (use the path the systemd unit uses).
+2. Rehearse: `CEEDEBOOKS_DB_PATH=/tmp/rehearsal.db` with a copy of the file, then `PYTHONPATH=. python3 -c "import asyncio; from backend import models; from agent import decision_log; asyncio.run(models.init_db()); asyncio.run(decision_log.init_db()); print('migrated')"` and check `sqlite3 /tmp/rehearsal.db "select id,slug,enforcer_address,contract_version,status from businesses; select count(*), min(business_id), max(business_id) from invoices;"` (one business, version 1, every invoice in business 1).
+3. Pull, then `sudo systemctl restart ceedebooks-api`.
+4. Re-copy the proof page: `sudo cp site/index.html site/styles.css site/app.js site/verify.js /var/www/ceedebooks/` (`verify.js` and `app.js` changed).
+5. Existing API keys keep working (they become business 1's keys). Check `curl -s https://api.ceedebooks.xyz/stats` and the verify button on one old decision.
+
+To go back: stop the service, restore the `.pre-1.2.8.1` copy and check out the previous tag. Do not run the old code on a migrated database.

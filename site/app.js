@@ -48,8 +48,12 @@
       var tx = { text: shortHash(rec.chain_tx_hash), href: C.explorer + "/tx/" + rec.chain_tx_hash };
       try {
         var got = await V.readReceipt(rec.chain_tx_hash, window.fetch.bind(window));
-        var ev = V.findEvent(got.receipt, hash);
-        if (ev.found && ev.success) {
+        var known = await V.isKnownBusiness(local.enforcer, window.fetch.bind(window));
+        var ev = known ? V.findEvent(got.receipt, hash, local.enforcer) : { found: false };
+        if (!known) {
+          chain = "bad";
+          steps.push({ s: "bad", t: "The contract named in this record was not created by the CeedeBooks factory, so its events are not trusted.", link: tx });
+        } else if (ev.found && ev.success) {
           chain = "ok";
           steps.push({ s: "ok", t: "Found on-chain. A " + ev.event + " event in block " + ev.block + " carries the same hash. Read directly from " + new URL(got.rpc).host + ".", link: tx });
         } else {

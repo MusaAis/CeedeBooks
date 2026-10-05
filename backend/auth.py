@@ -1,7 +1,7 @@
 """API-key authentication and role checks.
 
 Roles:
-  buyer   the business owner; full write access. Issued only by scripts/create_api_key.py on the server.
+  buyer   the business owner; full write access in ONE business (the key's business). Issued only by scripts/create_api_key.py on the server.
   vendor  bound to exactly one vendor_id; may submit and read only its own invoices.
   public  no key at all; read-only access to /decisions/* (the audit trail).
 
@@ -52,6 +52,7 @@ class Principal:
     role: str
     vendor_id: Optional[int]
     label: str
+    business_id: int = 1  # the one business this credential can act in; every query is scoped by it
     admin_address: Optional[str] = None  # set only for a wallet-signed admin session
 
 
@@ -71,12 +72,14 @@ async def authenticate(
             if vsession is None:
                 failed_auth_limiter.allow(ip, config.failed_auth_per_min, 60.0)
                 raise HTTPException(401, "Vendor session missing, expired or no longer valid")
-            return Principal(key_id=0, role=VENDOR, vendor_id=vsession["vendor_id"], label="vendor:" + vsession["address"])
+            return Principal(key_id=0, role=VENDOR, vendor_id=vsession["vendor_id"], label="vendor:" + vsession["address"],
+                             business_id=vsession["business_id"])
         session = await admin_auth.validate_token(token) if 0 < len(token) <= _MAX_KEY_LEN else None
         if session is None:
             failed_auth_limiter.allow(ip, config.failed_auth_per_min, 60.0)
             raise HTTPException(401, "Admin session missing, expired or no longer valid")
-        return Principal(key_id=0, role=BUYER, vendor_id=None, label="admin:" + session["address"], admin_address=session["address"])
+        return Principal(key_id=0, role=BUYER, vendor_id=None, label="admin:" + session["address"],
+                         business_id=session["business_id"], admin_address=session["address"])
 
 
     row = None
@@ -85,7 +88,8 @@ async def authenticate(
     if row is None or row["revoked"]:
         failed_auth_limiter.allow(ip, config.failed_auth_per_min, 60.0)  # records the failure
         raise HTTPException(401, "Missing or invalid X-API-Key")
-    return Principal(key_id=row["id"], role=row["role"], vendor_id=row["vendor_id"], label=row["label"])
+    return Principal(key_id=row["id"], role=row["role"], vendor_id=row["vendor_id"], label=row["label"],
+                     business_id=row["business_id"])
 
 
 def require(*roles: str):

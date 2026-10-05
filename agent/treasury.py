@@ -1,6 +1,6 @@
 """Server-side treasury runway estimate. Never taken from a request.
 
-Runway = (pool balance after this invoice) / (average daily spend over the last 30 days of this ledger's paid
+Runway = (pool balance after this invoice) / (average daily spend over the last 30 days of this business's paid
 invoices), capped at 365 days. With no spend history the cap applies. If the balance or the history cannot be read,
 runway is 0 so the rules baseline HOLDs (fail closed).
 """
@@ -28,10 +28,12 @@ def compute_runway(balance_usdc: float, spent_usdc: float, invoice_amount: float
     return min(remaining / daily_burn, MAX_RUNWAY_DAYS)
 
 
-async def runway_days(invoice_amount: float) -> float:
+async def runway_days(invoice_amount: float, business: dict) -> float:
+    """Runway for one business: its own pool balance and its own paid invoices. Nothing from another business."""
     try:
-        balance_units = await asyncio.to_thread(contract.usdc_balance)
-        spent = await models.paid_total_since(time.time() - WINDOW_DAYS * 86400)
+        chain = contract.chain_for(business)
+        balance_units = await asyncio.to_thread(chain.usdc_balance)
+        spent = await models.paid_total_since(business["id"], time.time() - WINDOW_DAYS * 86400)
     except Exception:
         log.exception("Could not compute treasury runway; failing closed")
         return 0.0

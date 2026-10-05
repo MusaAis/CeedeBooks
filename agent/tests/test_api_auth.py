@@ -28,11 +28,11 @@ def pipeline(monkeypatch):
     """Stub the money path so API tests never touch the chain; records what the API handed the pipeline."""
     seen = {}
 
-    async def fake_runway(amount):
-        seen["runway_for"] = amount
+    async def fake_runway(amount, business):
+        seen["runway_for"], seen["business"] = amount, business["id"]
         return 42.0
 
-    async def fake_process(invoice, runway):
+    async def fake_process(invoice, runway, business):
         seen["invoice"], seen["runway"] = invoice, runway
         return payables.Decision.HOLD
 
@@ -49,7 +49,7 @@ def client():
 
 def _key(role, vendor_id=None, label="t"):
     key = auth.generate_key(role)
-    asyncio.run(models.save_api_key(auth.hash_key(key), role, vendor_id, label))
+    asyncio.run(models.save_api_key(1, auth.hash_key(key), role, vendor_id, label))
     return key
 
 
@@ -108,9 +108,9 @@ def test_keys_are_stored_hashed_only():
 
 def test_vendor_key_must_name_a_vendor_and_buyer_key_must_not():
     with pytest.raises(sqlite3.IntegrityError):
-        asyncio.run(models.save_api_key("h1", "vendor", None, "bad"))
+        asyncio.run(models.save_api_key(1, "h1", "vendor", None, "bad"))
     with pytest.raises(sqlite3.IntegrityError):
-        asyncio.run(models.save_api_key("h2", "buyer", 1, "bad"))
+        asyncio.run(models.save_api_key(1, "h2", "buyer", 1, "bad"))
 
 
 def test_failed_auth_attempts_get_throttled(client, monkeypatch):
@@ -127,19 +127,19 @@ def test_vendor_cannot_create_vendors_pos_or_receipts(client, world):
     po = {"po_number": "PO-9", "vendor_id": world["a"], "amount_usdc": "1", "category": 0}
     assert client.post("/purchase-orders", json=po, headers=k).status_code == 403
     assert client.post("/receipts", json={"po_id": world["po"]}, headers=k).status_code == 403
-    assert asyncio.run(models.get_receipt(world["po"])) is None
+    assert asyncio.run(models.get_receipt(1, world["po"])) is None
 
 
 def test_buyer_receipt_role_is_set_by_the_server(client, world):
     r = client.post("/receipts", json={"po_id": world["po"], "confirmed_by": "Musa"}, headers=world["buyer"])
     assert r.status_code == 200
-    assert asyncio.run(models.get_receipt(world["po"]))["confirmed_by_role"] == "buyer"
+    assert asyncio.run(models.get_receipt(1, world["po"]))["confirmed_by_role"] == "buyer"
 
 
 def test_receipt_body_cannot_pick_its_own_role(client, world):
     r = client.post("/receipts", json={"po_id": world["po"], "confirmed_by_role": "ops_manager"}, headers=world["buyer"])
     assert r.status_code == 422
-    assert asyncio.run(models.get_receipt(world["po"])) is None
+    assert asyncio.run(models.get_receipt(1, world["po"])) is None
 
 
 def test_receipt_for_missing_po_404_and_duplicate_409(client, world):
@@ -195,11 +195,11 @@ def test_processing_errors_do_not_leak_internals(client, world, monkeypatch):
     async def boom(*a, **k):
         raise RuntimeError("secret rpc url http://internal:8545")
 
-    monkeypatch.setattr(main.treasury, "runway_days", lambda amount: asyncio.sleep(0, 30.0))
+    monkeypatch.setattr(main.treasury, "runway_days", lambda amount, business: asyncio.sleep(0, 30.0))
     monkeypatch.setattr(main.payables, "process_invoice", boom)
     r = client.post("/invoices", json=_invoice(world["a"]), headers=world["key_a"])
     assert r.status_code == 500 and "internal" not in r.text
-    assert asyncio.run(models.get_invoice(1))["status"] == "error"
+    assert asyncio.run(models.get_invoice(1, 1))["status"] == "error"
 
 
 def test_vendor_reads_only_its_own_invoices_and_vendor_record(client, world, pipeline):
@@ -263,9 +263,9 @@ def test_cors_allows_only_the_site_origin(client):
 def _paid(amount, days_ago=1):
     import time
     async def go():
-        vid = await models.save_vendor("V", WALLET_A)
-        inv = await models.save_invoice(f"I-{amount}-{days_ago}", vid, None, amount, 0, "h")
-        await models.update_invoice_status(inv, "paid")
+        vid = await models.save_vendor(1, "V", WALLET_A)
+        inv = await models.save_invoice(1, f"I-{amount}-{days_ago}", vid, None, amount, 0, "h")
+        await models.update_invoice_status(1, inv, "paid")
         import aiosqlite
         async with aiosqlite.connect(config.db_path) as db:
             await db.execute("UPDATE invoices SET created_at = ? WHERE id = ?", (time.time() - days_ago * 86400, inv))
@@ -273,26 +273,27 @@ def _paid(amount, days_ago=1):
     asyncio.run(go())
 
 
-def test_runway_zero_when_pool_cannot_cover_invoice(monkeypatch):
-    monkeypatch.setattr(treasury.contract, "usdc_balance", lambda: 4_000_000)
-    assert asyncio.run(treasury.runway_days(5.0)) == 0.0
+def _home():
+    return asyncio.run(models.get_business(1))
 
 
-def test_runway_fails_closed_when_balance_unreadable(monkeypatch):
-    def broken():
-        raise ConnectionError("rpc down")
-    monkeypatch.setattr(treasury.contract, "usdc_balance", broken)
-    assert asyncio.run(treasury.runway_days(1.0)) == 0.0
+def test_runway_zero_when_pool_cannot_cover_invoice(chain):
+    chain.balance = 4_000_000
+    assert asyncio.run(treasury.runway_days(5.0, _home())) == 0.0
 
 
-def test_runway_capped_with_no_spend_history(monkeypatch):
-    monkeypatch.setattr(treasury.contract, "usdc_balance", lambda: 8_790_000)
-    assert asyncio.run(treasury.runway_days(5.0)) == treasury.MAX_RUNWAY_DAYS
+def test_runway_fails_closed_when_balance_unreadable(chain):
+    chain.broken = True
+    assert asyncio.run(treasury.runway_days(1.0, _home())) == 0.0
 
 
-def test_runway_uses_trailing_burn_rate(monkeypatch):
-    monkeypatch.setattr(treasury.contract, "usdc_balance", lambda: 100_000_000)
+def test_runway_capped_with_no_spend_history(chain):
+    chain.balance = 8_790_000
+    assert asyncio.run(treasury.runway_days(5.0, _home())) == treasury.MAX_RUNWAY_DAYS
+
+
+def test_runway_uses_trailing_burn_rate(chain):
+    chain.balance = 100_000_000
     _paid(30.0, days_ago=2)    # 30 USDC in the window -> 1 USDC/day
     _paid(900.0, days_ago=45)  # outside the 30-day window, ignored
-    assert asyncio.run(treasury.runway_days(10.0)) == pytest.approx(90.0)  # (100 - 10) / 1 per day
-    assert asyncio.run(treasury.runway_days(10.0)) == pytest.approx(90.0)
+    assert asyncio.run(treasury.runway_days(10.0, _home())) == pytest.approx(90.0)  # (100 - 10) / 1 per day

@@ -37,8 +37,8 @@ _STATEMENT = {
     SIGN_IN: "Sign in to the CeedeBooks vendor portal. This signs a message only: it sends no transaction and costs nothing.",
 }
 
-_challenges: dict = {}  # nonce -> {address, purpose, expires}
-_sessions: dict = {}    # sha256(token) -> {vendor_id, address, issued, seen}
+_challenges: dict = {}  # nonce -> {address, purpose, business_id, expires}
+_sessions: dict = {}    # sha256(token) -> {business_id, vendor_id, address, issued, seen}
 
 
 def reset() -> None:
@@ -57,7 +57,7 @@ def _purge(now: float) -> None:
         del _sessions[key]
 
 
-def make_challenge(address: str, purpose: str) -> dict:
+def make_challenge(address: str, purpose: str, business: dict) -> dict:
     """Returns {nonce, message}. When the store is full the oldest challenge is dropped: a flood can slow sign-in, never block it."""
     if purpose not in _STATEMENT or not _ADDRESS_RE.match(address):
         raise ValueError("bad request")
@@ -69,16 +69,18 @@ def make_challenge(address: str, purpose: str) -> dict:
     issued = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     expires = datetime.fromtimestamp(now + CHALLENGE_TTL, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     message = (
-        f"{domain()} wants you to sign in with your Ethereum account:\n{address}\n\n{_STATEMENT[purpose]}\n\n"
+        f"{domain()} wants you to sign in with your Ethereum account:\n{address}\n\n{_STATEMENT[purpose]}\nBusiness: {business['slug']}\n\n"
         f"URI: {config.portal_origin}\nVersion: 1\nChain ID: {CHAIN_ID}\nNonce: {nonce}\n"
         f"Issued At: {issued}\nExpiration Time: {expires}"
     )
-    _challenges[nonce] = {"address": address.lower(), "purpose": purpose, "message": message, "expires": now + CHALLENGE_TTL}
+    _challenges[nonce] = {"address": address.lower(), "purpose": purpose, "business_id": business["id"], "message": message,
+                          "expires": now + CHALLENGE_TTL}
     return {"nonce": nonce, "message": message}
 
 
-def consume(nonce: str, signature: str, purpose: str) -> Optional[str]:
-    """Single-use: the challenge is spent whether or not the signature is good. Returns the lower-case signer, or None."""
+def consume(nonce: str, signature: str, purpose: str) -> Optional[tuple]:
+    """Single-use: the challenge is spent whether or not the signature is good. Returns (lower-case signer, business id)
+    for the business the challenge was issued for, or None."""
     if not _NONCE_RE.match(nonce or "") or not _SIG_RE.match(signature or ""):
         return None
     challenge = _challenges.pop(nonce, None)
@@ -88,15 +90,16 @@ def consume(nonce: str, signature: str, purpose: str) -> Optional[str]:
         recovered = Account.recover_message(encode_defunct(text=challenge["message"]), signature=signature).lower()
     except Exception:
         return None
-    return recovered if recovered == challenge["address"] else None
+    return (recovered, challenge["business_id"]) if recovered == challenge["address"] else None
 
 
-def start_session(vendor_id: int, address: str) -> dict:
+def start_session(business_id: int, vendor_id: int, address: str) -> dict:
     now = time.time()
-    for key in [k for k, s in _sessions.items() if s["vendor_id"] == vendor_id]:
+    for key in [k for k, s in _sessions.items() if s["vendor_id"] == vendor_id and s["business_id"] == business_id]:
         del _sessions[key]  # one live session per vendor
     token = "cdb_vendor_" + secrets.token_urlsafe(32)
-    _sessions[hashlib.sha256(token.encode()).hexdigest()] = {"vendor_id": vendor_id, "address": address, "issued": now, "seen": now}
+    _sessions[hashlib.sha256(token.encode()).hexdigest()] = {
+        "business_id": business_id, "vendor_id": vendor_id, "address": address, "issued": now, "seen": now}
     return {"token": token, "vendor_id": vendor_id, "address": address, "expires_in": SESSION_IDLE}
 
 
@@ -109,12 +112,12 @@ async def validate_token(token: str) -> Optional[dict]:
     if now - session["seen"] > SESSION_IDLE or now - session["issued"] > SESSION_MAX:
         _sessions.pop(key, None)
         return None
-    vendor = await models.get_vendor(session["vendor_id"])
+    vendor = await models.get_vendor(session["business_id"], session["vendor_id"])
     if vendor is None or vendor["wallet_address"].lower() != session["address"]:  # wallet changed: sign out
         _sessions.pop(key, None)
         return None
     session["seen"] = now
-    return {"vendor_id": session["vendor_id"], "address": session["address"]}
+    return {"business_id": session["business_id"], "vendor_id": session["vendor_id"], "address": session["address"]}
 
 
 def logout(token: str) -> None:

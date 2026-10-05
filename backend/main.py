@@ -1,6 +1,6 @@
 """FastAPI app: invoice intake, vendor/PO/receipt setup, and the audit trail.
 
-Access model (see backend/auth.py): buyer key for setup and receipts, vendor key for its own invoices only, no key for the read-only audit endpoints. No client-supplied value can influence a payment decision: the receipt role comes from the key, the vendor wallet from the vendor on file, and the treasury runway from the chain.
+Access model (see backend/auth.py): buyer key for setup and receipts, vendor key for its own invoices only, no key for the read-only audit endpoints. Every credential belongs to ONE business and every query is scoped to it (backend/models.py takes business_id as a required argument). No client-supplied value can influence a payment decision: the receipt role comes from the key, the vendor wallet from the vendor on file, and the treasury runway from the chain.
 """
 import asyncio
 import hashlib
@@ -43,6 +43,27 @@ def _check_address(v: str) -> str:
     if not _ADDRESS_RE.match(v):
         raise ValueError("must be a 0x-prefixed 40-hex-char address")
     return v
+
+
+Slug = Annotated[str, Field(min_length=2, max_length=64, pattern=r"^[a-z0-9][a-z0-9-]*$")]
+
+
+async def _business_by_slug(slug: Optional[str], *, active_only: bool) -> dict:
+    """The business a public request names (default: the home business). Unknown or inactive is a 404."""
+    business = await models.get_business(models.HOME_BUSINESS_ID) if slug is None else await models.get_business_by_slug(slug)
+    if business is None or (active_only and business["status"] != "active"):
+        raise HTTPException(404, "Business not found")
+    return business
+
+
+async def _writable(who: "auth.Principal") -> dict:
+    """The caller's own business, which must be active before anything is written or paid in it."""
+    business = await models.get_business(who.business_id)
+    if business is None:
+        raise HTTPException(403, "This credential belongs to a business that does not exist")
+    if business["status"] != "active":
+        raise HTTPException(403, f"This business is {business['status']} and is not accepting activity")
+    return business
 
 
 class VendorIn(_Strict):
@@ -155,12 +176,13 @@ async def startup() -> None:
 async def _admin_log(who: auth.Principal, action: str, ref: str) -> None:
     """Record what a wallet-signed admin did off-chain. API-key callers are not logged here."""
     if who.admin_address:
-        await models.log_admin_action(who.admin_address, action, ref)
+        await models.log_admin_action(who.business_id, who.admin_address, action, ref)
 
 
 @app.post("/vendors")
 async def create_vendor(body: VendorIn, who: auth.Principal = Depends(auth.require("buyer"))):
-    vendor_id = await models.save_vendor(body.name, body.wallet_address)
+    await _writable(who)
+    vendor_id = await models.save_vendor(who.business_id, body.name, body.wallet_address)
     await _admin_log(who, "create_vendor", f"vendor {vendor_id}")
     return {"id": vendor_id}
 
@@ -169,7 +191,7 @@ async def create_vendor(body: VendorIn, who: auth.Principal = Depends(auth.requi
 async def get_vendor(vendor_id: int, who: auth.Principal = Depends(auth.require("buyer", "vendor"))):
     if who.role == "vendor" and who.vendor_id != vendor_id:
         raise HTTPException(404, "Vendor not found")
-    vendor = await models.get_vendor(vendor_id)
+    vendor = await models.get_vendor(who.business_id, vendor_id)
     if vendor is None:
         raise HTTPException(404, "Vendor not found")
     return dict(vendor)
@@ -177,10 +199,11 @@ async def get_vendor(vendor_id: int, who: auth.Principal = Depends(auth.require(
 
 @app.post("/purchase-orders")
 async def create_purchase_order(body: PurchaseOrderIn, who: auth.Principal = Depends(auth.require("buyer"))):
-    if await models.get_vendor(body.vendor_id) is None:
+    await _writable(who)
+    if await models.get_vendor(who.business_id, body.vendor_id) is None:
         raise HTTPException(404, "Vendor not found")
     try:
-        po_id = await models.save_purchase_order(body.po_number, body.vendor_id, float(body.amount_usdc), body.category)
+        po_id = await models.save_purchase_order(who.business_id, body.po_number, body.vendor_id, float(body.amount_usdc), body.category)
     except sqlite3.IntegrityError:
         raise HTTPException(409, f"PO number '{body.po_number}' already exists")
     await _admin_log(who, "create_purchase_order", body.po_number)
@@ -190,11 +213,12 @@ async def create_purchase_order(body: PurchaseOrderIn, who: auth.Principal = Dep
 @app.post("/receipts")
 async def create_receipt(body: ReceiptIn, who: auth.Principal = Depends(auth.require("buyer"))):
     """Only the buyer can confirm delivery. The role is set here from the API key, never from the request."""
-    if await models.get_purchase_order_by_id(body.po_id) is None:
+    await _writable(who)
+    if await models.get_purchase_order_by_id(who.business_id, body.po_id) is None:
         raise HTTPException(404, "Purchase order not found")
-    if await models.get_receipt(body.po_id) is not None:
+    if await models.get_receipt(who.business_id, body.po_id) is not None:
         raise HTTPException(409, "A receipt is already on file for this purchase order")
-    receipt_id = await models.save_receipt(body.po_id, body.confirmed_by or who.label, who.role)
+    receipt_id = await models.save_receipt(who.business_id, body.po_id, body.confirmed_by or who.label, who.role)
     await _admin_log(who, "confirm_receipt", f"po {body.po_id}")
     return {"id": receipt_id}
 
@@ -202,40 +226,41 @@ async def create_receipt(body: ReceiptIn, who: auth.Principal = Depends(auth.req
 # ---- invoices (buyer, or the vendor itself)
 
 async def _checked_submission(body: InvoiceIn, who: auth.Principal):
-    """Access and consistency checks shared by /invoices and /invoices/preflight. Returns (vendor, po)."""
+    """Access and consistency checks shared by /invoices and /invoices/preflight. Returns (vendor, po, business)."""
+    business = await _writable(who)
     if who.role == "vendor" and who.vendor_id != body.vendor_id:
         raise HTTPException(403, "A vendor key can only submit invoices for its own vendor_id")
     if body.origin is not None and who.role != "buyer":
         raise HTTPException(403, "Only the buyer can label an invoice's origin")
 
-    vendor = await models.get_vendor(body.vendor_id)
+    vendor = await models.get_vendor(who.business_id, body.vendor_id)
     if vendor is None:
         raise HTTPException(404, "Vendor not found")
     if body.vendor_wallet is not None and body.vendor_wallet.lower() != vendor["wallet_address"].lower():
         raise HTTPException(422, "vendor_wallet does not match the wallet on file for this vendor")
 
-    po = await models.get_purchase_order(body.po_number) if body.po_number else None
+    po = await models.get_purchase_order(who.business_id, body.po_number) if body.po_number else None
     if po is not None and po["vendor_id"] != body.vendor_id:
         raise HTTPException(403, "That purchase order does not belong to this vendor")
 
     if po is not None and po["category"] != body.category:
         raise HTTPException(422, "Invoice category does not match the purchase order's category")
-    return vendor, po
+    return vendor, po, business
 
 
 @app.post("/invoices/preflight")
 async def preflight_invoice(body: InvoiceIn, who: auth.Principal = Depends(auth.require("buyer", "vendor"))):
     """Dry run: would this invoice be paid, held or escalated right now, and why? Nothing is saved, logged or sent
     on-chain, so an agent can fix problems before submitting. Same access rules as POST /invoices."""
-    vendor, _ = await _checked_submission(body, who)
+    vendor, _, business = await _checked_submission(body, who)
     amount = float(body.amount_usdc)
     invoice = payables.Invoice(
-        id=0, invoice_number=body.invoice_number, vendor_wallet=vendor["wallet_address"],
+        business_id=who.business_id, id=0, invoice_number=body.invoice_number, vendor_wallet=vendor["wallet_address"],
         amount_usdc=amount, category=body.category, doc_hash=body.doc_hash, po_number=body.po_number,
     )
     try:
-        runway = await treasury.runway_days(amount)
-        result = await payables.preflight(invoice, runway)
+        runway = await treasury.runway_days(amount, business)
+        result = await payables.preflight(invoice, runway, business)
     except Exception:
         log.exception("Preflight failed for %s", body.invoice_number)
         raise HTTPException(503, "Could not read the chain right now; try again shortly")
@@ -244,18 +269,19 @@ async def preflight_invoice(body: InvoiceIn, who: auth.Principal = Depends(auth.
 
 @app.post("/invoices")
 async def submit_invoice(body: InvoiceIn, who: auth.Principal = Depends(auth.require("buyer", "vendor"))):
-    vendor, po = await _checked_submission(body, who)
+    vendor, po, business = await _checked_submission(body, who)
     amount = float(body.amount_usdc)
     try:
         invoice_id = await models.save_invoice(
-            body.invoice_number, body.vendor_id, po["id"] if po else None, amount, body.category, body.doc_hash,
+            who.business_id, body.invoice_number, body.vendor_id, po["id"] if po else None, amount, body.category, body.doc_hash,
             body.origin or "agent",
         )
     except sqlite3.IntegrityError:
-        await models.log_rejected_submission("duplicate_invoice", body.origin or "agent")
+        await models.log_rejected_submission(who.business_id, "duplicate_invoice", body.origin or "agent")
         raise HTTPException(409, f"Invoice number '{body.invoice_number}' already exists")
 
     invoice = payables.Invoice(
+        business_id=who.business_id,
         id=invoice_id,
         invoice_number=body.invoice_number,
         vendor_wallet=vendor["wallet_address"],  # always the wallet on file, never a client-supplied one
@@ -265,18 +291,18 @@ async def submit_invoice(body: InvoiceIn, who: auth.Principal = Depends(auth.req
         po_number=body.po_number,
     )
     try:
-        runway = await treasury.runway_days(amount)  # computed server-side from the chain; not a request field
-        decision = await payables.process_invoice(invoice, runway)
+        runway = await treasury.runway_days(amount, business)  # computed server-side from the chain; not a request field
+        decision = await payables.process_invoice(invoice, runway, business)
     except Exception:
         log.exception("Invoice %s processing failed", body.invoice_number)
-        await models.update_invoice_status(invoice_id, "error")
+        await models.update_invoice_status(who.business_id, invoice_id, "error")
         raise HTTPException(500, "Processing failed; the failure was logged")
     return {"invoice_id": invoice_id, "decision": decision.value}
 
 
 @app.get("/invoices/{invoice_id}")
 async def get_invoice(invoice_id: int, who: auth.Principal = Depends(auth.require("buyer", "vendor"))):
-    invoice = await models.get_invoice(invoice_id)
+    invoice = await models.get_invoice(who.business_id, invoice_id)
     # A vendor asking for someone else's invoice gets the same 404 as a missing one, so ids can't be probed.
     if invoice is None or (who.role == "vendor" and invoice["vendor_id"] != who.vendor_id):
         raise HTTPException(404, "Invoice not found")
@@ -298,8 +324,11 @@ async def _onchain_check(decision) -> dict:
     tx_hash = decision["chain_tx_hash"]
     if not tx_hash:
         return {"checked": False, "match": None, "detail": "No on-chain transaction recorded for this decision"}
+    business = await models.get_business(decision["business_id"])
+    if business is None:
+        return {"checked": False, "match": None, "chain_tx_hash": tx_hash, "detail": "The business for this decision is not on record"}
     try:
-        events = await asyncio.to_thread(contract.reasoning_events, tx_hash)
+        events = await asyncio.to_thread(contract.chain_for(business).reasoning_events, tx_hash)
     except Exception:
         log.exception("On-chain lookup failed for %s", tx_hash)
         return {"checked": False, "match": None, "chain_tx_hash": tx_hash, "detail": "Could not read the chain right now"}
@@ -319,27 +348,41 @@ async def verify_decision(reasoning_hash: DecisionHash):
     return {"reasoning_hash": reasoning_hash, "verified": verified, "onchain": onchain}
 
 
+async def _public_scope(business: Optional[str]) -> Optional[int]:
+    """None = the public aggregate over every business; a slug scopes a public read to that one business."""
+    return None if business is None else (await _business_by_slug(business, active_only=False))["id"]
+
+
 @app.get("/decisions")
-async def list_decisions(limit: int = 20):
-    """Most recent audit entries, newest first (no reasoning text; fetch one by hash for that)."""
-    return {"decisions": await decision_log.recent(max(1, min(limit, 50)))}
+async def list_decisions(limit: int = 20, business: Optional[Slug] = None):
+    """Most recent audit entries, newest first (no reasoning text; fetch one by hash for that). `business` narrows it."""
+    return {"decisions": await decision_log.recent(max(1, min(limit, 50)), await _public_scope(business))}
 
 
 @app.get("/stats")
-async def get_stats():
-    """Decision counts (as before) plus the submission metrics, split by origin: agent, manual (run by hand) and demo."""
-    return {**await decision_log.stats(), "submissions": await models.submission_stats()}
+async def get_stats(business: Optional[Slug] = None):
+    """Decision counts (as before) plus the submission metrics, split by origin: agent, manual (run by hand) and demo.
+    Without `business` this is the aggregate over every business (counts only); with it, that one business."""
+    scope = await _public_scope(business)
+    return {**await decision_log.stats(scope), "submissions": await models.submission_stats(scope)}
 
 
 @app.get("/.well-known/agent.json")
 async def agent_manifest():
-    """Machine-readable description so another agent can discover how to work with this one. Public, static."""
+    """Machine-readable description so another agent can discover how to work with this one. Public."""
+    home = await models.get_business(models.HOME_BUSINESS_ID)
+    active = await models.list_businesses("active")
     return {
         "name": "CeedeBooks",
         "description": "Autonomous accounts-payable agent. It pays an invoice only if a smart contract allows it.",
         "network": "Arc Testnet",
         "settlement": "testnet USDC (no market value)",
-        "contract": config.budget_enforcer_address,
+        "contract": home["enforcer_address"] if home else config.budget_enforcer_address,
+        "businesses": [
+            {"slug": b["slug"], "name": b["name"], "contract": b["enforcer_address"], "contract_version": b["contract_version"]}
+            for b in active
+        ],
+        "business_scope": "Every key, session and record belongs to one business. Public reads default to all businesses; add ?business=<slug> to narrow them. Sign-in challenges accept an optional 'business' slug (default: the first business).",
         "auth": {
             "header": "X-API-Key", "roles": ["buyer", "vendor"], "public": ["/decisions", "/stats"],
             "wallet_signin": "A vendor can also sign in by signing a one-time message with its payee wallet (POST /vendor/auth/challenge then /vendor/auth/verify, EIP-191 personal_sign) and send the returned token as 'Authorization: Bearer <token>'. No key is issued.",
@@ -377,6 +420,7 @@ _TX_RE = r"^0x[0-9a-fA-F]{64}$"
 
 class AdminChallengeIn(_Strict):
     address: str
+    business: Optional[Slug] = None  # which business to sign in to; default: the first business
 
     @field_validator("address")
     @classmethod
@@ -401,24 +445,24 @@ class AdminActionIn(_Strict):
 
 
 @app.get("/admin/auth/state")
-async def admin_auth_state():
+async def admin_auth_state(business: Optional[Slug] = None):
     """Public on-chain facts the connect screen needs: who is the approver, who is waiting to accept the role."""
+    biz = await _business_by_slug(business, active_only=False)
     try:
-        approver, pending = await asyncio.gather(
-            asyncio.to_thread(contract.approver), asyncio.to_thread(contract.pending_approver)
-        )
+        chain = contract.chain_for(biz)
+        approver, pending = await asyncio.gather(asyncio.to_thread(chain.approver), asyncio.to_thread(chain.pending_approver))
     except Exception:
         log.exception("admin auth state read failed")
         raise HTTPException(503, "Could not read the chain right now")
     return {"approver": approver.lower(), "pending_approver": pending.lower(), "chain_id": admin_auth.CHAIN_ID,
-            "domain": admin_auth.domain()}
+            "domain": admin_auth.domain(), "business": biz["slug"]}
 
 
 @app.post("/admin/auth/challenge")
 async def admin_challenge(body: AdminChallengeIn, request: Request):
     if not auth.request_limiter.allow("admin-challenge:" + auth.client_ip(request), 10, 60.0):
         raise HTTPException(429, "Too many sign-in attempts; try again in a minute")
-    return admin_auth.make_challenge(body.address)
+    return admin_auth.make_challenge(body.address, await _business_by_slug(body.business, active_only=False))
 
 
 @app.post("/admin/auth/verify")
@@ -430,7 +474,7 @@ async def admin_verify(body: AdminVerifyIn, request: Request):
     if session is None:
         auth.failed_auth_limiter.allow(ip, config.failed_auth_per_min, 60.0)
         raise HTTPException(401, "Sign-in failed")
-    await models.log_admin_action(session["address"], "sign_in", None)
+    await models.log_admin_action(session["business_id"], session["address"], "sign_in", None)
     return session
 
 
@@ -440,23 +484,28 @@ async def admin_logout(request: Request, _: auth.Principal = Depends(auth.requir
     return {"ok": True}
 
 
-def _chain_snapshot() -> dict:
-    snap = {"chain_ok": True}
+def _chain_snapshot(business: dict) -> dict:
+    snap = {"chain_ok": True, "business": business["slug"], "contract": business["enforcer_address"],
+            "contract_version": business["contract_version"]}
     try:
-        daily, per_tx = contract.budget_limits()
+        chain = contract.chain_for(business)
+        daily, per_tx = chain.budget_limits()
         snap.update(
-            approver=contract.approver().lower(),
-            pending_approver=contract.pending_approver().lower(),
-            paused=contract.is_paused(),
-            balance_usdc=contract.usdc_balance() / 1_000_000,
+            approver=chain.approver().lower(),
+            pending_approver=chain.pending_approver().lower(),
+            paused=chain.is_paused(),
+            balance_usdc=chain.usdc_balance() / 1_000_000,
             daily_limit_usdc=daily / 1_000_000,
             per_tx_limit_usdc=per_tx / 1_000_000,
         )
+        weekly = chain.weekly_limit()
+        if weekly is not None:  # v2 contracts only
+            snap.update(weekly_limit_usdc=weekly / 1_000_000, remaining_week_usdc=chain.remaining_this_week() / 1_000_000)
         cats = []
         for c in SpendCategory:
-            overall, in_cat = contract.remaining_today(int(c))
+            overall, in_cat = chain.remaining_today(int(c))
             cats.append({"id": int(c), "name": c.name.replace("_", " ").title(),
-                         "daily_limit_usdc": contract.category_limit(int(c)) / 1_000_000, "remaining_usdc": in_cat / 1_000_000})
+                         "daily_limit_usdc": chain.category_limit(int(c)) / 1_000_000, "remaining_usdc": in_cat / 1_000_000})
         snap["categories"] = cats
     except Exception:
         log.exception("admin overview chain read failed")
@@ -465,22 +514,24 @@ def _chain_snapshot() -> dict:
 
 
 @app.get("/admin/overview")
-async def admin_overview(_: auth.Principal = Depends(auth.require_admin)):
+async def admin_overview(who: auth.Principal = Depends(auth.require_admin)):
+    business = await models.get_business(who.business_id)
     snap, counts, vendors, pos, pending = await asyncio.gather(
-        asyncio.to_thread(_chain_snapshot), models.invoice_counts(), models.list_vendors(), models.list_purchase_orders(),
-        models.count_pending_applications(),
+        asyncio.to_thread(_chain_snapshot, business), models.invoice_counts(who.business_id), models.list_vendors(who.business_id),
+        models.list_purchase_orders(who.business_id), models.count_pending_applications(who.business_id),
     )
     return {"chain": snap, "invoices": counts, "vendors": len(vendors), "purchase_orders": len(pos),
             "pending_applications": pending}
 
 
 @app.get("/admin/vendors")
-async def admin_vendors(_: auth.Principal = Depends(auth.require_admin)):
-    vendors = await models.list_vendors()
+async def admin_vendors(who: auth.Principal = Depends(auth.require_admin)):
+    vendors = await models.list_vendors(who.business_id)
+    chain = contract.chain_for(await models.get_business(who.business_id))
 
     def approved(w: str):
         try:
-            return contract.is_vendor_approved(w)
+            return chain.is_vendor_approved(w)
         except Exception:
             return None  # unknown, shown as such
 
@@ -489,31 +540,31 @@ async def admin_vendors(_: auth.Principal = Depends(auth.require_admin)):
 
 
 @app.get("/admin/purchase-orders")
-async def admin_purchase_orders(_: auth.Principal = Depends(auth.require_admin)):
-    return {"purchase_orders": await models.list_purchase_orders()}
+async def admin_purchase_orders(who: auth.Principal = Depends(auth.require_admin)):
+    return {"purchase_orders": await models.list_purchase_orders(who.business_id)}
 
 
 @app.get("/admin/invoices")
-async def admin_invoices(_: auth.Principal = Depends(auth.require_admin)):
-    return {"invoices": await models.list_invoices()}
+async def admin_invoices(who: auth.Principal = Depends(auth.require_admin)):
+    return {"invoices": await models.list_invoices(who.business_id)}
 
 
 @app.get("/admin/actions")
-async def admin_actions(_: auth.Principal = Depends(auth.require_admin)):
-    return {"actions": await models.list_admin_actions()}
+async def admin_actions(who: auth.Principal = Depends(auth.require_admin)):
+    return {"actions": await models.list_admin_actions(who.business_id)}
 
 
 @app.get("/admin/invoices/{invoice_id}/escalation")
-async def admin_escalation(invoice_id: int, _: auth.Principal = Depends(auth.require_admin)):
+async def admin_escalation(invoice_id: int, who: auth.Principal = Depends(auth.require_admin)):
     """The on-chain key the wallet needs to approve or reject this escalated invoice."""
-    invoice = await models.get_invoice(invoice_id)
+    invoice = await models.get_invoice(who.business_id, invoice_id)
     if invoice is None or invoice["status"] != "escalated" or not invoice["reasoning_hash"]:
         raise HTTPException(404, "No escalation waiting for this invoice")
     decision = await decision_log.get_decision(invoice["reasoning_hash"])
     if decision is None or not decision["chain_tx_hash"]:
         raise HTTPException(404, "This escalation has no recorded on-chain transaction (it predates v1.2.4)")
     try:
-        key = await asyncio.to_thread(contract.escalation_key, decision["chain_tx_hash"])
+        key = await asyncio.to_thread(contract.chain_for(await models.get_business(who.business_id)).escalation_key, decision["chain_tx_hash"])
     except Exception:
         log.exception("escalation key lookup failed")
         raise HTTPException(503, "Could not read the chain right now")
@@ -525,29 +576,30 @@ async def admin_escalation(invoice_id: int, _: auth.Principal = Depends(auth.req
 @app.post("/admin/actions")
 async def admin_record_action(body: AdminActionIn, who: auth.Principal = Depends(auth.require_admin)):
     """Record an on-chain admin transaction after the wallet sent it. The server checks the chain itself: the transaction
-    must be to BudgetEnforcer, from this admin, and successful. An escalation result also settles the invoice's status,
+    must be to this business's contract, from this admin, and successful. An escalation result also settles the invoice's status,
     but only if the event on-chain carries that invoice's own reasoning hash."""
+    business = await models.get_business(who.business_id)
     try:
-        tx = await asyncio.to_thread(contract.inspect_admin_tx, body.tx_hash)
+        tx = await asyncio.to_thread(contract.chain_for(business).inspect_admin_tx, body.tx_hash)
     except Exception:
         raise HTTPException(404, "That transaction is not confirmed on-chain yet")
-    if tx["sender"] != who.admin_address or tx["to"] != config.budget_enforcer_address.lower() or not tx["success"]:
+    if tx["sender"] != who.admin_address or tx["to"] != business["enforcer_address"].lower() or not tx["success"]:
         raise HTTPException(422, "That transaction is not a successful call to the contract from your wallet")
 
     ref = None
     if body.action in ("approve_escalation", "reject_escalation"):
-        invoice = await models.get_invoice(body.invoice_id) if body.invoice_id is not None else None
+        invoice = await models.get_invoice(who.business_id, body.invoice_id) if body.invoice_id is not None else None
         wanted = "EscalationApproved" if body.action == "approve_escalation" else "EscalationRejected"
         if invoice is None or tx["escalation"] is None or tx["escalation"][0] != wanted \
                 or tx["escalation"][2] != (invoice["reasoning_hash"] or ""):
             raise HTTPException(422, "The transaction does not settle that invoice's escalation")
         ref = f"invoice {invoice['id']}"
     try:
-        await models.log_admin_action(who.admin_address, body.action, ref, body.tx_hash.lower(), tx["block"])
+        await models.log_admin_action(who.business_id, who.admin_address, body.action, ref, body.tx_hash.lower(), tx["block"])
     except sqlite3.IntegrityError:
         raise HTTPException(409, "That transaction is already recorded")
     if ref:
-        await models.update_invoice_status(invoice["id"], "paid" if body.action == "approve_escalation" else "rejected")
+        await models.update_invoice_status(who.business_id, invoice["id"], "paid" if body.action == "approve_escalation" else "rejected")
     return {"ok": True, "block": tx["block"]}
 
 
@@ -564,6 +616,7 @@ def _ip_hash(request: Request) -> str:
 
 class WalletChallengeIn(_Strict):
     address: str
+    business: Optional[Slug] = None  # which business; default: the first business
 
     @field_validator("address")
     @classmethod
@@ -595,7 +648,7 @@ class ApplicationIn(_Strict):
 async def apply_challenge(body: WalletChallengeIn, request: Request):
     if not auth.request_limiter.allow("apply-challenge:" + auth.client_ip(request), 10, 60.0):
         raise HTTPException(429, "Too many attempts; try again in a minute")
-    return vendor_auth.make_challenge(body.address, vendor_auth.APPLY)
+    return vendor_auth.make_challenge(body.address, vendor_auth.APPLY, await _business_by_slug(body.business, active_only=True))
 
 
 @app.post("/apply")
@@ -607,36 +660,40 @@ async def apply_to_be_a_vendor(body: ApplicationIn, request: Request):
         raise HTTPException(429, "Too many failed attempts; try again later", headers={"Retry-After": "60"})
     if not auth.request_limiter.allow("apply:" + ip, APPLICATIONS_PER_HOUR_PER_IP, 3600.0):
         raise HTTPException(429, "Too many applications from this address; try again later", headers={"Retry-After": "3600"})
-    signer = vendor_auth.consume(body.nonce, body.signature, vendor_auth.APPLY)
-    if signer is None or signer != body.wallet_address.lower():
+    consumed = vendor_auth.consume(body.nonce, body.signature, vendor_auth.APPLY)
+    if consumed is None or consumed[0] != body.wallet_address.lower():
         auth.failed_auth_limiter.allow(ip, config.failed_auth_per_min, 60.0)
         raise HTTPException(401, "The wallet signature could not be verified; request a new challenge and sign again")
-    if await models.get_vendor_by_wallet(signer) is not None:
+    signer, business_id = consumed  # the business the challenge was issued for, not one the caller can swap
+    business = await models.get_business(business_id)
+    if business is None or business["status"] != "active":
+        raise HTTPException(404, "Business not found")
+    if await models.get_vendor_by_wallet(business_id, signer) is not None:
         raise HTTPException(409, "This wallet is already a registered vendor. Sign in instead")
     ip_hash = _ip_hash(request)
     if await models.pending_applications_from(ip_hash) >= MAX_PENDING_PER_IP:
         raise HTTPException(429, "Too many applications from this address are still waiting for review")
     try:
-        application_id = await models.save_application(body.business_name, signer, body.contact, ip_hash)
+        application_id = await models.save_application(business_id, body.business_name, signer, body.contact, ip_hash)
     except sqlite3.IntegrityError:
         raise HTTPException(409, "This wallet already has an application waiting for review")
     return {"id": application_id, "status": "pending"}
 
 
 @app.get("/admin/applications")
-async def admin_applications(_: auth.Principal = Depends(auth.require_admin)):
-    return {"applications": await models.list_applications()}
+async def admin_applications(who: auth.Principal = Depends(auth.require_admin)):
+    return {"applications": await models.list_applications(who.business_id)}
 
 
 @app.post("/admin/applications/{application_id}/accept")
 async def admin_accept_application(application_id: int, who: auth.Principal = Depends(auth.require_admin)):
     """Creates the vendor record. It still cannot be paid until the admin approves its wallet on-chain."""
-    application = await models.get_application(application_id)
+    application = await models.get_application(who.business_id, application_id)
     if application is None:
         raise HTTPException(404, "Application not found")
-    if await models.get_vendor_by_wallet(application["wallet"]) is not None:
+    if await models.get_vendor_by_wallet(who.business_id, application["wallet"]) is not None:
         raise HTTPException(409, "A vendor with this wallet already exists")
-    vendor_id = await models.accept_application(application_id)
+    vendor_id = await models.accept_application(who.business_id, application_id)
     if vendor_id is None:
         raise HTTPException(409, "This application was already decided")
     await _admin_log(who, "accept_application", f"application {application_id} -> vendor {vendor_id}")
@@ -645,9 +702,9 @@ async def admin_accept_application(application_id: int, who: auth.Principal = De
 
 @app.post("/admin/applications/{application_id}/reject")
 async def admin_reject_application(application_id: int, who: auth.Principal = Depends(auth.require_admin)):
-    if await models.get_application(application_id) is None:
+    if await models.get_application(who.business_id, application_id) is None:
         raise HTTPException(404, "Application not found")
-    if not await models.reject_application(application_id):
+    if not await models.reject_application(who.business_id, application_id):
         raise HTTPException(409, "This application was already decided")
     await _admin_log(who, "reject_application", f"application {application_id}")
     return {"ok": True}
@@ -658,7 +715,7 @@ async def vendor_challenge(body: WalletChallengeIn, request: Request):
     """Answers the same for every address, so it cannot be used to find out which wallets are vendors."""
     if not auth.request_limiter.allow("vendor-challenge:" + auth.client_ip(request), 10, 60.0):
         raise HTTPException(429, "Too many sign-in attempts; try again in a minute")
-    return vendor_auth.make_challenge(body.address, vendor_auth.SIGN_IN)
+    return vendor_auth.make_challenge(body.address, vendor_auth.SIGN_IN, await _business_by_slug(body.business, active_only=True))
 
 
 @app.post("/vendor/auth/verify")
@@ -666,12 +723,13 @@ async def vendor_verify(body: AdminVerifyIn, request: Request):
     ip = auth.client_ip(request)
     if auth.failed_auth_limiter.blocked(ip, config.failed_auth_per_min, 60.0):
         raise HTTPException(429, "Too many failed attempts; try again later", headers={"Retry-After": "60"})
-    signer = vendor_auth.consume(body.nonce, body.signature, vendor_auth.SIGN_IN)
-    vendor = await models.get_vendor_by_wallet(signer) if signer else None
-    if vendor is None:  # bad signature and unknown wallet look the same
+    consumed = vendor_auth.consume(body.nonce, body.signature, vendor_auth.SIGN_IN)
+    business = await models.get_business(consumed[1]) if consumed else None
+    vendor = await models.get_vendor_by_wallet(consumed[1], consumed[0]) if business and business["status"] == "active" else None
+    if vendor is None:  # bad signature, unknown wallet and inactive business all look the same
         auth.failed_auth_limiter.allow(ip, config.failed_auth_per_min, 60.0)
         raise HTTPException(401, "Sign-in failed. If this wallet has not applied yet, apply first")
-    return {**vendor_auth.start_session(vendor["id"], signer), "name": vendor["name"]}
+    return {**vendor_auth.start_session(business["id"], vendor["id"], consumed[0]), "name": vendor["name"], "business": business["slug"]}
 
 
 @app.post("/vendor/auth/logout")
@@ -683,14 +741,15 @@ async def vendor_logout(request: Request, _: auth.Principal = Depends(auth.requi
 @app.get("/vendor/me")
 async def vendor_me(who: auth.Principal = Depends(auth.require("vendor"))):
     """Everything the portal shows: the vendor's own record, purchase orders and invoices. Nobody else's."""
-    vendor = await models.get_vendor(who.vendor_id)
+    vendor = await models.get_vendor(who.business_id, who.vendor_id)
     if vendor is None:
         raise HTTPException(404, "Vendor not found")
     try:
-        approved = await asyncio.to_thread(contract.is_vendor_approved, vendor["wallet_address"])
+        approved = await asyncio.to_thread(contract.chain_for(await models.get_business(who.business_id)).is_vendor_approved, vendor["wallet_address"])
     except Exception:
         approved = None  # unknown, shown as such
-    pos, invoices = await asyncio.gather(models.list_vendor_purchase_orders(who.vendor_id), models.list_vendor_invoices(who.vendor_id))
+    pos, invoices = await asyncio.gather(
+        models.list_vendor_purchase_orders(who.business_id, who.vendor_id), models.list_vendor_invoices(who.business_id, who.vendor_id))
     categories = {int(c): c.name.replace("_", " ").title() for c in SpendCategory}
     for po in pos:
         po["category_name"] = categories.get(po["category"], f"Category {po['category']}")

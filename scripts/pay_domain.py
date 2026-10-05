@@ -10,6 +10,7 @@ import time
 from web3 import Web3
 
 from agent import contract, decision_log
+from backend import models
 
 VENDOR = "0xd7a8e903815F144FB5d120C893184DA036c8CaBe"
 AMOUNT_USDC = 2.20
@@ -30,14 +31,17 @@ def confirm(message: str) -> None:
 
 
 async def main() -> None:
+    await models.init_db()
     await decision_log.init_db()
+    business = await models.get_business(models.HOME_BUSINESS_ID)  # the original business: the v1 contract
+    chain = contract.chain_for(business)
     vendor = Web3.to_checksum_address(VENDOR)
     invoice_number = contract.to_bytes32(INVOICE_NUMBER)
     doc_hash = contract.to_bytes32(DOC_SHA256)
 
-    assert contract.is_vendor_approved(vendor), "Vendor not approved on-chain"
-    assert not contract.is_paid(contract.invoice_key(vendor, invoice_number)), "Invoice already paid"
-    overall, in_category = contract.remaining_today(CATEGORY)
+    assert chain.is_vendor_approved(vendor), "Vendor not approved on-chain"
+    assert not chain.is_paid(contract.invoice_key(vendor, invoice_number)), "Invoice already paid"
+    overall, in_category = chain.remaining_today(CATEGORY)
     assert overall >= AMOUNT_UNITS and in_category >= AMOUNT_UNITS, f"Limits too low: {overall}, {in_category}"
 
     print(f"Vendor:         {vendor}")
@@ -48,15 +52,15 @@ async def main() -> None:
 
     confirm("STEP 7: write the audit row (hash is computed and stored before any on-chain call).")
     reasoning_hash_hex = await decision_log.log_decision(
-        "INVOICE_PAID", INVOICE_NUMBER, REASONING, model_used="manual", amount=AMOUNT_USDC
+        "INVOICE_PAID", INVOICE_NUMBER, REASONING, model_used="manual", amount=AMOUNT_USDC, business=business
     )
     reasoning_hash = bytes.fromhex(reasoning_hash_hex)
     print(f"reasoning_hash: {reasoning_hash_hex}")
 
     try:
-        commitment = contract.commitment_for(vendor, AMOUNT_UNITS, invoice_number, doc_hash, CATEGORY, reasoning_hash)
+        commitment = chain.commitment_for(vendor, AMOUNT_UNITS, invoice_number, doc_hash, CATEGORY, reasoning_hash)
         confirm("STEP 8: send commitDecision from the agent wallet.")
-        commit_tx = contract.commit_decision(commitment)
+        commit_tx = chain.commit_decision(commitment)
         contract.wait_for_transaction(commit_tx)
         print(f"Commit confirmed (Circle tx id {commit_tx}).")
 
@@ -65,7 +69,7 @@ async def main() -> None:
             time.sleep(1)
 
         confirm("STEP 9: send pay from the agent wallet (moves 2.20 USDC).")
-        pay_tx = contract.pay(vendor, AMOUNT_UNITS, invoice_number, doc_hash, CATEGORY, reasoning_hash)
+        pay_tx = chain.pay(vendor, AMOUNT_UNITS, invoice_number, doc_hash, CATEGORY, reasoning_hash)
         contract.wait_for_transaction(pay_tx)
     except BaseException:
         print(f"\nFAILED after the audit row was written. reasoning_hash={reasoning_hash_hex}")

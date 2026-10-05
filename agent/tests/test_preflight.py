@@ -22,19 +22,35 @@ def _env(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "failed_auth_per_min", 1000)
 
 
-@pytest.fixture
-def chain(monkeypatch):
-    """Stub every chain read; tests change the dict to steer the answers. Records any write attempt."""
-    state = {"paid": False, "registered": True, "left": (100_000_000, 20_000_000), "runway": 42.0, "writes": []}
-    c = payables.contract
-    monkeypatch.setattr(c, "is_paid", lambda key: state["paid"])
-    monkeypatch.setattr(c, "is_vendor_approved", lambda wallet: state["registered"])
-    monkeypatch.setattr(c, "remaining_today", lambda category: state["left"])
-    for name in ("commit_decision", "pay", "escalate", "log_decision"):
-        monkeypatch.setattr(c, name, lambda *a, _n=name, **k: state["writes"].append(_n))
+class _State(dict):
+    """dict view over the FakeChain, so tests can write chain["paid"] = True and read chain["writes"]."""
 
-    async def runway(amount):
-        return state["runway"]
+    def __init__(self, fake, runway):
+        super().__init__()
+        self.fake, self.runway_days = fake, runway
+
+    _MAP = {"paid": "paid", "registered": "vendor_ok", "left": "remaining"}
+
+    def __setitem__(self, key, value):
+        if key == "runway":
+            self.runway_days = value
+        else:
+            setattr(self.fake, self._MAP[key], value)
+
+    def __getitem__(self, key):
+        if key == "writes":
+            return [c[0] for c in self.fake.calls]
+        return getattr(self.fake, self._MAP[key])
+
+
+@pytest.fixture
+def chain(chains, monkeypatch):
+    """Steer the home contract's answers through the dict; `writes` lists any write attempt."""
+    state = _State(chains.get(config.budget_enforcer_address, 1), 42.0)
+    state.fake.remaining = (100_000_000, 20_000_000)
+
+    async def runway(amount, business):
+        return state.runway_days
 
     monkeypatch.setattr(main.treasury, "runway_days", runway)
     return state
@@ -48,7 +64,7 @@ def client():
 
 def _key(role, vendor_id=None):
     key = auth.generate_key(role)
-    asyncio.run(models.save_api_key(auth.hash_key(key), role, vendor_id, "t"))
+    asyncio.run(models.save_api_key(1, auth.hash_key(key), role, vendor_id, "t"))
     return {"X-API-Key": key}
 
 
@@ -91,7 +107,7 @@ def test_preflight_never_writes_anywhere(client, world, chain):
     _confirm_receipt(client, world)
     _preflight(client, world)
     assert chain["writes"] == []
-    assert asyncio.run(models.get_invoice(1)) is None  # nothing saved, so the invoice number is still free
+    assert asyncio.run(models.get_invoice(1, 1)) is None  # nothing saved, so the invoice number is still free
     again = client.post("/invoices", json=_body(world["a"]), headers=world["key_a"])
     assert again.status_code != 409
 
@@ -173,10 +189,7 @@ def test_unknown_fields_are_rejected(client, world, chain):
 
 
 def test_chain_failure_is_503_not_a_guess(client, world, chain, monkeypatch):
-    def boom(key):
-        raise RuntimeError("rpc down")
-
-    monkeypatch.setattr(payables.contract, "is_paid", boom)
+    chain.fake.broken = True
     assert _preflight(client, world).status_code == 503
 
 

@@ -5,7 +5,8 @@
 
   var CONFIG = {
     api: "https://api.ceedebooks.xyz",
-    enforcer: "0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB",
+    enforcer: "0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB", // the original business (v1 contract)
+    factory: "0x97b9A3802bA6B258cBeF6070532a265656bb391C",   // every other business's contract is created by this factory
     chainId: "0x4cef52", // Arc Testnet, 5042002
     explorer: "https://explorer.testnet.arc.io",
     rpcs: [
@@ -45,8 +46,17 @@
     if (!out.hashMatches) out.problems.push("SHA-256 of hash_input does not equal the hash");
     var parsed;
     try { parsed = JSON.parse(rec.hash_input); } catch (e) { out.problems.push("hash_input is not valid JSON"); return out; }
+    // Hash format 1 is the six fields. Format 2 (v1.2.8.1) also binds the business and its contract.
+    var v2 = parsed.hash_version === 2;
     var keys = ["action", "amount_usdc", "model_used", "reasoning", "subject", "timestamp"];
+    if (v2) keys = keys.concat(["business_id", "enforcer_address", "hash_version"]).sort();
     var sameKeys = Object.keys(parsed).sort().join(",") === keys.join(",");
+    if (v2) {
+      sameKeys = sameKeys && parsed.business_id === rec.business_id &&
+        String(parsed.enforcer_address).toLowerCase() === String(rec.contract_address || "").toLowerCase();
+    }
+    out.enforcer = v2 ? String(parsed.enforcer_address).toLowerCase() : CONFIG.enforcer.toLowerCase();
+    out.version = v2 ? 2 : 1;
     var sameText = ["action", "subject", "reasoning", "model_used"].every(function (k) { return parsed[k] === rec[k]; });
     var sameNums = Number(parsed.amount_usdc) === Number(rec.amount_usdc) && Number(parsed.timestamp) === Number(rec.timestamp);
     out.fieldsMatch = sameKeys && sameText && sameNums;
@@ -54,10 +64,10 @@
     return out;
   }
 
-  // Look through a transaction receipt for a BudgetEnforcer audit event carrying this reasoning hash.
-  function findEvent(receipt, hash) {
+  // Look through a transaction receipt for an audit event, from THIS business's contract, carrying this reasoning hash.
+  function findEvent(receipt, hash, contractAddress) {
     if (!receipt || !Array.isArray(receipt.logs)) return { found: false };
-    var enforcer = CONFIG.enforcer.toLowerCase();
+    var enforcer = String(contractAddress || CONFIG.enforcer).toLowerCase();
     for (var i = 0; i < receipt.logs.length; i++) {
       var log = receipt.logs[i];
       if (String(log.address).toLowerCase() !== enforcer || !log.topics || !log.topics.length) continue;
@@ -103,9 +113,28 @@
     throw err;
   }
 
+  // Is this address a business contract made by the CeedeBooks factory? (The original business is built in.) Without this a
+  // record could name any contract that emits a matching event. Throws if no public RPC answered.
+  async function isKnownBusiness(enforcer, fetchImpl, rpcs) {
+    var addr = String(enforcer || "").toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(addr)) return false;
+    if (addr === CONFIG.enforcer.toLowerCase()) return true;
+    var list = rpcs || CONFIG.rpcs;
+    for (var i = 0; i < list.length; i++) {
+      try {
+        var id = await rpcCall(list[i], "eth_chainId", [], fetchImpl);
+        if (String(id).toLowerCase() !== CONFIG.chainId) continue;
+        var data = "0x1466d019" + "0".repeat(24) + addr.slice(2);   // isBusiness(address)
+        var out = await rpcCall(list[i], "eth_call", [{ to: CONFIG.factory, data: data }, "latest"], fetchImpl);
+        return /^0x0*1$/.test(String(out));
+      } catch (e) { /* try the next endpoint */ }
+    }
+    throw new Error("no public RPC answered");
+  }
+
   var api = {
     CONFIG: CONFIG, TOPICS: TOPICS, normalizeHash: normalizeHash, isTxHash: isTxHash, sha256Hex: sha256Hex,
-    checkRecord: checkRecord, findEvent: findEvent, readReceipt: readReceipt
+    checkRecord: checkRecord, findEvent: findEvent, readReceipt: readReceipt, isKnownBusiness: isKnownBusiness
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.CeedeVerify = api;

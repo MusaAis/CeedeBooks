@@ -20,7 +20,7 @@ CHAIN = {"approved": True}
 
 
 @pytest.fixture(autouse=True)
-def _env(tmp_path, monkeypatch):
+def _env(tmp_path, monkeypatch, chain):
     monkeypatch.setattr(config, "db_path", str(tmp_path / "portal.db"))
     asyncio.run(models.init_db())
     asyncio.run(decision_log.init_db())
@@ -31,17 +31,17 @@ def _env(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "rate_limit_per_min", 1000)
     monkeypatch.setattr(config, "failed_auth_per_min", 1000)
     CHAIN["approved"] = True
-    monkeypatch.setattr(admin_auth.contract, "approver", lambda: ADMIN.address)
-    monkeypatch.setattr(main.contract, "is_vendor_approved", lambda w: CHAIN["approved"])
-    monkeypatch.setattr(main, "_chain_snapshot", lambda: {"chain_ok": True})
+    chain.approver = lambda: ADMIN.address
+    chain.is_vendor_approved = lambda w: CHAIN["approved"]
+    monkeypatch.setattr(main, "_chain_snapshot", lambda business: {"chain_ok": True})
 
-    async def fake_runway(amount):
+    async def fake_runway(amount, business):
         return 42.0
 
-    async def fake_process(invoice, runway):
+    async def fake_process(invoice, runway, business):
         return payables.Decision.HOLD
 
-    async def fake_preflight(invoice, runway):
+    async def fake_preflight(invoice, runway, business):
         return {"outcome": "pay", "reasons": [], "checks": {}}
 
     monkeypatch.setattr(main.treasury, "runway_days", fake_runway)
@@ -131,7 +131,7 @@ def test_a_signed_application_is_stored_and_only_the_admin_can_read_it(client):
 def test_a_signature_from_another_wallet_is_refused(client):
     r = _apply(client, sign_with=OTHER)
     assert r.status_code == 401
-    assert asyncio.run(models.count_pending_applications()) == 0
+    assert asyncio.run(models.count_pending_applications(1, )) == 0
 
 
 def test_a_sign_in_signature_cannot_be_replayed_as_an_application(client):
@@ -202,7 +202,7 @@ def test_rejecting_marks_it_and_frees_the_wallet_to_apply_again(client):
 def test_only_the_admin_session_can_decide(client):
     assert _apply(client).status_code == 200
     key = auth.generate_key("buyer")
-    asyncio.run(models.save_api_key(auth.hash_key(key), "buyer", None, "t"))
+    asyncio.run(models.save_api_key(1, auth.hash_key(key), "buyer", None, "t"))
     assert client.post("/admin/applications/1/accept", headers={"X-API-Key": key}).status_code == 403
     assert client.post("/admin/applications/1/accept").status_code == 401
     assert client.post("/admin/applications/999/accept", headers=_admin(client)).status_code == 404
@@ -265,7 +265,7 @@ def test_the_session_ends_when_the_wallet_on_file_changes(client):
     vendor_id, _ = _onboard(client)
     vh = _vendor_headers(client)
     assert client.get("/vendor/me", headers=vh).status_code == 200
-    asyncio.run(models.update_vendor_wallet(vendor_id, OTHER.address))
+    asyncio.run(models.update_vendor_wallet(1, vendor_id, OTHER.address))
     assert client.get("/vendor/me", headers=vh).status_code == 401
 
 
@@ -324,7 +324,7 @@ def test_a_vendor_cannot_label_its_own_origin(client):
 # ---- submission metrics
 
 def _settle(invoice_id, status):
-    asyncio.run(models.update_invoice_status(invoice_id, status))
+    asyncio.run(models.update_invoice_status(1, invoice_id, status))
 
 
 def test_stats_split_invoices_volume_and_duplicates_by_origin(client):
@@ -358,9 +358,9 @@ def test_stats_keep_their_old_fields(client):
 
 
 def test_hand_run_payments_are_relabelled_manual_once():
-    vendor_id = asyncio.run(models.save_vendor("Ops", "0x" + "d7" * 20))
-    inv = asyncio.run(models.save_invoice("NAMECHEAP-1", vendor_id, None, 2.2, 1, "doc"))
-    asyncio.run(models.update_invoice_status(inv, "paid", reasoning_hash="ff" * 32))
+    vendor_id = asyncio.run(models.save_vendor(1, "Ops", "0x" + "d7" * 20))
+    inv = asyncio.run(models.save_invoice(1, "NAMECHEAP-1", vendor_id, None, 2.2, 1, "doc"))
+    asyncio.run(models.update_invoice_status(1, inv, "paid", reasoning_hash="ff" * 32))
     with sqlite3.connect(config.db_path) as db:
         db.execute("INSERT INTO audit_log (action, subject, reasoning, amount_usdc, model_used, timestamp, hash_input, reasoning_hash)"
                    " VALUES ('INVOICE_PAID', 's', 'r', 2.2, 'manual', ?, 'h', ?)", (time.time(), "ff" * 32))

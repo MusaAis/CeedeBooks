@@ -4,7 +4,7 @@
 ![CI](https://github.com/MusaAis/CeedeBooks/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Foundry tests](https://img.shields.io/badge/forge%20tests-69%2F69%20passing-brightgreen)
-![Python tests](https://img.shields.io/badge/pytest-140%2F140%20passing-brightgreen)
+![Python tests](https://img.shields.io/badge/pytest-172%2F172%20passing-brightgreen)
 ![Network](https://img.shields.io/badge/Arc-Testnet-informational)
 
 *"Ceede" means money in Pulaar/Fulfulde.*
@@ -13,7 +13,7 @@ An autonomous accounts-payable agent for African SMEs on Arc: it validates and p
 
 Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 – Oct 10, 2026.
 
-**Current: v1.2.8 (Phase L1, multi-business contracts).** `BudgetFactory` and `LedgerAnchor` are deployed and verified on Arc Testnet; the live API and pool still run on the v1 `BudgetEnforcer`, and the backend and onboarding follow in v1.2.8.1 and v1.2.8.2. The AP/AR engine is live on Arc Testnet behind a key-authenticated HTTPS API (`api.ceedebooks.xyz`), with a public proof page (`ceedebooks.xyz`), a wallet-signed admin site (`admin.ceedebooks.xyz`) and a vendor portal (`portal.ceedebooks.xyz`). No outside business or paying user yet: every payment so far is self-owned. See [Roadmap](#roadmap) and the [Changelog](#changelog).
+**Current: v1.2.8.1 (Phase L2, multi-tenant backend).** One backend now serves many businesses: every key, session, record and query belongs to one business, each business has its own contract and Circle wallet, and a credential from one can never reach another. Only the original business exists so far (the live v1 `BudgetEnforcer`); creating more is Phase L3 (v1.2.8.2). `BudgetFactory` and `LedgerAnchor` are deployed and verified on Arc Testnet. The AP/AR engine is live on Arc Testnet behind a key-authenticated HTTPS API (`api.ceedebooks.xyz`), with a public proof page (`ceedebooks.xyz`), a wallet-signed admin site (`admin.ceedebooks.xyz`) and a vendor portal (`portal.ceedebooks.xyz`). No outside business or paying user yet: every payment so far is self-owned. See [Roadmap](#roadmap) and the [Changelog](#changelog).
 
 ## 60-second tour for reviewers
 
@@ -62,7 +62,7 @@ It isn't "an LLM with a wallet." The agent proposes; a smart contract, not a pro
 
 **Planned** (see the [Roadmap](#roadmap) for order and status; nothing below is live)
 
-- **Multi-business (contracts deployed, not wired in):** `BudgetFactory` and `LedgerAnchor` are live on Arc Testnet (a factory that creates one enforcer per business, a weekly limit, return-to-agent, an on-chain ledger anchor). The backend does not use them yet and no business has been created through the factory; the multi-tenant backend, onboarding and migration are next
+- **Multi-business (backend ready, one business so far):** the contracts are deployed (`BudgetFactory`, `LedgerAnchor`) and the backend is multi-tenant: a `businesses` table, `business_id` on every row, per-business contract and Circle wallet, sessions and keys bound to one business. No second business exists yet; onboarding and the pool migration are next (v1.2.8.2)
 - **Audit hardening:** hash-chained ledger per business anchored on-chain, a log comparing the model's verdict with the rules' verdict, on-chain red-team log, key-custody check, re-evaluate for stuck invoices
 - **Oversight:** maker-checker approvals, pause with a stated reason, every figure in a narrative written by code
 - Circle Gateway unified balance
@@ -96,7 +96,7 @@ Everything below is checkable on-chain. Nothing here is estimated.
 | What | Evidence |
 |---|---|
 | Contract deployed and verified on Arc Testnet | [`BudgetEnforcer`](https://explorer.testnet.arc.io/address/0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB) |
-| Test suites | 69 Foundry (24 on the v1 contract, 45 on the multi-business contracts) + 140 Python tests + browser-side JS tests, run by CI on every push |
+| Test suites | 69 Foundry (24 on the v1 contract, 45 on the multi-business contracts) + 172 Python tests + browser-side JS tests, run by CI on every push |
 | First self-owned vendor bill paid through the contract | `ceedebooks.xyz` registration, 2.20 USDC, category 1 |
 | Multi-business contracts deployed and verified (v1.2.8) | [`BudgetFactory`](https://explorer.testnet.arc.io/address/0x97b9A3802bA6B258cBeF6070532a265656bb391C), [`LedgerAnchor`](https://explorer.testnet.arc.io/address/0x008217BeC86462E76126F94e50eBe68fb4a41444) |
 | Outside businesses or paying users | None yet |
@@ -129,7 +129,7 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 - **Model output is an input, never a release condition.** Circle's own `arc-escrow` sample releases contractor funds on a bare JSON response from GPT-4o with no structural check behind it. CeedeBooks is built specifically not to repeat that pattern.
 - **Independent receipt witness.** A three-way match proves nothing if the agent can confirm its own receipts. It can't.
 - **Settlement is confirmed, not hoped for.** Circle's transaction API is asynchronous — accepting a request isn't the same as it succeeding on-chain. CeedeBooks waits for a terminal state before trusting any result, closing a real phantom-payment risk most demos never test for.
-- **Tested, not just described.** 69 Foundry tests (24 cover the v1 contract, 45 cover the multi-business contracts) plus 140 Python tests covering the decision pipeline.
+- **Tested, not just described.** 69 Foundry tests (24 cover the v1 contract, 45 cover the multi-business contracts) plus 172 Python tests covering the decision pipeline and the isolation between businesses.
 
 ---
 
@@ -174,7 +174,7 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 - **The audit log is a database.** Each record's hash is checked against an on-chain event, but the log is not yet hash-chained, so a deleted row would not be detected. This is planned (Audit hardening).
 - **The admin key.** The approver is a wallet held off the server. If it is lost, nobody can approve vendors or change limits.
 - **Testnet.** Everything runs on Arc Testnet with test USDC. No outside business or paying user yet; every payment so far is self-owned.
-- **Single business.** The live pool is the one v1 contract. The multi-business contracts are deployed but not used by the backend yet, and no business has been created through the factory.
+- **One business so far.** The backend is multi-tenant, but only the original business (the live v1 contract) exists. Isolation between businesses is enforced in code and tested with a second, mocked business; it has not been exercised by a real second business yet.
 - **Public reasoning.** `GET /decisions/{hash}` returns the full reasoning text, so no private data belongs in it.
 
 ---
@@ -192,8 +192,8 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 | K1. Admin site | Wallet-signed admin at `admin.ceedebooks.xyz`, approver hand-over | v1.2.6 | ✅ Built |
 | K2. Vendor portal | Signed vendor applications, wallet sign-in, vendor view, submission metrics | v1.2.7 | ✅ Built |
 | L1. Multi-business contracts | `BudgetEnforcerV2` (weekly limit, return-to-agent, commitments bound to the contract), `BudgetFactory` (one enforcer per business), `LedgerAnchor` | v1.2.8 | ✅ Built; factory and anchor deployed and verified |
-| L2. Multi-tenant backend | `business_id` on every table, per-business contract and agent wallet, scoped auth, cross-business tests | v1.2.8.1 | ⏳ Next |
-| L3. Onboarding and migration | Business applications, on-chain checked registration, deploy factory and anchor, move the pool, v1 kept as archived business #1 | v1.2.8.2 | ⏳ Planned |
+| L2. Multi-tenant backend | `businesses` table, `business_id` on every table, per-business contract and agent wallet, business-bound keys and sessions, hash format 2, cross-business denial tests | v1.2.8.1 | ✅ Built |
+| L3. Onboarding and migration | Business applications, on-chain checked registration, deploy factory and anchor, move the pool, v1 kept as archived business #1 | v1.2.8.2 | ⏳ Next |
 | E. Audit hardening | Per-business hash-chained ledger anchored on-chain, model-vs-rules log, on-chain red-team log, key-custody check, re-evaluate | v1.2.9 | ⏳ Planned |
 | O. Oversight | Maker-checker, pause with reason, figures written by code | v1.2.10 | ⏳ Planned |
 | F. Gateway | `POST /v1/balances` unified balance on the dashboard | v1.3.0 | ⏳ Planned |
@@ -269,6 +269,8 @@ Run with a **single worker**: `uvicorn backend.main:app` (the rate limiter is pe
 
 **Access model.** Send the key in an `X-API-Key` header. Keys are created on the server with `python3 scripts/create_api_key.py create --role buyer --label <name>` (or `--role vendor --vendor-id N`), shown once, and stored only as SHA-256 hashes. `/decisions/*` needs no key.
 
+**Businesses (v1.2.8.1).** A key, a vendor session and an admin session each belong to exactly one business, and every query is scoped to it: another business's ids answer 404, and its contract is never called. Create a key for a business with `--business <slug>` (default `ceedebooks`). The sign-in challenges (`/admin/auth/challenge`, `/vendor/auth/challenge`, `/apply/challenge`) take an optional `business` slug (default: the first business); the signed message names it, and an admin signature is accepted only if it recovers to that business's own `approver()`. Public reads (`/stats`, `/decisions`) cover every business by default and take `?business=<slug>` to narrow them. A business that is not `active` accepts no writes. New decisions use hash format 2, which also binds the business id and its contract address; older records keep format 1 and still verify.
+
 | Endpoint | Who | Purpose |
 |---|---|---|
 | `POST /vendors` | buyer | Register a vendor (wallet address validated) |
@@ -320,7 +322,9 @@ ceedebooks/
 │       ├── test_audit_public.py
 │       ├── test_preflight.py
 │       ├── test_admin.py
-│       └── test_portal.py
+│       ├── test_portal.py
+│       ├── test_multibusiness.py
+│       └── conftest.py        # FakeChain: the chain is never real in tests
 ├── scripts/
 │   ├── create_api_key.py   # create / revoke API keys (printed once, stored hashed)
 │   └── pay_domain.py       # one-off: manual commit-then-pay of the ceedebooks.xyz domain bill
@@ -387,7 +391,7 @@ pytest agent/tests/
 
 **69 Foundry tests** (24 for the v1 contract, 35 for `BudgetEnforcerV2`, 6 for `BudgetFactory`, 4 for `LedgerAnchor`), one per revert path or acceptance scenario: unregistered and revoked vendor, over per-tx / daily / category limits, unset category (fail-closed), same invoice resubmitted as a different file, missing / reused / mismatched commit, crash-and-retry, simulated prompt injection (contract refuses even if the agent were fooled), the escalate → approve / reject flow, escalated invoices blocked from direct payment, pause, withdraw, agent rotation, two-step approver rotation, and the `reasoningHash` round-trip via the `PaymentMade` event.
 
-**140 Python tests** covering the three-way match, rules-baseline decisions (pay / hold / escalate), retry safety (reprocessing a paid invoice is a no-op), API access control (every denied path), server-side runway, input validation, the public audit endpoints and on-chain verification, the invoice pre-flight dry run (it writes nothing and reveals no balances or limits), and the admin wallet sign-in and routes. Browser-side tests check the proof page's hash recomputation (`site/verify.test.js`) and the admin app's call encoding and rendering (`admin/*.test.js`). The vendor portal suite covers: a signature from another wallet is refused, a sign-in signature cannot be replayed as an application, challenges are single use, the pending and per-IP limits, accepting once only, vendor sessions seeing only their own data, sessions ending on wallet change, idle time and logout, a vendor never labelling its own origin, and the metrics split by origin.
+**172 Python tests** covering the three-way match, rules-baseline decisions (pay / hold / escalate), retry safety (reprocessing a paid invoice is a no-op), API access control (every denied path), server-side runway, input validation, the public audit endpoints and on-chain verification, the invoice pre-flight dry run (it writes nothing and reveals no balances or limits), and the admin wallet sign-in and routes. Browser-side tests check the proof page's hash recomputation (`site/verify.test.js`) and the admin app's call encoding and rendering (`admin/*.test.js`). The vendor portal suite covers: a signature from another wallet is refused, a sign-in signature cannot be replayed as an application, challenges are single use, the pending and per-IP limits, accepting once only, vendor sessions seeing only their own data, sessions ending on wallet change, idle time and logout, a vendor never labelling its own origin, and the metrics split by origin.
 
 ### Deploy
 
@@ -435,6 +439,15 @@ Deployment transactions: [LedgerAnchor `0x45c031cd...9f9f4d`](https://explorer.t
 ---
 
 ## Changelog
+
+**v1.2.8.1: Phase L2, multi-tenant backend (no new business yet)**
+- `businesses` table; business 1 is the live v1 contract, recorded in the database (not only in `.env`). `business_id` on vendors, purchase orders, receipts, invoices, applications, rejected submissions, admin actions, API keys and the audit log. Databases from v1.2.7 migrate on first start (every existing row becomes business 1; PO and invoice numbers become unique per business, not globally)
+- `agent/contract.py` has no module-level contract any more: `chain_for(business)` returns that business's v1 or v2 handle, and every read and Circle-signed write goes through it. The v2 commitment (bound to the contract address and chain id) was checked against the real v2 contract on a local node
+- Every model query takes `business_id` as a required argument. Keys, vendor sessions and admin sessions are bound to one business; admin sign-in accepts only that business's on-chain `approver()`, and a session ends if that approver changes or its chain cannot be read
+- Hash format 2 binds the business id and contract address into every new decision; format 1 records still verify. The proof page checks both, and trusts a v2 record's contract only if the factory created it
+- `create_api_key.py --business`, `?business=` on public reads, `agent.json` lists active businesses
+- 32 new Python tests (172 in total; the existing ones now run against a fake chain), including a migration from a real v1.2.7 schema, cross-business denial on every route family and per-business session and chain-failure tests; new Node tests for format-2 records. The isolation tests were checked by breaking the scoping on purpose
+- Not in this release: creating a business, deploying anything, moving the pool (Phase L3). The live pool, API behaviour and the admin and portal sites are unchanged for business 1
 
 **v1.2.8: Phase L1, multi-business contracts (factory and anchor deployed and verified on Arc Testnet)**
 - Deployed and verified: `BudgetFactory` [`0x97b9A3802bA6B258cBeF6070532a265656bb391C`](https://explorer.testnet.arc.io/address/0x97b9A3802bA6B258cBeF6070532a265656bb391C) and `LedgerAnchor` [`0x008217BeC86462E76126F94e50eBe68fb4a41444`](https://explorer.testnet.arc.io/address/0x008217BeC86462E76126F94e50eBe68fb4a41444). Checked on-chain after deployment: the factory's USDC address is the Arc USDC, `businessCount` is 0, the anchor's sequence starts at 0. `BudgetEnforcerV2` has no standalone deployment: the factory creates one per business

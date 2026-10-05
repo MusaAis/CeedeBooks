@@ -6,9 +6,27 @@ import aiosqlite
 
 from agent.config import config
 
-_SCHEMA = """
+HOME_BUSINESS_ID = 1  # the original CeedeBooks business (the v1 contract); existing rows belong to it
+
+_TABLES = """
+CREATE TABLE IF NOT EXISTS businesses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL UNIQUE,
+    enforcer_address TEXT NOT NULL,
+    approver_address TEXT NOT NULL DEFAULT '',
+    agent_address TEXT NOT NULL DEFAULT '',
+    circle_wallet_id TEXT NOT NULL DEFAULT '',
+    contract_version INTEGER NOT NULL DEFAULT 2 CHECK (contract_version IN (1, 2)),
+    external INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'active', 'archived')),
+    created_tx_hash TEXT,
+    created_at REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS vendors (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL DEFAULT 1,
     name TEXT NOT NULL,
     wallet_address TEXT NOT NULL,
     previous_wallet_address TEXT
@@ -16,14 +34,17 @@ CREATE TABLE IF NOT EXISTS vendors (
 
 CREATE TABLE IF NOT EXISTS purchase_orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    po_number TEXT NOT NULL UNIQUE,
+    business_id INTEGER NOT NULL DEFAULT 1,
+    po_number TEXT NOT NULL,
     vendor_id INTEGER NOT NULL REFERENCES vendors(id),
     amount_usdc REAL NOT NULL,
-    category INTEGER NOT NULL
+    category INTEGER NOT NULL,
+    UNIQUE (business_id, po_number)
 );
 
 CREATE TABLE IF NOT EXISTS receipts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL DEFAULT 1,
     po_id INTEGER NOT NULL REFERENCES purchase_orders(id),
     confirmed_by TEXT NOT NULL,
     confirmed_by_role TEXT NOT NULL,
@@ -32,7 +53,8 @@ CREATE TABLE IF NOT EXISTS receipts (
 
 CREATE TABLE IF NOT EXISTS invoices (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    invoice_number TEXT NOT NULL UNIQUE,
+    business_id INTEGER NOT NULL DEFAULT 1,
+    invoice_number TEXT NOT NULL,
     vendor_id INTEGER NOT NULL REFERENCES vendors(id),
     po_id INTEGER REFERENCES purchase_orders(id),
     amount_usdc REAL NOT NULL,
@@ -41,11 +63,14 @@ CREATE TABLE IF NOT EXISTS invoices (
     status TEXT NOT NULL DEFAULT 'pending',
     reasoning_hash TEXT,
     onchain_tx_id TEXT,
-    created_at REAL NOT NULL
+    created_at REAL NOT NULL,
+    origin TEXT NOT NULL DEFAULT 'agent',
+    UNIQUE (business_id, invoice_number)
 );
 
 CREATE TABLE IF NOT EXISTS vendor_applications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL DEFAULT 1,
     business_name TEXT NOT NULL,
     wallet TEXT NOT NULL,
     contact TEXT,
@@ -55,10 +80,10 @@ CREATE TABLE IF NOT EXISTS vendor_applications (
     created_at REAL NOT NULL,
     decided_at REAL
 );
-CREATE UNIQUE INDEX IF NOT EXISTS ux_application_pending_wallet ON vendor_applications(wallet) WHERE status = 'pending';
 
 CREATE TABLE IF NOT EXISTS rejected_submissions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL DEFAULT 1,
     reason TEXT NOT NULL,
     origin TEXT NOT NULL DEFAULT 'agent',
     created_at REAL NOT NULL
@@ -66,6 +91,7 @@ CREATE TABLE IF NOT EXISTS rejected_submissions (
 
 CREATE TABLE IF NOT EXISTS admin_actions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL DEFAULT 1,
     admin_address TEXT NOT NULL,
     action TEXT NOT NULL,
     ref TEXT,
@@ -76,6 +102,7 @@ CREATE TABLE IF NOT EXISTS admin_actions (
 
 CREATE TABLE IF NOT EXISTS api_keys (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL DEFAULT 1,
     key_hash TEXT NOT NULL UNIQUE,
     role TEXT NOT NULL CHECK (role IN ('buyer', 'vendor')),
     vendor_id INTEGER REFERENCES vendors(id),
@@ -86,14 +113,78 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 """
 
+# Created after the migration, because on an old database the business_id column only exists once it has run.
+_INDEXES = """
+CREATE UNIQUE INDEX IF NOT EXISTS ux_application_pending_wallet_v2
+    ON vendor_applications(business_id, wallet) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS ix_invoices_business ON invoices(business_id, id);
+CREATE INDEX IF NOT EXISTS ix_vendors_business ON vendors(business_id, id);
+"""
+
+_PO_COLS = "id, business_id, po_number, vendor_id, amount_usdc, category"
+_INV_COLS = ("id, business_id, invoice_number, vendor_id, po_id, amount_usdc, category, doc_hash, status, "
+             "reasoning_hash, onchain_tx_id, created_at, origin")
+
+
+async def _columns(db, table: str) -> list:
+    async with db.execute(f"PRAGMA table_info({table})") as cur:
+        return [r[1] for r in await cur.fetchall()]
+
+
+async def _migrate(db) -> None:
+    """v1.2.8.1: databases made before multi-business gain business_id (everything so far is business 1) and PO and
+    invoice numbers become unique per business instead of globally. Idempotent."""
+    if "origin" not in await _columns(db, "invoices"):  # v1.2.7
+        await db.execute("ALTER TABLE invoices ADD COLUMN origin TEXT NOT NULL DEFAULT 'agent'")
+    for table in ("vendors", "receipts", "vendor_applications", "rejected_submissions", "admin_actions", "api_keys"):
+        if "business_id" not in await _columns(db, table):
+            await db.execute(f"ALTER TABLE {table} ADD COLUMN business_id INTEGER NOT NULL DEFAULT 1")
+    if "business_id" not in await _columns(db, "purchase_orders"):
+        await db.execute("DROP INDEX IF EXISTS ux_application_pending_wallet")
+        await db.execute(
+            "CREATE TABLE purchase_orders_new (id INTEGER PRIMARY KEY AUTOINCREMENT, business_id INTEGER NOT NULL DEFAULT 1, "
+            "po_number TEXT NOT NULL, vendor_id INTEGER NOT NULL REFERENCES vendors(id), amount_usdc REAL NOT NULL, "
+            "category INTEGER NOT NULL, UNIQUE (business_id, po_number))"
+        )
+        await db.execute(f"INSERT INTO purchase_orders_new ({_PO_COLS}) SELECT id, 1, po_number, vendor_id, amount_usdc, category FROM purchase_orders")
+        await db.execute("DROP TABLE purchase_orders")
+        await db.execute("ALTER TABLE purchase_orders_new RENAME TO purchase_orders")
+    if "business_id" not in await _columns(db, "invoices"):
+        await db.execute(
+            "CREATE TABLE invoices_new (id INTEGER PRIMARY KEY AUTOINCREMENT, business_id INTEGER NOT NULL DEFAULT 1, "
+            "invoice_number TEXT NOT NULL, vendor_id INTEGER NOT NULL REFERENCES vendors(id), po_id INTEGER REFERENCES purchase_orders(id), "
+            "amount_usdc REAL NOT NULL, category INTEGER NOT NULL, doc_hash TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', "
+            "reasoning_hash TEXT, onchain_tx_id TEXT, created_at REAL NOT NULL, origin TEXT NOT NULL DEFAULT 'agent', "
+            "UNIQUE (business_id, invoice_number))"
+        )
+        await db.execute(
+            f"INSERT INTO invoices_new ({_INV_COLS}) SELECT id, 1, invoice_number, vendor_id, po_id, amount_usdc, category, "
+            "doc_hash, status, reasoning_hash, onchain_tx_id, created_at, origin FROM invoices"
+        )
+        await db.execute("DROP TABLE invoices")
+        await db.execute("ALTER TABLE invoices_new RENAME TO invoices")
+    await db.execute("DROP INDEX IF EXISTS ux_application_pending_wallet")  # was unique per wallet, now per business
+
+
+async def _seed_home_business(db) -> None:
+    """Business 1 is the live v1 contract, recorded in the database (not only in .env) so its address stays after a move."""
+    async with db.execute("SELECT 1 FROM businesses WHERE id = ?", (HOME_BUSINESS_ID,)) as cur:
+        if await cur.fetchone() is not None:
+            return
+    await db.execute(
+        "INSERT INTO businesses (id, name, slug, enforcer_address, approver_address, agent_address, circle_wallet_id, "
+        "contract_version, external, status, created_at) VALUES (?, 'CeedeBooks', 'ceedebooks', ?, ?, ?, ?, 1, 0, 'active', ?)",
+        (HOME_BUSINESS_ID, config.budget_enforcer_address, config.approver_address, config.agent_address,
+         config.circle_treasury_wallet_id, time.time()),
+    )
+
 
 async def init_db() -> None:
     async with aiosqlite.connect(config.db_path) as db:
-        await db.executescript(_SCHEMA)
-        async with db.execute("PRAGMA table_info(invoices)") as cur:
-            columns = [r[1] for r in await cur.fetchall()]
-        if "origin" not in columns:  # v1.2.7: where an invoice came from (agent, manual, demo)
-            await db.execute("ALTER TABLE invoices ADD COLUMN origin TEXT NOT NULL DEFAULT 'agent'")
+        await db.executescript(_TABLES)
+        await _migrate(db)
+        await db.executescript(_INDEXES)
+        await _seed_home_business(db)
         await db.commit()
 
 
@@ -110,115 +201,133 @@ async def backfill_origin() -> None:
             pass  # audit_log not created yet (fresh database): nothing to backfill
 
 
-async def get_vendor(vendor_id: int) -> Optional[aiosqlite.Row]:
+# ---- every query below is scoped: business_id is a required argument, so forgetting it is a TypeError, not a leak
+
+async def _one(sql: str, args: tuple) -> Optional[aiosqlite.Row]:
     async with aiosqlite.connect(config.db_path) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM vendors WHERE id = ?", (vendor_id,)) as cur:
+        async with db.execute(sql, args) as cur:
             return await cur.fetchone()
 
 
-async def get_purchase_order(po_number: str) -> Optional[aiosqlite.Row]:
+async def _all(sql: str, args: tuple = ()) -> list:
     async with aiosqlite.connect(config.db_path) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM purchase_orders WHERE po_number = ?", (po_number,)) as cur:
-            return await cur.fetchone()
+        async with db.execute(sql, args) as cur:
+            return [dict(r) for r in await cur.fetchall()]
 
 
-async def get_receipt(po_id: int) -> Optional[aiosqlite.Row]:
+# ---- businesses
+
+async def get_business(business_id: int) -> Optional[dict]:
+    row = await _one("SELECT * FROM businesses WHERE id = ?", (business_id,))
+    return dict(row) if row else None
+
+
+async def get_business_by_slug(slug: str) -> Optional[dict]:
+    row = await _one("SELECT * FROM businesses WHERE slug = ?", (slug,))
+    return dict(row) if row else None
+
+
+async def list_businesses(status: Optional[str] = None) -> list:
+    if status is None:
+        return await _all("SELECT * FROM businesses ORDER BY id")
+    return await _all("SELECT * FROM businesses WHERE status = ? ORDER BY id", (status,))
+
+
+# ---- vendors, purchase orders, receipts, invoices
+
+async def get_vendor(business_id: int, vendor_id: int) -> Optional[aiosqlite.Row]:
+    return await _one("SELECT * FROM vendors WHERE id = ? AND business_id = ?", (vendor_id, business_id))
+
+
+async def get_purchase_order(business_id: int, po_number: str) -> Optional[aiosqlite.Row]:
+    return await _one("SELECT * FROM purchase_orders WHERE po_number = ? AND business_id = ?", (po_number, business_id))
+
+
+async def get_purchase_order_by_id(business_id: int, po_id: int) -> Optional[aiosqlite.Row]:
+    return await _one("SELECT * FROM purchase_orders WHERE id = ? AND business_id = ?", (po_id, business_id))
+
+
+async def get_receipt(business_id: int, po_id: int) -> Optional[aiosqlite.Row]:
+    return await _one("SELECT * FROM receipts WHERE po_id = ? AND business_id = ?", (po_id, business_id))
+
+
+async def get_invoice(business_id: int, invoice_id: int) -> Optional[aiosqlite.Row]:
+    return await _one("SELECT * FROM invoices WHERE id = ? AND business_id = ?", (invoice_id, business_id))
+
+
+async def _insert(sql: str, args: tuple) -> int:
     async with aiosqlite.connect(config.db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM receipts WHERE po_id = ?", (po_id,)) as cur:
-            return await cur.fetchone()
-
-
-async def save_invoice(
-    invoice_number: str, vendor_id: int, po_id: Optional[int], amount_usdc: float, category: int, doc_hash: str,
-    origin: str = "agent",
-) -> int:
-    async with aiosqlite.connect(config.db_path) as db:
-        cur = await db.execute(
-            """INSERT INTO invoices (invoice_number, vendor_id, po_id, amount_usdc, category, doc_hash, origin, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (invoice_number, vendor_id, po_id, amount_usdc, category, doc_hash, origin, time.time()),
-        )
+        cur = await db.execute(sql, args)
         await db.commit()
         return cur.lastrowid
 
 
+async def save_invoice(
+    business_id: int, invoice_number: str, vendor_id: int, po_id: Optional[int], amount_usdc: float, category: int,
+    doc_hash: str, origin: str = "agent",
+) -> int:
+    """Raises sqlite3.IntegrityError if this business already has that invoice number."""
+    return await _insert(
+        "INSERT INTO invoices (business_id, invoice_number, vendor_id, po_id, amount_usdc, category, doc_hash, origin, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (business_id, invoice_number, vendor_id, po_id, amount_usdc, category, doc_hash, origin, time.time()),
+    )
+
+
 async def update_invoice_status(
-    invoice_id: int, status: str, reasoning_hash: Optional[str] = None, onchain_tx_id: Optional[str] = None
+    business_id: int, invoice_id: int, status: str, reasoning_hash: Optional[str] = None, onchain_tx_id: Optional[str] = None
 ) -> None:
     async with aiosqlite.connect(config.db_path) as db:
         await db.execute(
             """UPDATE invoices
                SET status = ?, reasoning_hash = COALESCE(?, reasoning_hash), onchain_tx_id = COALESCE(?, onchain_tx_id)
-               WHERE id = ?""",
-            (status, reasoning_hash, onchain_tx_id, invoice_id),
+               WHERE id = ? AND business_id = ?""",
+            (status, reasoning_hash, onchain_tx_id, invoice_id, business_id),
         )
         await db.commit()
 
 
-async def save_vendor(name: str, wallet_address: str) -> int:
-    async with aiosqlite.connect(config.db_path) as db:
-        cur = await db.execute(
-            "INSERT INTO vendors (name, wallet_address) VALUES (?, ?)", (name, wallet_address)
-        )
-        await db.commit()
-        return cur.lastrowid
+async def save_vendor(business_id: int, name: str, wallet_address: str) -> int:
+    return await _insert("INSERT INTO vendors (business_id, name, wallet_address) VALUES (?, ?, ?)", (business_id, name, wallet_address))
 
 
-async def update_vendor_wallet(vendor_id: int, new_wallet_address: str) -> None:
+async def update_vendor_wallet(business_id: int, vendor_id: int, new_wallet_address: str) -> None:
     async with aiosqlite.connect(config.db_path) as db:
         await db.execute(
-            "UPDATE vendors SET previous_wallet_address = wallet_address, wallet_address = ? WHERE id = ?",
-            (new_wallet_address, vendor_id),
+            "UPDATE vendors SET previous_wallet_address = wallet_address, wallet_address = ? WHERE id = ? AND business_id = ?",
+            (new_wallet_address, vendor_id, business_id),
         )
         await db.commit()
 
 
-async def save_purchase_order(po_number: str, vendor_id: int, amount_usdc: float, category: int) -> int:
-    async with aiosqlite.connect(config.db_path) as db:
-        cur = await db.execute(
-            "INSERT INTO purchase_orders (po_number, vendor_id, amount_usdc, category) VALUES (?, ?, ?, ?)",
-            (po_number, vendor_id, amount_usdc, category),
-        )
-        await db.commit()
-        return cur.lastrowid
+async def save_purchase_order(business_id: int, po_number: str, vendor_id: int, amount_usdc: float, category: int) -> int:
+    """Raises sqlite3.IntegrityError if this business already has that PO number."""
+    return await _insert(
+        "INSERT INTO purchase_orders (business_id, po_number, vendor_id, amount_usdc, category) VALUES (?, ?, ?, ?, ?)",
+        (business_id, po_number, vendor_id, amount_usdc, category),
+    )
 
 
-async def save_receipt(po_id: int, confirmed_by: str, confirmed_by_role: str) -> int:
-    async with aiosqlite.connect(config.db_path) as db:
-        cur = await db.execute(
-            "INSERT INTO receipts (po_id, confirmed_by, confirmed_by_role, confirmed_at) VALUES (?, ?, ?, ?)",
-            (po_id, confirmed_by, confirmed_by_role, time.time()),
-        )
-        await db.commit()
-        return cur.lastrowid
+async def save_receipt(business_id: int, po_id: int, confirmed_by: str, confirmed_by_role: str) -> int:
+    return await _insert(
+        "INSERT INTO receipts (business_id, po_id, confirmed_by, confirmed_by_role, confirmed_at) VALUES (?, ?, ?, ?, ?)",
+        (business_id, po_id, confirmed_by, confirmed_by_role, time.time()),
+    )
 
 
-async def get_invoice(invoice_id: int) -> Optional[aiosqlite.Row]:
-    async with aiosqlite.connect(config.db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM invoices WHERE id = ?", (invoice_id,)) as cur:
-            return await cur.fetchone()
+# ---- API keys (a key belongs to one business; looked up by hash, which is global)
 
-
-
-async def save_api_key(key_hash: str, role: str, vendor_id: Optional[int], label: str) -> int:
-    async with aiosqlite.connect(config.db_path) as db:
-        cur = await db.execute(
-            "INSERT INTO api_keys (key_hash, role, vendor_id, label, created_at) VALUES (?, ?, ?, ?, ?)",
-            (key_hash, role, vendor_id, label, time.time()),
-        )
-        await db.commit()
-        return cur.lastrowid
+async def save_api_key(business_id: int, key_hash: str, role: str, vendor_id: Optional[int], label: str) -> int:
+    return await _insert(
+        "INSERT INTO api_keys (business_id, key_hash, role, vendor_id, label, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (business_id, key_hash, role, vendor_id, label, time.time()),
+    )
 
 
 async def get_api_key_by_hash(key_hash: str) -> Optional[aiosqlite.Row]:
-    async with aiosqlite.connect(config.db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM api_keys WHERE key_hash = ?", (key_hash,)) as cur:
-            return await cur.fetchone()
+    return await _one("SELECT * FROM api_keys WHERE key_hash = ?", (key_hash,))
 
 
 async def revoke_api_key(key_id: int) -> bool:
@@ -228,76 +337,57 @@ async def revoke_api_key(key_id: int) -> bool:
         return cur.rowcount > 0
 
 
-async def paid_total_since(since_ts: float) -> float:
-    """Total USDC of invoices with status 'paid' created at or after since_ts."""
-    async with aiosqlite.connect(config.db_path) as db:
-        async with db.execute(
-            "SELECT COALESCE(SUM(amount_usdc), 0) FROM invoices WHERE status = 'paid' AND created_at >= ?", (since_ts,)
-        ) as cur:
-            return float((await cur.fetchone())[0])
+# ---- treasury and admin
+
+async def paid_total_since(business_id: int, since_ts: float) -> float:
+    """Total USDC of this business's invoices with status 'paid' created at or after since_ts."""
+    row = await _one(
+        "SELECT COALESCE(SUM(amount_usdc), 0) AS total FROM invoices WHERE status = 'paid' AND created_at >= ? AND business_id = ?",
+        (since_ts, business_id),
+    )
+    return float(row["total"])
 
 
-async def get_purchase_order_by_id(po_id: int) -> Optional[aiosqlite.Row]:
-    async with aiosqlite.connect(config.db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM purchase_orders WHERE id = ?", (po_id,)) as cur:
-            return await cur.fetchone()
-
-
-async def log_admin_action(admin_address: str, action: str, ref: Optional[str] = None,
+async def log_admin_action(business_id: int, admin_address: str, action: str, ref: Optional[str] = None,
                            tx_hash: Optional[str] = None, block: Optional[int] = None) -> int:
     """Raises sqlite3.IntegrityError if this transaction hash was already recorded."""
-    async with aiosqlite.connect(config.db_path) as db:
-        cur = await db.execute(
-            "INSERT INTO admin_actions (admin_address, action, ref, tx_hash, block, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (admin_address, action, ref, tx_hash, block, time.time()),
-        )
-        await db.commit()
-        return cur.lastrowid
+    return await _insert(
+        "INSERT INTO admin_actions (business_id, admin_address, action, ref, tx_hash, block, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (business_id, admin_address, action, ref, tx_hash, block, time.time()),
+    )
 
 
-async def list_admin_actions(limit: int = 100) -> list:
-    async with aiosqlite.connect(config.db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM admin_actions ORDER BY id DESC LIMIT ?", (limit,)) as cur:
-            return [dict(r) for r in await cur.fetchall()]
+async def list_admin_actions(business_id: int, limit: int = 100) -> list:
+    return await _all("SELECT * FROM admin_actions WHERE business_id = ? ORDER BY id DESC LIMIT ?", (business_id, limit))
 
 
-async def list_vendors() -> list:
-    async with aiosqlite.connect(config.db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT id, name, wallet_address FROM vendors ORDER BY id") as cur:
-            return [dict(r) for r in await cur.fetchall()]
+async def list_vendors(business_id: int) -> list:
+    return await _all("SELECT id, name, wallet_address FROM vendors WHERE business_id = ? ORDER BY id", (business_id,))
 
 
-async def list_purchase_orders(limit: int = 100) -> list:
-    async with aiosqlite.connect(config.db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            """SELECT p.id, p.po_number, p.vendor_id, v.name AS vendor_name, p.amount_usdc, p.category,
-                      EXISTS(SELECT 1 FROM receipts r WHERE r.po_id = p.id) AS received
-               FROM purchase_orders p JOIN vendors v ON v.id = p.vendor_id ORDER BY p.id DESC LIMIT ?""",
-            (limit,),
-        ) as cur:
-            return [dict(r) for r in await cur.fetchall()]
+async def list_purchase_orders(business_id: int, limit: int = 100) -> list:
+    return await _all(
+        """SELECT p.id, p.po_number, p.vendor_id, v.name AS vendor_name, p.amount_usdc, p.category,
+                  EXISTS(SELECT 1 FROM receipts r WHERE r.po_id = p.id AND r.business_id = p.business_id) AS received
+           FROM purchase_orders p JOIN vendors v ON v.id = p.vendor_id AND v.business_id = p.business_id
+           WHERE p.business_id = ? ORDER BY p.id DESC LIMIT ?""",
+        (business_id, limit),
+    )
 
 
-async def list_invoices(limit: int = 50) -> list:
-    async with aiosqlite.connect(config.db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            """SELECT i.id, i.invoice_number, i.vendor_id, v.name AS vendor_name, i.amount_usdc, i.category,
-                      i.status, i.reasoning_hash, i.created_at
-               FROM invoices i JOIN vendors v ON v.id = i.vendor_id ORDER BY i.id DESC LIMIT ?""",
-            (limit,),
-        ) as cur:
-            return [dict(r) for r in await cur.fetchall()]
+async def list_invoices(business_id: int, limit: int = 50) -> list:
+    return await _all(
+        """SELECT i.id, i.invoice_number, i.vendor_id, v.name AS vendor_name, i.amount_usdc, i.category,
+                  i.status, i.reasoning_hash, i.created_at
+           FROM invoices i JOIN vendors v ON v.id = i.vendor_id AND v.business_id = i.business_id
+           WHERE i.business_id = ? ORDER BY i.id DESC LIMIT ?""",
+        (business_id, limit),
+    )
 
 
-async def invoice_counts() -> dict:
-    async with aiosqlite.connect(config.db_path) as db:
-        async with db.execute("SELECT status, COUNT(*) FROM invoices GROUP BY status") as cur:
-            return {status: n for status, n in await cur.fetchall()}
+async def invoice_counts(business_id: int) -> dict:
+    rows = await _all("SELECT status, COUNT(*) AS n FROM invoices WHERE business_id = ? GROUP BY status", (business_id,))
+    return {r["status"]: r["n"] for r in rows}
 
 
 # ---- vendor portal (v1.2.7)
@@ -305,137 +395,125 @@ async def invoice_counts() -> dict:
 ORIGINS = ("agent", "manual", "demo")
 
 
-async def get_vendor_by_wallet(wallet: str) -> Optional[aiosqlite.Row]:
-    async with aiosqlite.connect(config.db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM vendors WHERE lower(wallet_address) = ? ORDER BY id LIMIT 1", (wallet.lower(),)
-        ) as cur:
-            return await cur.fetchone()
+async def get_vendor_by_wallet(business_id: int, wallet: str) -> Optional[aiosqlite.Row]:
+    return await _one(
+        "SELECT * FROM vendors WHERE lower(wallet_address) = ? AND business_id = ? ORDER BY id LIMIT 1", (wallet.lower(), business_id)
+    )
 
 
-async def list_vendor_purchase_orders(vendor_id: int) -> list:
+async def list_vendor_purchase_orders(business_id: int, vendor_id: int) -> list:
     """A vendor's own POs only. `received`: a receipt is on file. `invoiced`: an invoice already exists for it."""
-    async with aiosqlite.connect(config.db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            """SELECT p.id, p.po_number, p.amount_usdc, p.category,
-                      EXISTS(SELECT 1 FROM receipts r WHERE r.po_id = p.id) AS received,
-                      EXISTS(SELECT 1 FROM invoices i WHERE i.po_id = p.id) AS invoiced
-               FROM purchase_orders p WHERE p.vendor_id = ? ORDER BY p.id DESC LIMIT 100""",
-            (vendor_id,),
-        ) as cur:
-            return [dict(r) for r in await cur.fetchall()]
+    return await _all(
+        """SELECT p.id, p.po_number, p.amount_usdc, p.category,
+                  EXISTS(SELECT 1 FROM receipts r WHERE r.po_id = p.id AND r.business_id = p.business_id) AS received,
+                  EXISTS(SELECT 1 FROM invoices i WHERE i.po_id = p.id AND i.business_id = p.business_id) AS invoiced
+           FROM purchase_orders p WHERE p.vendor_id = ? AND p.business_id = ? ORDER BY p.id DESC LIMIT 100""",
+        (vendor_id, business_id),
+    )
 
 
-async def list_vendor_invoices(vendor_id: int, limit: int = 50) -> list:
-    async with aiosqlite.connect(config.db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            """SELECT id, invoice_number, amount_usdc, category, status, reasoning_hash, created_at
-               FROM invoices WHERE vendor_id = ? ORDER BY id DESC LIMIT ?""",
-            (vendor_id, limit),
-        ) as cur:
-            return [dict(r) for r in await cur.fetchall()]
+async def list_vendor_invoices(business_id: int, vendor_id: int, limit: int = 50) -> list:
+    return await _all(
+        """SELECT id, invoice_number, amount_usdc, category, status, reasoning_hash, created_at
+           FROM invoices WHERE vendor_id = ? AND business_id = ? ORDER BY id DESC LIMIT ?""",
+        (vendor_id, business_id, limit),
+    )
 
 
-async def save_application(business_name: str, wallet: str, contact: Optional[str], ip_hash: str) -> int:
-    """Raises sqlite3.IntegrityError if this wallet already has a pending application."""
-    async with aiosqlite.connect(config.db_path) as db:
-        cur = await db.execute(
-            "INSERT INTO vendor_applications (business_name, wallet, contact, ip_hash, created_at) VALUES (?, ?, ?, ?, ?)",
-            (business_name, wallet.lower(), contact, ip_hash, time.time()),
-        )
-        await db.commit()
-        return cur.lastrowid
+async def save_application(business_id: int, business_name: str, wallet: str, contact: Optional[str], ip_hash: str) -> int:
+    """Raises sqlite3.IntegrityError if this wallet already has a pending application for this business."""
+    return await _insert(
+        "INSERT INTO vendor_applications (business_id, business_name, wallet, contact, ip_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (business_id, business_name, wallet.lower(), contact, ip_hash, time.time()),
+    )
 
 
 async def pending_applications_from(ip_hash: str) -> int:
-    async with aiosqlite.connect(config.db_path) as db:
-        async with db.execute(
-            "SELECT COUNT(*) FROM vendor_applications WHERE status = 'pending' AND ip_hash = ?", (ip_hash,)
-        ) as cur:
-            return int((await cur.fetchone())[0])
+    """Anti-spam only: counts one client's waiting applications across all businesses. Never returned to anyone."""
+    row = await _one("SELECT COUNT(*) AS n FROM vendor_applications WHERE status = 'pending' AND ip_hash = ?", (ip_hash,))
+    return int(row["n"])
 
 
-async def count_pending_applications() -> int:
-    async with aiosqlite.connect(config.db_path) as db:
-        async with db.execute("SELECT COUNT(*) FROM vendor_applications WHERE status = 'pending'") as cur:
-            return int((await cur.fetchone())[0])
+async def count_pending_applications(business_id: int) -> int:
+    row = await _one("SELECT COUNT(*) AS n FROM vendor_applications WHERE status = 'pending' AND business_id = ?", (business_id,))
+    return int(row["n"])
 
 
-async def list_applications(limit: int = 100) -> list:
+async def list_applications(business_id: int, limit: int = 100) -> list:
     """Private: admin only. The ip hash is never returned."""
-    async with aiosqlite.connect(config.db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            """SELECT id, business_name, wallet, contact, status, vendor_id, created_at, decided_at
-               FROM vendor_applications ORDER BY (status = 'pending') DESC, id DESC LIMIT ?""",
-            (limit,),
-        ) as cur:
-            return [dict(r) for r in await cur.fetchall()]
+    return await _all(
+        """SELECT id, business_name, wallet, contact, status, vendor_id, created_at, decided_at
+           FROM vendor_applications WHERE business_id = ? ORDER BY (status = 'pending') DESC, id DESC LIMIT ?""",
+        (business_id, limit),
+    )
 
 
-async def get_application(application_id: int) -> Optional[aiosqlite.Row]:
-    async with aiosqlite.connect(config.db_path) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM vendor_applications WHERE id = ?", (application_id,)) as cur:
-            return await cur.fetchone()
+async def get_application(business_id: int, application_id: int) -> Optional[aiosqlite.Row]:
+    return await _one("SELECT * FROM vendor_applications WHERE id = ? AND business_id = ?", (application_id, business_id))
 
 
-async def accept_application(application_id: int) -> Optional[int]:
+async def accept_application(business_id: int, application_id: int) -> Optional[int]:
     """Creates the vendor and marks the application accepted in one transaction. Returns the new vendor id, or None if
-    the application is not pending any more (so two admin clicks cannot create two vendors)."""
+    the application is not pending in this business any more (so two admin clicks cannot create two vendors)."""
     async with aiosqlite.connect(config.db_path) as db:
         db.row_factory = aiosqlite.Row
         await db.execute("BEGIN IMMEDIATE")
-        async with db.execute("SELECT * FROM vendor_applications WHERE id = ? AND status = 'pending'", (application_id,)) as cur:
+        async with db.execute(
+            "SELECT * FROM vendor_applications WHERE id = ? AND business_id = ? AND status = 'pending'", (application_id, business_id)
+        ) as cur:
             app_row = await cur.fetchone()
         if app_row is None:
             await db.rollback()
             return None
-        cur = await db.execute("INSERT INTO vendors (name, wallet_address) VALUES (?, ?)", (app_row["business_name"], app_row["wallet"]))
+        cur = await db.execute(
+            "INSERT INTO vendors (business_id, name, wallet_address) VALUES (?, ?, ?)",
+            (business_id, app_row["business_name"], app_row["wallet"]),
+        )
         vendor_id = cur.lastrowid
         await db.execute(
-            "UPDATE vendor_applications SET status = 'accepted', vendor_id = ?, decided_at = ? WHERE id = ?",
-            (vendor_id, time.time(), application_id),
+            "UPDATE vendor_applications SET status = 'accepted', vendor_id = ?, decided_at = ? WHERE id = ? AND business_id = ?",
+            (vendor_id, time.time(), application_id, business_id),
         )
         await db.commit()
         return vendor_id
 
 
-async def reject_application(application_id: int) -> bool:
+async def reject_application(business_id: int, application_id: int) -> bool:
     async with aiosqlite.connect(config.db_path) as db:
         cur = await db.execute(
-            "UPDATE vendor_applications SET status = 'rejected', decided_at = ? WHERE id = ? AND status = 'pending'",
-            (time.time(), application_id),
+            "UPDATE vendor_applications SET status = 'rejected', decided_at = ? WHERE id = ? AND business_id = ? AND status = 'pending'",
+            (time.time(), application_id, business_id),
         )
         await db.commit()
         return cur.rowcount > 0
 
 
-async def log_rejected_submission(reason: str, origin: str = "agent") -> None:
+async def log_rejected_submission(business_id: int, reason: str, origin: str = "agent") -> None:
     """Counts only (no vendor, amount or invoice data): feeds the 'duplicates caught' metric."""
-    async with aiosqlite.connect(config.db_path) as db:
-        await db.execute("INSERT INTO rejected_submissions (reason, origin, created_at) VALUES (?, ?, ?)", (reason, origin, time.time()))
-        await db.commit()
+    await _insert(
+        "INSERT INTO rejected_submissions (business_id, reason, origin, created_at) VALUES (?, ?, ?, ?)",
+        (business_id, reason, origin, time.time()),
+    )
 
 
-async def submission_stats() -> dict:
-    """Invoices processed, USDC paid and duplicates caught, split by origin. All three origins are always present."""
+async def submission_stats(business_id: Optional[int] = None) -> dict:
+    """Invoices processed, USDC paid and duplicates caught, split by origin. All three origins are always present.
+    business_id=None is the public aggregate over every business (counts only); a number scopes it to one business."""
     out = {o: {"invoices_processed": 0, "payment_volume_usdc": 0.0, "duplicates_caught": 0} for o in ORIGINS}
-    async with aiosqlite.connect(config.db_path) as db:
-        async with db.execute(
-            "SELECT origin, COUNT(*), COALESCE(SUM(CASE WHEN status = 'paid' THEN amount_usdc ELSE 0 END), 0) "
-            "FROM invoices WHERE status IN ('paid', 'held', 'escalated', 'rejected') GROUP BY origin"
-        ) as cur:
-            for origin, n, volume in await cur.fetchall():
-                if origin in out:
-                    out[origin]["invoices_processed"], out[origin]["payment_volume_usdc"] = n, round(float(volume), 6)
-        async with db.execute("SELECT origin, COUNT(*) FROM rejected_submissions WHERE reason = 'duplicate_invoice' GROUP BY origin") as cur:
-            for origin, n in await cur.fetchall():
-                if origin in out:
-                    out[origin]["duplicates_caught"] = n
+    where, args = ("AND business_id = ?", (business_id,)) if business_id is not None else ("", ())
+    inv = await _all(
+        "SELECT origin, COUNT(*) AS n, COALESCE(SUM(CASE WHEN status = 'paid' THEN amount_usdc ELSE 0 END), 0) AS volume "
+        f"FROM invoices WHERE status IN ('paid', 'held', 'escalated', 'rejected') {where} GROUP BY origin", args,
+    )
+    for r in inv:
+        if r["origin"] in out:
+            out[r["origin"]]["invoices_processed"], out[r["origin"]]["payment_volume_usdc"] = r["n"], round(float(r["volume"]), 6)
+    dup = await _all(
+        f"SELECT origin, COUNT(*) AS n FROM rejected_submissions WHERE reason = 'duplicate_invoice' {where} GROUP BY origin", args
+    )
+    for r in dup:
+        if r["origin"] in out:
+            out[r["origin"]]["duplicates_caught"] = r["n"]
     total = {k: sum(out[o][k] for o in ORIGINS) for k in ("invoices_processed", "payment_volume_usdc", "duplicates_caught")}
     total["payment_volume_usdc"] = round(total["payment_volume_usdc"], 6)
     return {**total, "by_origin": out}
