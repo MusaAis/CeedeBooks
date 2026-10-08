@@ -6,6 +6,9 @@
   var CONFIG = {
     api: "https://api.ceedebooks.xyz",
     enforcer: "0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB",
+    // The USDC token contract on Arc. A pool is funded with a token transfer to the business's contract: the contract has no
+    // receive function, so a plain wallet Send (a native transfer) to it reverts.
+    usdc: "0x3600000000000000000000000000000000000000",
     chainIdHex: "0x4cef52", // Arc Testnet, 5042002
     chainName: "Arc Testnet",
     rpc: "https://rpc.testnet.arc.network",
@@ -20,7 +23,8 @@
     setPaused: "16c38b3c",            // setPaused(bool)
     approveEscalation: "f0b70f2b",    // approveEscalation(bytes32)
     rejectEscalation: "7163a16e",     // rejectEscalation(bytes32)
-    acceptApprover: "1d4f222c"        // acceptApprover()
+    acceptApprover: "1d4f222c",       // acceptApprover()
+    erc20Transfer: "a9059cbb"         // transfer(address,uint256), on the USDC token
   };
 
   function address(a) {
@@ -51,7 +55,11 @@
     setPaused: function (paused) { return "0x" + SEL.setPaused + bool(paused); },
     approveEscalation: function (key) { return "0x" + SEL.approveEscalation + bytes32(key); },
     rejectEscalation: function (key) { return "0x" + SEL.rejectEscalation + bytes32(key); },
-    acceptApprover: function () { return "0x" + SEL.acceptApprover; }
+    acceptApprover: function () { return "0x" + SEL.acceptApprover; },
+    usdcTransfer: function (to, units) {
+      if (BigInt(units) <= 0n) throw new Error("Enter an amount above zero.");
+      return "0x" + SEL.erc20Transfer + address(to) + uint(units, 256);
+    }
   };
 
   function short(h) { return h && h.length > 14 ? h.slice(0, 8) + "..." + h.slice(-6) : (h || ""); }

@@ -49,7 +49,7 @@ Keep the new wallet's seed phrase offline. If the approver wallet is lost, nobod
 Vendors apply and sign in with a wallet signature. No keys or passwords are issued, and the portal never asks a wallet for a transaction.
 
 1. DNS: add an `A` record, host `portal`, value = the server's public IPv4.
-2. Files: `sudo mkdir -p /var/www/ceedebooks-portal && sudo cp portal/index.html portal/portal.css portal/lib.js portal/portal.js portal/logo.png portal/favicon.png portal/apple-touch-icon.png /var/www/ceedebooks-portal/` (re-run after any change to `portal/`).
+2. Files: `sudo mkdir -p /var/www/ceedebooks-portal && sudo cp portal/index.html portal/business.html portal/portal.css portal/lib.js portal/portal.js portal/business.js portal/logo.png portal/favicon.png portal/apple-touch-icon.png /var/www/ceedebooks-portal/` (re-run after any change to `portal/`).
 3. nginx: `sudo cp deploy/nginx-portal.conf /etc/nginx/sites-available/ceedebooks-portal && sudo ln -s /etc/nginx/sites-available/ceedebooks-portal /etc/nginx/sites-enabled/ && sudo nginx -t && sudo systemctl reload nginx`
 4. HTTPS: `sudo certbot --nginx -d portal.ceedebooks.xyz`
 5. Restart the API so CORS includes the portal origin (it is the default; set `PORTAL_ORIGIN` only to change it): `sudo systemctl restart ceedebooks-api`. The first start after v1.2.7 adds the `origin` column to `invoices`, creates the application tables, and relabels the hand-run domain payment as `manual`.
@@ -71,3 +71,20 @@ The first start migrates the database in place: it adds `business_id` to every t
 5. Existing API keys keep working (they become business 1's keys). Check `curl -s https://api.ceedebooks.xyz/stats` and the verify button on one old decision.
 
 To go back: stop the service, restore the `.pre-1.2.8.1` copy and check out the previous tag. Do not run the old code on a migrated database.
+
+## Upgrading to v1.2.8.2 (business onboarding)
+
+No database migration to run by hand: the first start adds the `business_applications` table and two indexes, and keeps every row. Back up first anyway.
+
+1. Back up: `cp "$CEEDEBOOKS_DB_PATH" "$CEEDEBOOKS_DB_PATH.pre-1.2.8.2"` (the path the systemd unit uses).
+2. Pull, then `sudo systemctl restart ceedebooks-api`. `BUDGET_FACTORY_ADDRESS` is optional: the deployed Arc Testnet factory is the default.
+3. Re-copy the three sites (the proof page, the admin site and the portal all changed; the portal now also has `business.html` and `business.js`):
+   - `sudo cp site/index.html site/styles.css site/app.js site/verify.js /var/www/ceedebooks/`
+   - the admin site files, as in its section above
+   - the portal files, as in the portal section above (the list now includes `business.html` and `business.js`)
+4. Check from outside: `curl -s https://api.ceedebooks.xyz/businesses` lists one business (the home business); `curl -s -o /dev/null -w '%{http_code}\n' https://api.ceedebooks.xyz/operator/business-applications` prints 401; open `https://portal.ceedebooks.xyz/business.html` and confirm the Connect wallet button appears; sign in to the admin site and confirm the **Businesses** tab is there (only for the home business's admin).
+5. The portal's nginx Content-Security-Policy needs no change (the page only calls the API and your wallet).
+
+Accepting a business is one click in the Businesses tab; it creates that business's agent wallet. If Circle cannot create it, the tab shows "The agent wallet could not be created right now; nothing was accepted": try again in a minute, nothing was changed. Then tell the owner to open `business.html` with the same wallet. They fund their pool from their admin page with **Add funds** (never the wallet's normal Send: the contract only accepts a USDC token transfer) and send a little USDC to the agent wallet for fees. They create their contract, then fund it and the agent wallet's fee balance themselves. Mark a business as outside (admin site, Businesses tab) only after you have confirmed a real outside party owns it and real money is on the other side of its payments.
+
+To go back: stop the service, restore the `.pre-1.2.8.2` copy and check out v1.2.8.1. The new table is ignored by the old code.

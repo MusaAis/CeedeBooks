@@ -141,9 +141,11 @@
   }
 
   // ---------- stats
+  var scope = null; // null = every business; a slug narrows the counts and the feed to that business
+  function q(extra) { var parts = (extra || []).concat(scope ? ["business=" + encodeURIComponent(scope)] : []); return parts.length ? "?" + parts.join("&") : ""; }
   async function loadStats() {
     try {
-      var s = await getJson("/stats");
+      var s = await getJson("/stats" + q());
       $("n-paid").textContent = s.paid;
       $("n-held").textContent = s.held;
       $("n-esc").textContent = s.escalated;
@@ -153,7 +155,8 @@
       [s.paid, s.held, s.escalated].forEach(function (n, i) { segs[i].style.width = total ? (100 * n / total) + "%" : "0%"; });
       var note = total === 0
         ? "No agent decisions yet. The first one will appear here."
-        : "Of " + total + " decisions, the agent refused " + s.refused + ". A refusal is a decision the agent made not to pay. All of them so far come from the builder's own invoices.";
+        : "Of " + total + " decisions, the agent refused " + s.refused + ". A refusal is a decision the agent made not to pay."
+          + (scope ? "" : (s.businesses && s.businesses.external > 0 ? " Businesses the operator has confirmed as outside parties are marked below." : " All of them so far come from the builder's own invoices."));
       if (s.manual_paid > 0) note += " " + (s.manual_paid === 1 ? "One payment" : s.manual_paid + " payments") + " (" + usdc(s.manual_paid_usdc) + ") run by hand through the contract " + (s.manual_paid === 1 ? "is" : "are") + " shown apart from the agent's decisions.";
       $("stats-note").textContent = note;
       var sub = s.submissions;
@@ -177,7 +180,7 @@
   async function loadFeed() {
     var box = $("feed");
     try {
-      var list = (await getJson("/decisions?limit=8")).decisions;
+      var list = (await getJson("/decisions" + q(["limit=8"]))).decisions;
       box.textContent = "";
       if (!list.length) { box.textContent = "No decisions yet."; return; }
       list.forEach(function (d) {
@@ -203,6 +206,37 @@
     }
   }
 
+  // ---------- businesses
+  async function loadBusinesses() {
+    var box = $("biz-list");
+    try {
+      var data = await getJson("/businesses");
+      var rows = V.businessRows(data.businesses, C.explorer);
+      box.textContent = "";
+      rows.forEach(function (r) {
+        var row = el("div", "item");
+        row.appendChild(el("span", "chip " + (r.outside ? "outside" : "own"), r.kind));
+        var t = el("div", "t");
+        t.appendChild(el("strong", null, r.name));
+        var addrs = el("div", "addrs");
+        var c = el("span", null, "Contract "); c.appendChild(anchor(shortHash(r.contract), r.contractUrl)); addrs.appendChild(c);
+        if (r.agentUrl) { var a = el("span", null, "Agent wallet "); a.appendChild(anchor(shortHash(r.agent), r.agentUrl)); addrs.appendChild(a); }
+        t.appendChild(addrs);
+        row.appendChild(t);
+        var btn = el("button", "mini", scope === r.slug ? "Showing" : "Show its decisions");
+        btn.type = "button";
+        btn.addEventListener("click", function () { scope = scope === r.slug ? null : r.slug; loadStats(); loadFeed(); loadBusinesses(); });
+        row.appendChild(btn);
+        box.appendChild(row);
+      });
+      var n = data.counts || {};
+      $("biz-note").textContent = (n.external > 0 ? n.external + " of " + n.total + " businesses are confirmed outside parties. " : "Only the builder's own business so far. ")
+        + (scope ? "Showing the decisions of one business. Press its button again to see all." : "");
+    } catch (e) {
+      box.textContent = "The business list could not be loaded just now.";
+    }
+  }
+
   $("go").addEventListener("click", runVerify);
   $("hash").addEventListener("keydown", function (e) { if (e.key === "Enter") runVerify(); });
   Array.prototype.forEach.call(document.querySelectorAll("[data-hash]"), function (b) {
@@ -214,6 +248,7 @@
   heroCheck();
   loadStats();
   loadFeed();
+  loadBusinesses();
   // A link from the vendor portal (#check=<64 hex>) opens straight onto that decision's check.
   var deep = /^#check=([0-9a-f]{64})$/.exec(location.hash || "");
   if (deep) { $("hash").value = deep[1]; $("verify").scrollIntoView(); runVerify(); }

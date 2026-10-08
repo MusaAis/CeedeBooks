@@ -7,6 +7,11 @@
   var C = L.CONFIG;
   var root = document.getElementById("root");
   var S = { providers: [], provider: null, account: null, token: null, me: null, bound: false, po: null };
+  // Which business a vendor is dealing with: /?business=<slug> (default: the first business).
+  var BIZ = (function () {
+    var q = typeof window.location !== "undefined" && window.location.search ? new URLSearchParams(window.location.search).get("business") : null;
+    return q && /^[a-z0-9][a-z0-9-]*$/.test(q) ? q : null;
+  })();
 
   function h(tag, attrs, kids) {
     var n = document.createElement(tag);
@@ -65,7 +70,7 @@
     });
   }
   async function signChallenge(base) {
-    var ch = await api(base + "/challenge", { method: "POST", body: { address: S.account } });
+    var ch = await api(base + "/challenge", { method: "POST", body: BIZ ? { address: S.account, business: BIZ } : { address: S.account } });
     var sig = await S.provider.request({ method: "personal_sign", params: [L.utf8Hex(ch.message), S.account] });
     return { nonce: ch.nonce, signature: sig };
   }
@@ -96,7 +101,7 @@
   // ---------- gate: the hero explains, the receipt acts
   function mountGate(title, step, bodyKids) {
     var copy = h("div", { class: "hc" }, [
-      h("span", { class: "eyebrow" }, [h("i", { "aria-hidden": "true" }), "For vendors paid by CeedeBooks"]),
+      h("span", { class: "eyebrow" }, [h("i", { "aria-hidden": "true" }), BIZ ? "For vendors paid by " + BIZ : "For vendors paid by CeedeBooks"]),
       h("h1", null, ["Get paid by an agent that shows its work."]),
       h("p", { class: "lead" }, ["Prove you control your payee wallet, see what you are owed, and check an invoice before you send it. Every decision is written down before any money moves."])]);
     var points = h("ul", { class: "points" }, [

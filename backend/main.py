@@ -364,7 +364,8 @@ async def get_stats(business: Optional[Slug] = None):
     """Decision counts (as before) plus the submission metrics, split by origin: agent, manual (run by hand) and demo.
     Without `business` this is the aggregate over every business (counts only); with it, that one business."""
     scope = await _public_scope(business)
-    return {**await decision_log.stats(scope), "submissions": await models.submission_stats(scope)}
+    return {**await decision_log.stats(scope), "submissions": await models.submission_stats(scope),
+            "businesses": await models.business_counts()}
 
 
 @app.get("/.well-known/agent.json")
@@ -382,6 +383,7 @@ async def agent_manifest():
             {"slug": b["slug"], "name": b["name"], "contract": b["enforcer_address"], "contract_version": b["contract_version"]}
             for b in active
         ],
+        "custody": "CeedeBooks runs each business's agent wallet. It can only pay that business's approved vendors within its limits; the owner's own wallet controls the money and limits and can replace the agent at any time.",
         "business_scope": "Every key, session and record belongs to one business. Public reads default to all businesses; add ?business=<slug> to narrow them. Sign-in challenges accept an optional 'business' slug (default: the first business).",
         "auth": {
             "header": "X-API-Key", "roles": ["buyer", "vendor"], "public": ["/decisions", "/stats"],
@@ -455,7 +457,7 @@ async def admin_auth_state(business: Optional[Slug] = None):
         log.exception("admin auth state read failed")
         raise HTTPException(503, "Could not read the chain right now")
     return {"approver": approver.lower(), "pending_approver": pending.lower(), "chain_id": admin_auth.CHAIN_ID,
-            "domain": admin_auth.domain(), "business": biz["slug"]}
+            "domain": admin_auth.domain(), "business": biz["slug"], "contract": biz["enforcer_address"]}
 
 
 @app.post("/admin/auth/challenge")
@@ -521,7 +523,7 @@ async def admin_overview(who: auth.Principal = Depends(auth.require_admin)):
         models.list_purchase_orders(who.business_id), models.count_pending_applications(who.business_id),
     )
     return {"chain": snap, "invoices": counts, "vendors": len(vendors), "purchase_orders": len(pos),
-            "pending_applications": pending}
+            "pending_applications": pending, "operator": who.business_id == models.HOME_BUSINESS_ID}
 
 
 @app.get("/admin/vendors")
@@ -755,3 +757,243 @@ async def vendor_me(who: auth.Principal = Depends(auth.require("vendor"))):
         po["category_name"] = categories.get(po["category"], f"Category {po['category']}")
     return {"vendor": {"id": vendor["id"], "name": vendor["name"], "wallet_address": vendor["wallet_address"]},
             "approved_onchain": approved, "purchase_orders": pos, "invoices": invoices}
+
+
+# ---- Phase L3: onboarding a business. Apply (signed) -> operator accepts (server makes the hosted agent wallet) ->
+# the owner creates the contract from their own wallet -> the server records it only after the chain proves it.
+
+CUSTODY_NOTICE = ("We run your agent's wallet. It can only pay your approved vendors within your limits, and you can revoke it any time. "
+                  "You keep the owner wallet that controls the money and the limits.")
+MAX_PENDING_BUSINESS_APPS_PER_IP = 2
+BUSINESS_APPS_PER_HOUR_PER_IP = 3
+RESERVED_SLUGS = {"admin", "api", "portal", "www", "operator", "business", "businesses", "apply", "vendor", "vendors", "stats", "decisions", "ceedebooks-test"}
+_ZERO_ADDRESS = "0x" + "0" * 40
+
+
+class BusinessChallengeIn(_Strict):
+    address: str
+    _addr = field_validator("address")(_check_address)
+
+
+class BusinessApplicationIn(_Strict):
+    name: Annotated[str, Field(min_length=2, max_length=80)]
+    slug: Slug
+    wallet_address: str
+    contact: Optional[Annotated[str, Field(min_length=3, max_length=120)]] = None
+    nonce: str = Field(min_length=32, max_length=32)
+    signature: str = Field(min_length=132, max_length=132)
+
+    _addr = field_validator("wallet_address")(_check_address)
+
+
+class BusinessStatusIn(_Strict):
+    nonce: str = Field(min_length=32, max_length=32)
+    signature: str = Field(min_length=132, max_length=132)
+
+
+class RegisterBusinessIn(_Strict):
+    application_id: int = Field(ge=1)
+    tx_hash: str = Field(pattern=r"^0x[0-9a-fA-F]{64}$")
+
+
+class ExternalIn(_Strict):
+    external: bool
+
+
+def _business_view(business: dict) -> dict:
+    return {"slug": business["slug"], "name": business["name"], "status": business["status"],
+            "contract": business["enforcer_address"] or None, "agent_address": business["agent_address"] or None}
+
+
+@app.post("/business/apply/challenge")
+async def business_apply_challenge(body: BusinessChallengeIn, request: Request):
+    if not auth.request_limiter.allow("bizapply-challenge:" + auth.client_ip(request), 10, 60.0):
+        raise HTTPException(429, "Too many attempts; try again in a minute")
+    return vendor_auth.make_challenge(body.address, vendor_auth.BUSINESS_APPLY, None)
+
+
+@app.post("/business/apply")
+async def business_apply(body: BusinessApplicationIn, request: Request):
+    """Public. The signature proves the applicant controls the wallet that would own the business (its approver).
+    Nothing starts by itself: the operator accepts, then the owner creates the contract with their own wallet."""
+    ip = auth.client_ip(request)
+    if auth.failed_auth_limiter.blocked(ip, config.failed_auth_per_min, 60.0):
+        raise HTTPException(429, "Too many failed attempts; try again later", headers={"Retry-After": "60"})
+    if not auth.request_limiter.allow("bizapply:" + ip, BUSINESS_APPS_PER_HOUR_PER_IP, 3600.0):
+        raise HTTPException(429, "Too many applications from this address; try again later", headers={"Retry-After": "3600"})
+    consumed = vendor_auth.consume(body.nonce, body.signature, vendor_auth.BUSINESS_APPLY)
+    if consumed is None or consumed[0] != body.wallet_address.lower():
+        auth.failed_auth_limiter.allow(ip, config.failed_auth_per_min, 60.0)
+        raise HTTPException(401, "The wallet signature could not be verified; request a new challenge and sign again")
+    signer = consumed[0]
+    if signer == _ZERO_ADDRESS:
+        raise HTTPException(422, "That is not a usable wallet address")
+    if body.slug in RESERVED_SLUGS or await models.slug_in_use(body.slug):
+        raise HTTPException(409, "That business address name is already taken; choose another")
+    ip_hash = _ip_hash(request)
+    if await models.pending_business_applications_from(ip_hash) >= MAX_PENDING_BUSINESS_APPS_PER_IP:
+        raise HTTPException(429, "Too many applications from this address are still waiting for review")
+    try:
+        application_id = await models.save_business_application(body.name, body.slug, signer, body.contact, ip_hash)
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, "This wallet already has an application waiting, or that name was just taken")
+    return {"id": application_id, "status": "pending"}
+
+
+@app.post("/business/status/challenge")
+async def business_status_challenge(body: BusinessChallengeIn, request: Request):
+    if not auth.request_limiter.allow("bizstatus-challenge:" + auth.client_ip(request), 20, 60.0):
+        raise HTTPException(429, "Too many attempts; try again in a minute")
+    return vendor_auth.make_challenge(body.address, vendor_auth.BUSINESS_STATUS, None)
+
+
+@app.post("/business/status")
+async def business_status(body: BusinessStatusIn, request: Request):
+    """Signed read: an owner sees only the applications made with their own wallet, and what to do next."""
+    ip = auth.client_ip(request)
+    if auth.failed_auth_limiter.blocked(ip, config.failed_auth_per_min, 60.0):
+        raise HTTPException(429, "Too many failed attempts; try again later", headers={"Retry-After": "60"})
+    consumed = vendor_auth.consume(body.nonce, body.signature, vendor_auth.BUSINESS_STATUS)
+    if consumed is None:
+        auth.failed_auth_limiter.allow(ip, config.failed_auth_per_min, 60.0)
+        raise HTTPException(401, "The wallet signature could not be verified; request a new challenge and sign again")
+    out = []
+    for a in await models.list_business_applications(consumed[0]):
+        item = {"id": a["id"], "name": a["name"], "slug": a["slug"], "status": a["status"], "created_at": a["created_at"]}
+        if a["status"] in ("accepted", "registered") and a["business_id"]:
+            business = await models.get_business(a["business_id"])
+            item["agent_address"] = a["agent_address"]
+            item["contract"] = (business or {}).get("enforcer_address") or None
+        out.append(item)
+    return {"wallet": consumed[0], "applications": out, "factory": config.budget_factory_address, "chain_id": vendor_auth.CHAIN_ID,
+            "custody": CUSTODY_NOTICE}
+
+
+@app.post("/business/register")
+async def business_register(body: RegisterBusinessIn, request: Request):
+    """Public, and safe to be: a business goes live only if the CHAIN shows our factory made it, the applicant's wallet is its
+    approver and the agent wallet we issued is its agent. A transaction made by anyone else cannot satisfy those checks."""
+    if not auth.request_limiter.allow("bizreg:" + auth.client_ip(request), 20, 3600.0):
+        raise HTTPException(429, "Too many attempts; try again later", headers={"Retry-After": "3600"})
+    application = await models.get_business_application(body.application_id)
+    if application is None:
+        raise HTTPException(404, "Application not found")
+    tx_hash = body.tx_hash.lower()
+    business = await models.get_business(application["business_id"]) if application["business_id"] else None
+    if application["status"] == "registered":
+        if business and (business["created_tx_hash"] or "").lower() == tx_hash:
+            return {**_business_view(business), "admin_url": f"{config.admin_origin}/?business={business['slug']}"}
+        raise HTTPException(409, "This application is already registered")
+    if application["status"] != "accepted" or business is None or business["status"] != "pending":
+        raise HTTPException(409, "This application is not waiting for its contract")
+    try:
+        info = await asyncio.to_thread(contract.verify_business_creation, tx_hash, config.budget_factory_address)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    except Exception:
+        log.exception("business registration: chain read failed")
+        raise HTTPException(503, "Could not read the chain right now; try again in a minute")
+    if info["approver"].lower() != application["owner_wallet"]:
+        raise HTTPException(422, "That business was not created by the wallet that applied")
+    if info["agent"].lower() != (application["agent_address"] or "").lower():
+        raise HTTPException(422, "That business does not use the agent wallet we issued for it")
+    try:
+        ok = await models.activate_business(business["id"], application["id"], info["enforcer"], info["approver"], tx_hash)
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, "That contract is already registered")
+    if not ok:
+        raise HTTPException(409, "This application is not waiting for its contract")
+    live = await models.get_business(business["id"])
+    return {**_business_view(live), "admin_url": f"{config.admin_origin}/?business={live['slug']}"}
+
+
+@app.get("/businesses")
+async def public_businesses():
+    """Active businesses with their contract and agent wallet addresses, so anyone can check them on the explorer."""
+    return {"businesses": await models.list_public_businesses(), "counts": await models.business_counts(), "custody": CUSTODY_NOTICE}
+
+
+# ---- operator (the home business's wallet-signed admin)
+
+@app.get("/operator/business-applications")
+async def operator_business_applications(_: auth.Principal = Depends(auth.require_operator)):
+    return {"applications": await models.list_business_applications(), "businesses": await models.list_businesses()}
+
+
+@app.post("/operator/business-applications/{application_id}/accept")
+async def operator_accept_business(application_id: int, who: auth.Principal = Depends(auth.require_operator)):
+    """Creates the business's hosted agent wallet and records it. The application must be pending (a double click does nothing)."""
+    claimed = await models.claim_business_application(application_id)
+    if claimed is None:
+        if await models.get_business_application(application_id) is None:
+            raise HTTPException(404, "Application not found")
+        raise HTTPException(409, "This application is not pending")
+    try:
+        if not claimed["agent_address"]:
+            wallet = await asyncio.to_thread(contract.create_agent_wallet, claimed["slug"])
+            await models.store_application_agent(application_id, wallet["wallet_id"], wallet["address"])
+        business_id = await models.finish_accepting(application_id)
+    except sqlite3.IntegrityError:
+        await models.release_business_application(application_id)
+        raise HTTPException(409, "That business name is already used by another business")
+    except Exception:
+        log.exception("accepting business application %s failed", application_id)
+        await models.release_business_application(application_id)
+        raise HTTPException(502, "The agent wallet could not be created right now; nothing was accepted. Try again in a minute")
+    if business_id is None:
+        await models.release_business_application(application_id)
+        raise HTTPException(409, "This application could not be accepted; try again")
+    await _admin_log(who, "accept_business", str(application_id))
+    business = await models.get_business(business_id)
+    return {"id": application_id, "status": "accepted", "business": _business_view(business)}
+
+
+@app.post("/operator/business-applications/{application_id}/reject")
+async def operator_reject_business(application_id: int, who: auth.Principal = Depends(auth.require_operator)):
+    if await models.get_business_application(application_id) is None:
+        raise HTTPException(404, "Application not found")
+    if not await models.reject_business_application(application_id):
+        raise HTTPException(409, "This application is not pending")
+    await _admin_log(who, "reject_business", str(application_id))
+    return {"id": application_id, "status": "rejected"}
+
+
+@app.post("/operator/businesses/{business_id}/external")
+async def operator_mark_external(business_id: int, body: ExternalIn, who: auth.Principal = Depends(auth.require_operator)):
+    """Only the operator says whether a business is an outside party . The home business can never be marked."""
+    if not await models.set_business_external(business_id, body.external):
+        raise HTTPException(404, "Business not found, not active, or the operator's own")
+    await _admin_log(who, "mark_external" if body.external else "unmark_external", str(business_id))
+    return {"id": business_id, "external": body.external}
+
+
+# ---- the owner's setup checklist (their own admin session, their own business only)
+
+@app.get("/admin/onboarding")
+async def admin_onboarding(who: auth.Principal = Depends(auth.require_admin)):
+    business = await models.get_business(who.business_id)
+    vendors, pos = await asyncio.gather(models.list_vendors(who.business_id), models.list_purchase_orders(who.business_id))
+
+    def read():
+        steps = []
+        chain = contract.chain_for(business)
+
+        def step(key, label, fn):
+            try:
+                done = bool(fn())
+            except Exception:
+                done = None  # unreadable: shown as unknown, never as done
+            steps.append({"key": key, "label": label, "done": done})
+
+        agent = business["agent_address"]
+        step("agent_gas", f"Send about 0.5 USDC to the agent wallet {agent} so it can pay network fees" if agent else "Agent wallet gas",
+             (lambda: contract.native_balance(agent) >= contract.GAS_DUST_UNITS) if agent else (lambda: None))
+        step("pool_funded", "Add USDC to your pool with the Add funds button below (a normal wallet send to the contract does not work)", lambda: chain.usdc_balance() > 0)
+        step("category_limit", "Set a daily limit for at least one spending category", lambda: any(chain.category_limit(int(c)) > 0 for c in SpendCategory))
+        return steps
+
+    steps = await asyncio.to_thread(read)
+    steps.append({"key": "vendor", "label": "Add a vendor and approve its wallet", "done": len(vendors) > 0})
+    steps.append({"key": "purchase_order", "label": "Create a purchase order for it", "done": len(pos) > 0})
+    return {"business": business["slug"], "contract": business["enforcer_address"], "agent_address": business["agent_address"] or None,
+            "steps": steps, "custody": CUSTODY_NOTICE}

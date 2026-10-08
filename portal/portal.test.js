@@ -17,6 +17,27 @@ const byId = (id) => { let hit = null; walk(root, (x) => { if (!hit && x.attrs &
 const root = mk("div");
 global.document = { getElementById: (id) => (id === "root" ? root : byId(id)), createElement: mk, createTextNode: (t) => ({ textContent: String(t), children: [] }), body: mk("body") };
 
+// ---- business registration helpers (v1.2.8.2)
+{
+  const fs = require("fs"), path = require("path");
+  const artifact = path.join(__dirname, "..", "out", "BudgetFactory.sol", "BudgetFactory.json");
+  assert.ok(fs.existsSync(artifact), "run forge build first: the selector is checked against the compiled factory");
+  const ids = JSON.parse(fs.readFileSync(artifact, "utf8")).methodIdentifiers;
+  assert.strictEqual(L.SEL_CREATE_BUSINESS, ids["createBusiness(address,uint256,uint256,uint256)"], "createBusiness selector matches the compiled factory");
+  assert.strictEqual(L.CONFIG.chainIdHex, "0x" + (5042002).toString(16));
+  const A = "0x" + "ab".repeat(20), w = (h) => h.padStart(64, "0");
+  assert.strictEqual(L.createBusinessData(A, 100000000n, 20000000n, 500000000n),
+    "0x" + L.SEL_CREATE_BUSINESS + w("ab".repeat(20)) + w((100000000).toString(16)) + w((20000000).toString(16)) + w((500000000).toString(16)));
+  assert.throws(() => L.createBusinessData("0x123", 1n, 1n, 1n));
+  assert.throws(() => L.createBusinessData(A, -1n, 1n, 1n));
+  assert.deepStrictEqual(L.validateLimits("100", "20", "500"), { daily: 100000000n, perTx: 20000000n, weekly: 500000000n });
+  assert.deepStrictEqual(L.validateLimits("20", "20", "20"), { daily: 20000000n, perTx: 20000000n, weekly: 20000000n }); // equal is allowed, as in the contract
+  for (const [d, p, wk] of [["10", "20", "500"], ["100", "20", "50"], ["100", "0", "500"], ["abc", "1", "2"], ["1", "1.1234567", "2"], ["", "1", "2"]]) assert.throws(() => L.validateLimits(d, p, wk), d + "/" + p + "/" + wk);
+  assert.strictEqual(L.cleanSlug("  Acme Traders Ltd! "), "acme-traders-ltd");
+  assert.strictEqual(L.cleanSlug("my_shop--2"), "my-shop-2");
+  for (const bad of ["", "a", "!!", "x".repeat(65)]) assert.throws(() => L.cleanSlug(bad), bad);
+}
+
 const ME = "0x" + "aa".repeat(20);
 const calls = [], posts = [];
 let expire = false, approved = true, received = true;

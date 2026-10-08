@@ -35,6 +35,7 @@ _V1_ABI = [
     _fn("remainingToday", ["uint8"], ["uint256", "uint256"]),
     _fn("paid", ["bytes32"], ["bool"]),
     _fn("approver", [], ["address"]),
+    _fn("agent", [], ["address"]),
     _fn("pendingApprover", [], ["address"]),
     _fn("paused", [], ["bool"]),
     _fn("dailyLimit", [], ["uint256"]),
@@ -44,6 +45,7 @@ _V1_ABI = [
 _V2_ABI = _V1_ABI + [_fn("weeklyLimit", [], ["uint256"]), _fn("remainingThisWeek", [], ["uint256"])]
 _ABI = {1: _V1_ABI, 2: _V2_ABI}
 
+_FACTORY_ABI = [_fn("isBusiness", ["address"], ["bool"]), _fn("businessCount", [], ["uint256"])]
 _USDC_ABI = [_fn("balanceOf", ["address"], ["uint256"])]
 _usdc = _w3.eth.contract(address=Web3.to_checksum_address(config.usdc_address), abi=_USDC_ABI)
 
@@ -130,6 +132,9 @@ class Chain:
 
     def approver(self) -> str:
         return self._read.functions.approver().call()
+
+    def agent(self) -> str:
+        return self._read.functions.agent().call()
 
     def pending_approver(self) -> str:
         return self._read.functions.pendingApprover().call()
@@ -250,3 +255,59 @@ def chain_for(business: dict) -> Chain:
     if chain is None:
         chain = _chains[key] = Chain(business["enforcer_address"], int(business["contract_version"]), key[2])
     return chain
+
+
+# ---- onboarding (Phase L3): a hosted agent wallet per business, and proof that a business contract is real
+
+_BUSINESS_CREATED = Web3.keccak(text="BusinessCreated(uint256,address,address,address)").hex().lower().removeprefix("0x")
+GAS_DUST_UNITS = 5 * 10**17  # 0.5 USDC of native gas (18 decimals) keeps a hosted agent wallet working for a long time
+
+
+def native_balance(address: str) -> int:
+    """Native (gas) balance in 18-decimal units. Arc gas is USDC."""
+    return _w3.eth.get_balance(Web3.to_checksum_address(address))
+
+
+def create_agent_wallet(label: str) -> dict:
+    """A new Circle developer-controlled wallet on Arc Testnet in its own wallet set, same call shape as agent/wallet_setup.py.
+    Returns {wallet_id, address}. Hosted custody: the server can sign for it, so it must only ever be a business's AGENT."""
+    import json
+
+    sets_api = developer_controlled_wallets.WalletSetsApi(_wallet_client)
+    wallets_api = developer_controlled_wallets.WalletsApi(_wallet_client)
+    wallet_set = sets_api.create_wallet_set(developer_controlled_wallets.CreateWalletSetRequest.from_dict({"name": f"CeedeBooks business: {label}"[:50]}))
+    wallet_set_id = wallet_set.data.wallet_set.actual_instance.id
+    wallet = wallets_api.create_wallet(developer_controlled_wallets.CreateWalletRequest.from_dict(
+        {"walletSetId": wallet_set_id, "blockchains": ["ARC-TESTNET"], "count": 1, "accountType": "EOA"}))
+    data = json.loads(wallet.model_dump_json())["data"]["wallets"][0]
+    return {"wallet_id": data["id"], "address": Web3.to_checksum_address(data["address"])}
+
+
+def verify_business_creation(tx_hash: str, factory_address: str) -> dict:
+    """Proves from the chain that tx_hash made a business through OUR factory. Returns {id, enforcer, approver, agent, block}.
+    Checks: the transaction succeeded and went to the factory; the factory's BusinessCreated event is in it; the factory
+    itself says the new contract is a business; and the contract's own approver() and agent() match the event. Raises
+    ValueError with a reason on any failure, and lets RPC errors propagate (callers fail closed)."""
+    factory = Web3.to_checksum_address(factory_address)
+    receipt = _w3.eth.get_transaction_receipt(tx_hash)
+    if receipt["status"] != 1:
+        raise ValueError("That transaction failed on-chain")
+    if not receipt["to"] or str(receipt["to"]).lower() != factory.lower():
+        raise ValueError("That transaction did not go to the CeedeBooks factory")
+    events = []
+    for log in receipt["logs"]:
+        topics = [_hex(t) for t in log["topics"]]
+        if str(log["address"]).lower() == factory.lower() and len(topics) == 4 and topics[0] == _BUSINESS_CREATED:
+            events.append((topics, _hex(log["data"])))
+    if len(events) != 1:
+        raise ValueError("Expected exactly one business creation in that transaction")
+    topics, data = events[0]
+    enforcer = Web3.to_checksum_address("0x" + topics[2][-40:])
+    approver = Web3.to_checksum_address("0x" + topics[3][-40:])
+    agent = Web3.to_checksum_address("0x" + data[-40:])
+    if not _w3.eth.contract(address=factory, abi=_FACTORY_ABI).functions.isBusiness(enforcer).call():
+        raise ValueError("The factory does not list that contract as a business")
+    live = _w3.eth.contract(address=enforcer, abi=_V2_ABI)
+    if live.functions.approver().call().lower() != approver.lower() or live.functions.agent().call().lower() != agent.lower():
+        raise ValueError("The contract's approver or agent does not match its creation record")
+    return {"id": int(topics[1], 16), "enforcer": enforcer, "approver": approver, "agent": agent, "block": receipt["blockNumber"]}

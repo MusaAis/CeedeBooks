@@ -28,6 +28,7 @@ SESSION_MAX = 7200       # and 2 hours no matter what
 MAX_CHALLENGES = 2000
 CHAIN_ID = 5042002       # Arc Testnet
 APPLY, SIGN_IN = "apply", "signin"
+BUSINESS_APPLY, BUSINESS_STATUS = "business_apply", "business_status"  # a new business is not a business yet: no business in the challenge
 
 _ADDRESS_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
 _SIG_RE = re.compile(r"^0x[a-fA-F0-9]{130}$")
@@ -35,6 +36,8 @@ _NONCE_RE = re.compile(r"^[0-9a-f]{32}$")
 _STATEMENT = {
     APPLY: "Apply to become a CeedeBooks vendor with this wallet. This signs a message only: it sends no transaction and costs nothing.",
     SIGN_IN: "Sign in to the CeedeBooks vendor portal. This signs a message only: it sends no transaction and costs nothing.",
+    BUSINESS_APPLY: "Apply to register a business on CeedeBooks with this wallet, which would become its owner. This signs a message only: it sends no transaction and costs nothing.",
+    BUSINESS_STATUS: "Show the status of the business applications made with this wallet. This signs a message only: it sends no transaction and costs nothing.",
 }
 
 _challenges: dict = {}  # nonce -> {address, purpose, business_id, expires}
@@ -57,7 +60,7 @@ def _purge(now: float) -> None:
         del _sessions[key]
 
 
-def make_challenge(address: str, purpose: str, business: dict) -> dict:
+def make_challenge(address: str, purpose: str, business: Optional[dict]) -> dict:
     """Returns {nonce, message}. When the store is full the oldest challenge is dropped: a flood can slow sign-in, never block it."""
     if purpose not in _STATEMENT or not _ADDRESS_RE.match(address):
         raise ValueError("bad request")
@@ -69,11 +72,11 @@ def make_challenge(address: str, purpose: str, business: dict) -> dict:
     issued = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     expires = datetime.fromtimestamp(now + CHALLENGE_TTL, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     message = (
-        f"{domain()} wants you to sign in with your Ethereum account:\n{address}\n\n{_STATEMENT[purpose]}\nBusiness: {business['slug']}\n\n"
+        f"{domain()} wants you to sign in with your Ethereum account:\n{address}\n\n{_STATEMENT[purpose]}\n{'Business: ' + business['slug'] if business else 'For a new business'}\n\n"
         f"URI: {config.portal_origin}\nVersion: 1\nChain ID: {CHAIN_ID}\nNonce: {nonce}\n"
         f"Issued At: {issued}\nExpiration Time: {expires}"
     )
-    _challenges[nonce] = {"address": address.lower(), "purpose": purpose, "business_id": business["id"], "message": message,
+    _challenges[nonce] = {"address": address.lower(), "purpose": purpose, "business_id": business["id"] if business else 0, "message": message,
                           "expires": now + CHALLENGE_TTL}
     return {"nonce": nonce, "message": message}
 

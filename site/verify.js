@@ -132,9 +132,25 @@
     throw new Error("no public RPC answered");
   }
 
+  // What the "Businesses" section shows for each active business: who it is for, and links to check it on the explorer.
+  // `external` is set only by the operator. The home business (id 1) is always the builder's own.
+  function businessRows(list, explorer) {
+    return (list || []).map(function (b) {
+      var own = b.id === 1 || !b.external;
+      return {
+        slug: b.slug, name: b.name,
+        kind: b.id === 1 ? "Builder's own" : (b.external ? "Outside business" : "Not yet confirmed as outside"),
+        outside: !own,
+        contractUrl: explorer + "/address/" + b.contract,
+        agentUrl: b.agent_address ? explorer + "/address/" + b.agent_address : null,
+        contract: b.contract, agent: b.agent_address || null, version: b.contract_version
+      };
+    });
+  }
+
   var api = {
     CONFIG: CONFIG, TOPICS: TOPICS, normalizeHash: normalizeHash, isTxHash: isTxHash, sha256Hex: sha256Hex,
-    checkRecord: checkRecord, findEvent: findEvent, readReceipt: readReceipt, isKnownBusiness: isKnownBusiness
+    checkRecord: checkRecord, findEvent: findEvent, readReceipt: readReceipt, isKnownBusiness: isKnownBusiness, businessRows: businessRows
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.CeedeVerify = api;

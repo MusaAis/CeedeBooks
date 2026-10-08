@@ -11,6 +11,7 @@ load_dotenv()
 
 
 _ARC_TESTNET_USDC = "0x3600000000000000000000000000000000000000"
+_ARC_TESTNET_FACTORY = "0x97b9A3802bA6B258cBeF6070532a265656bb391C"  # BudgetFactory, v1.2.8
 
 
 def _require(name: str) -> str:
@@ -33,6 +34,7 @@ class Config:
     approver_address: str
     usdc_address: str
     budget_enforcer_address: str
+    budget_factory_address: str
     milestone_escrow_address: str
     ceedebooks_yield_address: str
 
@@ -83,6 +85,7 @@ class Config:
             approver_address=_optional("APPROVER_ADDRESS"),
             usdc_address=_optional("USDC_ADDRESS") or _ARC_TESTNET_USDC,
             budget_enforcer_address=_optional("BUDGET_ENFORCER_ADDRESS"),
+            budget_factory_address=_optional("BUDGET_FACTORY_ADDRESS") or _ARC_TESTNET_FACTORY,
             milestone_escrow_address=_optional("MILESTONE_ESCROW_ADDRESS"),
             ceedebooks_yield_address=_optional("CEEDEBOOKS_YIELD_ADDRESS"),
             circle_api_key=_optional("CIRCLE_API_KEY"),

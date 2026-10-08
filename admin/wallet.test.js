@@ -12,6 +12,19 @@ assert.strictEqual(W.CALLS.approveEscalation(K), "0xf0b70f2b" + "12".repeat(32))
 assert.strictEqual(W.CALLS.rejectEscalation(K), "0x7163a16e" + "12".repeat(32));
 assert.strictEqual(W.CALLS.acceptApprover(), "0x1d4f222c");
 
+// Funding: a USDC token transfer to the business's contract (a plain wallet Send to a contract with no receive function reverts)
+{
+  const fs = require("fs"), path = require("path");
+  const artifact = path.join(__dirname, "..", "out", "MockUSDC.sol", "MockUSDC.json");
+  assert.ok(fs.existsSync(artifact), "run forge build first: the selector is checked against the compiled token");
+  assert.strictEqual(W.SEL.erc20Transfer, JSON.parse(fs.readFileSync(artifact, "utf8")).methodIdentifiers["transfer(address,uint256)"]);
+  assert.strictEqual(W.CONFIG.usdc, "0x3600000000000000000000000000000000000000");
+  assert.strictEqual(W.CALLS.usdcTransfer(A, 12500000n), "0xa9059cbb" + w("ab".repeat(20)) + w((12500000).toString(16)));
+  assert.throws(() => W.CALLS.usdcTransfer(A, 0n));
+  assert.throws(() => W.CALLS.usdcTransfer("0x123", 1n));
+  assert.throws(() => W.CALLS.usdcTransfer(A, -1n));
+}
+
 assert.throws(() => W.CALLS.setVendor("0x123", true));                 // bad address
 assert.throws(() => W.CALLS.setCategoryDailyLimit(256, 1n));           // uint8 overflow
 assert.throws(() => W.CALLS.setCategoryDailyLimit(1, -1n));            // negative

@@ -103,6 +103,13 @@ def require(*roles: str):
     return dependency
 
 
+async def require_operator(principal: Principal = Depends(authenticate)) -> Principal:
+    """The platform operator: the wallet-signed admin of the home business (no separate key). Other businesses' admins get 403."""
+    if principal.admin_address is None or principal.business_id != models.HOME_BUSINESS_ID:
+        raise HTTPException(403, "Operator session required")
+    return principal
+
+
 async def require_admin(principal: Principal = Depends(authenticate)) -> Principal:
     """Only a wallet-signed admin session. A buyer API key is not enough for the /admin routes."""
     if principal.admin_address is None:

@@ -132,3 +132,5 @@ a.evi:hover{border-color:var(--cobalt);transform:translateY(-2px)}
 
 @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{animation:none!important;transition:none!important}}
 .tally.second{margin-top:.6rem}.h3{font-size:1.05rem;margin:1.6rem 0 .2rem}
+.chip.own{background:var(--frost);color:var(--mut)}.chip.outside{background:var(--green-bg);color:var(--green)}
+.addrs{display:flex;flex-wrap:wrap;gap:.2rem .9rem;color:var(--mut);font-size:.88rem}

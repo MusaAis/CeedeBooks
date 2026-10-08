@@ -42,5 +42,8 @@ jobs:
         run: |
           node admin/wallet.test.js
           node admin/admin.test.js
+          BIZ=acme node admin/admin.test.js
       - name: vendor portal tests
-        run: node portal/portal.test.js
+        run: |
+          node portal/portal.test.js
+          node portal/business.test.js

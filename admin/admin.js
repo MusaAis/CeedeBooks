@@ -6,7 +6,12 @@
   var W = window.CeedeWallet;
   var C = W.CONFIG;
   var root = document.getElementById("root");
-  var S = { providers: [], provider: null, account: null, token: null, overview: null, tab: "overview", bound: false };
+  var S = { providers: [], provider: null, account: null, token: null, overview: null, tab: "overview", bound: false, contract: null };
+  // Which business to sign in to: /?business=<slug> (default: the first business). Every business has its own contract.
+  var BIZ = (function () {
+    var q = typeof window.location !== "undefined" && window.location.search ? new URLSearchParams(window.location.search).get("business") : null;
+    return q && /^[a-z0-9][a-z0-9-]*$/.test(q) ? q : null;
+  })();
   var TABS = [["overview", "Overview"], ["applications", "Applications"], ["vendors", "Vendors"], ["pos", "Purchase orders"], ["invoices", "Invoices"], ["limits", "Limits and safety"], ["activity", "Activity"]];
 
   function h(tag, attrs, kids) {
@@ -102,9 +107,9 @@
     }
     throw new Error("Still pending after two minutes. Check the explorer, then refresh this page.");
   }
-  async function sendTx(data) {
+  async function sendTx(data, to) {
     say("Confirm the transaction in your wallet...");
-    var hash = await S.provider.request({ method: "eth_sendTransaction", params: [{ from: S.account, to: C.enforcer, data: data }] });
+    var hash = await S.provider.request({ method: "eth_sendTransaction", params: [{ from: S.account, to: to || S.contract || C.enforcer, data: data }] });
     say("Waiting for the chain to confirm...", null, hash);
     var rc = await waitReceipt(hash);
     if (rc.status !== "0x1") throw new Error("The transaction failed on-chain.");
@@ -155,7 +160,8 @@
     S.account = String(accounts[0]).toLowerCase();
     await ensureChain();
     if (S.provider.on && !S.bound) { S.bound = true; S.provider.on("accountsChanged", function () { signedOut("Wallet changed. Connect again."); }); }
-    var st = await fetch(C.api + "/admin/auth/state").then(function (r) { if (!r.ok) throw new Error("Could not read the chain right now."); return r.json(); });
+    var st = await fetch(C.api + "/admin/auth/state" + (BIZ ? "?business=" + encodeURIComponent(BIZ) : "")).then(function (r) { if (!r.ok) throw new Error("Could not read the chain right now."); return r.json(); });
+    S.contract = st.contract || C.enforcer;
     if (S.account === st.approver) return gateSign();
     if (S.account === st.pending_approver) return gateAccept();
     mountGate([
@@ -185,7 +191,7 @@
     gateSign();
   }
   async function signIn() {
-    var ch = await api("/admin/auth/challenge", { method: "POST", body: { address: S.account } });
+    var ch = await api("/admin/auth/challenge", { method: "POST", body: BIZ ? { address: S.account, business: BIZ } : { address: S.account } });
     var sig = await S.provider.request({ method: "personal_sign", params: [W.utf8Hex(ch.message), S.account] });
     var out = await api("/admin/auth/verify", { method: "POST", body: { nonce: ch.nonce, signature: sig } });
     S.token = out.token;
@@ -201,12 +207,14 @@
   // ---------- app shell
   async function renderApp() {
     root.textContent = "";
-    var tabs = h("div", { class: "tabs", role: "tablist" }, TABS.map(function (t) {
+    await overview();  // also tells us whether this session is the operator's (the home business's admin)
+    var tabList = TABS.concat(S.overview.operator ? [["businesses", "Businesses"]] : []);
+    var tabs = h("div", { class: "tabs", role: "tablist" }, tabList.map(function (t) {
       return h("button", { role: "tab", "data-tab": t[0], onclick: guard(function () { return show(t[0]); }) }, [t[1]]);
     }));
     var main = h("main", { id: "view" });
     root.appendChild(h("header", { class: "top" }, [
-      h("div", { class: "top-in" }, [brand(), h("span", { class: "who" }, [W.short(S.account)]),
+      h("div", { class: "top-in" }, [brand(), h("span", { class: "who" }, [(S.overview.chain && S.overview.chain.business ? S.overview.chain.business + " · " : "") + W.short(S.account)]),
         h("button", { class: "btn ghost sm", onclick: guard(logout) }, ["Sign out"])]),
       tabs]));
     root.appendChild(main);
@@ -238,6 +246,35 @@
   function card(label, value) { return h("div", { class: "card" }, [h("div", { class: "l" }, [label]), h("div", { class: "v" }, [String(value)])]); }
   function field(label, input) { return h("label", null, [label, input]); }
   async function overview() { S.overview = await api("/admin/overview"); return S.overview; }
+  // Put USDC into this business's contract. It is a token transfer on the USDC contract; the wallet's normal Send button
+  // does a native transfer, which the contract rejects.
+  function fundPanel() {
+    var amount = h("input", { id: "fund-amount", inputmode: "decimal", autocomplete: "off", placeholder: "20" });
+    return h("div", { class: "panel" }, [
+      h("h3", null, ["Add funds to your pool"]),
+      h("p", { class: "note" }, ["Sends USDC from your own wallet into your contract, where the agent can pay approved vendors from it. Use this button: your wallet's normal Send does not work for a contract. Only your owner wallet can ever take the money out."]),
+      h("label", null, ["Amount in USDC", amount]),
+      h("button", { class: "btn", onclick: guard(async function () {
+        var units = W.usdcToUnits(amount.value);
+        if (units <= 0n) throw new Error("Enter an amount above zero.");
+        var to = S.contract || C.enforcer;
+        if (!(await confirmAction("Add funds to your pool", ["Amount: " + amount.value.trim() + " USDC", "From your wallet: " + S.account, "Into your contract: " + to, "This is a USDC token transfer. The funds sit in your contract."]))) return;
+        var hash = await sendTx(W.CALLS.usdcTransfer(to, units), W.CONFIG.usdc);
+        say("Funds added.", "ok", hash);
+        await sleep(2500);  // let the server's node catch up before the balance is read again
+        await show("overview");
+      }) }, ["Add funds"])]);
+  }
+  // The owner's setup checklist. Unknown steps are shown as unknown, never as done. Hidden once everything is done.
+  async function setupChecklist() {
+    var data;
+    try { data = await api("/admin/onboarding"); } catch (e) { return null; }
+    if (!data || !data.steps || data.steps.every(function (x) { return x.done === true; })) return null;
+    var items = data.steps.map(function (x) {
+      return h("li", null, [chip(x.done === true ? "Done" : x.done === false ? "To do" : "Unknown", x.done === true ? "ok" : x.done === false ? "warn" : "bad"), " " + x.label]);
+    });
+    return h("div", { class: "panel" }, [h("h3", null, ["Finish setting up"]), h("ul", { class: "steps" }, items), h("p", { class: "note" }, [data.custody])]);
+  }
   function categories() { return (S.overview && S.overview.chain.categories) || []; }
 
   // ---------- views
@@ -253,10 +290,13 @@
           card("Escalations waiting", inv.escalated || 0), card("Paid invoices", inv.paid || 0),
           card("Vendors", o.vendors), card("Purchase orders", o.purchase_orders),
           card("Applications waiting", o.pending_applications || 0)]));
+        wrap.appendChild(fundPanel());
         wrap.appendChild(h("h3", null, ["Spending categories"]));
         wrap.appendChild(table(["Category", "Daily limit", "Left today"], c.categories.map(function (x) { return [x.name, usdc(x.daily_limit_usdc), usdc(x.remaining_usdc)]; })));
         wrap.appendChild(h("p", { class: "note" }, ["Admin wallet: " + c.approver]));
       }
+      var setup = await setupChecklist();
+      if (setup) wrap.insertBefore ? wrap.insertBefore(setup, wrap.children[1] || null) : wrap.appendChild(setup);
       return wrap;
     },
 
@@ -281,6 +321,45 @@
       return h("div", null, [h("h2", null, ["Applications"]),
         h("p", { class: "note" }, ["People who proved they control a payee wallet by signing a message. Contact details are visible only here."]),
         rows.length ? table(["Business", "Wallet", "Contact", "Applied", "Status", ""], rows) : h("p", { class: "note" }, ["No applications yet."])]);
+    },
+
+    businesses: async function () {
+      var data = await api("/operator/business-applications");
+      var kind = { pending: "warn", accepting: "warn", accepted: "ok", registered: "ok", rejected: "bad" };
+      var decide = function (a, verb) {
+        return h("button", { class: "btn ghost sm", onclick: guard(async function () {
+          var accept = verb === "accept";
+          if (!(await confirmAction(accept ? "Accept this business" : "Reject this business",
+            [a.name + " (" + a.slug + ")", a.owner_wallet, accept ? "A hosted agent wallet is created for it under our Circle account. Its owner then creates the contract from their own wallet. It can only pay that business's own approved vendors within its own limits." : "The applicant can apply again."],
+            accept ? "Accept" : "Reject"))) return;
+          var out = await api("/operator/business-applications/" + a.id + "/" + verb, { method: "POST" });
+          say(accept ? "Accepted. Agent wallet " + out.business.agent_address + ". Tell the owner to open the business page." : "Application rejected.", "ok");
+          await show("businesses");
+        }) }, [verb === "accept" ? "Accept" : "Reject"]);
+      };
+      var appRows = data.applications.map(function (a) {
+        var act = a.status === "pending" ? h("span", { class: "actions" }, [decide(a, "accept"), " ", decide(a, "reject")]) : "";
+        return [a.name, h("span", { class: "mono" }, [a.slug]), h("span", { class: "mono" }, [a.owner_wallet]), a.contact || "", when(a.created_at), chip(a.status, kind[a.status] || "warn"), act];
+      });
+      var bizRows = data.businesses.map(function (b) {
+        var mark = (b.status === "active" && b.id !== 1) ? h("button", { class: "btn ghost sm", onclick: guard(async function () {
+          var to = !b.external;
+          if (!(await confirmAction(to ? "Mark as an outside business" : "Remove the outside mark",
+            [b.name, to ? "Only do this after you have confirmed a real outside party owns it and real money is on the other side of its payments." : "It will no longer count as an outside business."],
+            to ? "Mark as outside" : "Remove mark"))) return;
+          await api("/operator/businesses/" + b.id + "/external", { method: "POST", body: { external: to } });
+          say("Updated.", "ok");
+          await show("businesses");
+        }) }, [b.external ? "Remove outside mark" : "Mark as outside"]) : "";
+        return [b.name, h("span", { class: "mono" }, [b.slug]), chip(b.status, kind[b.status] || "warn"), b.id === 1 ? "Your own" : (b.external ? "Outside" : "Not marked"),
+          h("span", { class: "mono" }, [b.enforcer_address || "not created yet"]), h("span", { class: "mono" }, [b.agent_address || ""]), mark];
+      });
+      return h("div", null, [h("h2", null, ["Businesses"]),
+        h("p", { class: "note" }, ["Only you see this tab. Accepting creates a hosted agent wallet for the business: say so to them (it can only pay their approved vendors within their limits, and they can replace it any time)."]),
+        h("h3", null, ["Applications"]),
+        appRows.length ? table(["Business", "Name in URL", "Owner wallet", "Contact", "Applied", "Status", ""], appRows) : h("p", { class: "note" }, ["No applications yet."]),
+        h("h3", null, ["All businesses"]),
+        table(["Business", "Name in URL", "Status", "Counts as", "Contract", "Agent wallet", ""], bizRows)]);
     },
 
     vendors: async function () {

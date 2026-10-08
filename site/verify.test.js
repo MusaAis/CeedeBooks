@@ -49,6 +49,18 @@ const zero = "0x" + "00".repeat(32);
   assert.strictEqual(await V.isKnownBusiness("nope", factoryAnswers(yes), ["https://r"]), false);
   await assert.rejects(V.isKnownBusiness("0x" + "bb".repeat(20), factoryAnswers(yes, "0x1"), ["https://r"]));   // wrong chain: not trusted
 
+  // ---- the Businesses section
+  const rows = V.businessRows([
+    { id: 1, name: "CeedeBooks", slug: "ceedebooks", contract: E, agent_address: "0x" + "a0".repeat(20), external: 0, contract_version: 1 },
+    { id: 2, name: "Acme", slug: "acme", contract: "0x" + "bb".repeat(20), agent_address: "0x" + "a1".repeat(20), external: 1, contract_version: 2 },
+    { id: 3, name: "Beta", slug: "beta", contract: "0x" + "cc".repeat(20), agent_address: "", external: 0, contract_version: 2 }], "https://x.test");
+  assert.deepStrictEqual(rows.map((r) => [r.slug, r.kind, r.outside]), [["ceedebooks", "Builder's own", false], ["acme", "Outside business", true], ["beta", "Not yet confirmed as outside", false]]);
+  assert.strictEqual(rows[1].contractUrl, "https://x.test/address/0x" + "bb".repeat(20));
+  assert.strictEqual(rows[1].agentUrl, "https://x.test/address/0x" + "a1".repeat(20));
+  assert.strictEqual(rows[2].agentUrl, null);
+  assert.deepStrictEqual(V.businessRows(null, "https://x.test"), []);
+  assert.strictEqual(V.businessRows([{ id: 1, name: "X", slug: "x", contract: E, agent_address: "", external: 1, contract_version: 1 }], "u")[0].outside, false, "the home business can never read as outside");
+
   const h = r1.reasoning_hash;
   const mkReceipt = (name, status = "0x1", addr = E) => ({
     blockNumber: "0x2a", status,

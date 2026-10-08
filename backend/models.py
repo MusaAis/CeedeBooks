@@ -24,6 +24,21 @@ CREATE TABLE IF NOT EXISTS businesses (
     created_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS business_applications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    owner_wallet TEXT NOT NULL,
+    contact TEXT,
+    ip_hash TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepting', 'accepted', 'rejected', 'registered')),
+    agent_wallet_id TEXT,
+    agent_address TEXT,
+    business_id INTEGER REFERENCES businesses(id),
+    created_at REAL NOT NULL,
+    decided_at REAL
+);
+
 CREATE TABLE IF NOT EXISTS vendors (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     business_id INTEGER NOT NULL DEFAULT 1,
@@ -117,6 +132,9 @@ CREATE TABLE IF NOT EXISTS api_keys (
 _INDEXES = """
 CREATE UNIQUE INDEX IF NOT EXISTS ux_application_pending_wallet_v2
     ON vendor_applications(business_id, wallet) WHERE status = 'pending';
+CREATE UNIQUE INDEX IF NOT EXISTS ux_bizapp_pending_wallet ON business_applications(owner_wallet) WHERE status = 'pending';
+CREATE UNIQUE INDEX IF NOT EXISTS ux_bizapp_open_slug ON business_applications(slug) WHERE status IN ('pending', 'accepting', 'accepted');
+CREATE UNIQUE INDEX IF NOT EXISTS ux_business_contract ON businesses(enforcer_address) WHERE enforcer_address != '';
 CREATE INDEX IF NOT EXISTS ix_invoices_business ON invoices(business_id, id);
 CREATE INDEX IF NOT EXISTS ix_vendors_business ON vendors(business_id, id);
 """
@@ -517,3 +535,131 @@ async def submission_stats(business_id: Optional[int] = None) -> dict:
     total = {k: sum(out[o][k] for o in ORIGINS) for k in ("invoices_processed", "payment_volume_usdc", "duplicates_caught")}
     total["payment_volume_usdc"] = round(total["payment_volume_usdc"], 6)
     return {**total, "by_origin": out}
+
+
+# ---- business onboarding (Phase L3). Applications are private; a business is public only once it is active.
+
+async def save_business_application(name: str, slug: str, owner_wallet: str, contact: Optional[str], ip_hash: str) -> int:
+    """Raises sqlite3.IntegrityError if the wallet already has a pending application or the slug is taken by an open one."""
+    return await _insert(
+        "INSERT INTO business_applications (name, slug, owner_wallet, contact, ip_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (name, slug, owner_wallet.lower(), contact, ip_hash, time.time()),
+    )
+
+
+async def slug_in_use(slug: str) -> bool:
+    row = await _one(
+        "SELECT (SELECT COUNT(*) FROM businesses WHERE slug = ?) + (SELECT COUNT(*) FROM business_applications "
+        "WHERE slug = ? AND status IN ('pending', 'accepting', 'accepted')) AS n", (slug, slug))
+    return int(row["n"]) > 0
+
+
+async def pending_business_applications_from(ip_hash: str) -> int:
+    row = await _one("SELECT COUNT(*) AS n FROM business_applications WHERE status = 'pending' AND ip_hash = ?", (ip_hash,))
+    return int(row["n"])
+
+
+async def get_business_application(application_id: int) -> Optional[dict]:
+    row = await _one("SELECT * FROM business_applications WHERE id = ?", (application_id,))
+    return dict(row) if row else None
+
+
+async def list_business_applications(owner_wallet: Optional[str] = None, limit: int = 100) -> list:
+    """Private. With a wallet: only that owner's applications. Without: everything, for the operator. No ip hash ever."""
+    cols = "id, name, slug, owner_wallet, contact, status, agent_address, business_id, created_at, decided_at"
+    if owner_wallet is not None:
+        return await _all(f"SELECT {cols} FROM business_applications WHERE owner_wallet = ? ORDER BY id DESC LIMIT ?", (owner_wallet.lower(), limit))
+    return await _all(f"SELECT {cols} FROM business_applications ORDER BY (status = 'pending') DESC, id DESC LIMIT ?", (limit,))
+
+
+async def claim_business_application(application_id: int) -> Optional[dict]:
+    """pending -> accepting, once. Returns the application, or None if it is not pending (a double click claims nothing)."""
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        cur = await db.execute("UPDATE business_applications SET status = 'accepting' WHERE id = ? AND status = 'pending'", (application_id,))
+        await db.commit()
+        if cur.rowcount == 0:
+            return None
+    return await get_business_application(application_id)
+
+
+async def release_business_application(application_id: int) -> None:
+    """accepting -> pending, after a failure before anything was kept (the wallet stored first is reused on the next try)."""
+    async with aiosqlite.connect(config.db_path) as db:
+        await db.execute("UPDATE business_applications SET status = 'pending' WHERE id = ? AND status = 'accepting'", (application_id,))
+        await db.commit()
+
+
+async def store_application_agent(application_id: int, wallet_id: str, address: str) -> None:
+    """Kept immediately after the Circle wallet exists, so a crash before the accept finishes never creates a second one."""
+    async with aiosqlite.connect(config.db_path) as db:
+        await db.execute("UPDATE business_applications SET agent_wallet_id = ?, agent_address = ? WHERE id = ?", (wallet_id, address, application_id))
+        await db.commit()
+
+
+async def finish_accepting(application_id: int) -> Optional[int]:
+    """accepting -> accepted and the pending business row, in one transaction. Returns the new business id."""
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        await db.execute("BEGIN IMMEDIATE")
+        async with db.execute("SELECT * FROM business_applications WHERE id = ? AND status = 'accepting'", (application_id,)) as cur:
+            app_row = await cur.fetchone()
+        if app_row is None or not app_row["agent_address"]:
+            await db.rollback()
+            return None
+        cur = await db.execute(
+            "INSERT INTO businesses (name, slug, enforcer_address, approver_address, agent_address, circle_wallet_id, contract_version, "
+            "external, status, created_at) VALUES (?, ?, '', ?, ?, ?, 2, 0, 'pending', ?)",
+            (app_row["name"], app_row["slug"], app_row["owner_wallet"], app_row["agent_address"], app_row["agent_wallet_id"], time.time()),
+        )
+        business_id = cur.lastrowid
+        await db.execute("UPDATE business_applications SET status = 'accepted', business_id = ?, decided_at = ? WHERE id = ?",
+                         (business_id, time.time(), application_id))
+        await db.commit()
+        return business_id
+
+
+async def reject_business_application(application_id: int) -> bool:
+    async with aiosqlite.connect(config.db_path) as db:
+        cur = await db.execute("UPDATE business_applications SET status = 'rejected', decided_at = ? WHERE id = ? AND status = 'pending'",
+                               (time.time(), application_id))
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def activate_business(business_id: int, application_id: int, enforcer: str, approver: str, tx_hash: str) -> bool:
+    """Called only after the chain has proven the contract (agent.contract.verify_business_creation). One transaction:
+    the business gets its contract and goes active, the application is registered. False if it was not waiting for this."""
+    async with aiosqlite.connect(config.db_path) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        cur = await db.execute(
+            "UPDATE businesses SET enforcer_address = ?, approver_address = ?, created_tx_hash = ?, status = 'active' "
+            "WHERE id = ? AND status = 'pending' AND enforcer_address = ''", (enforcer, approver, tx_hash, business_id))
+        if cur.rowcount == 0:
+            await db.rollback()
+            return False
+        await db.execute("UPDATE business_applications SET status = 'registered' WHERE id = ? AND status = 'accepted'", (application_id,))
+        await db.commit()
+        return True
+
+
+async def set_business_external(business_id: int, external: bool) -> bool:
+    """Operator only. The home business can never be marked external (it is the operator's own)."""
+    if business_id == HOME_BUSINESS_ID:
+        return False
+    async with aiosqlite.connect(config.db_path) as db:
+        cur = await db.execute("UPDATE businesses SET external = ? WHERE id = ? AND status = 'active'", (1 if external else 0, business_id))
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def list_public_businesses() -> list:
+    """Active businesses only. Everything here is already public on-chain, which is the point (judges check it on the explorer)."""
+    return await _all(
+        "SELECT id, name, slug, enforcer_address AS contract, agent_address, approver_address AS approver, contract_version, external, "
+        "created_tx_hash, created_at FROM businesses WHERE status = 'active' ORDER BY id")
+
+
+async def business_counts() -> dict:
+    row = await _one("SELECT COUNT(*) AS total, COALESCE(SUM(external), 0) AS external FROM businesses WHERE status = 'active'", ())
+    return {"total": int(row["total"]), "external": int(row["external"])}
