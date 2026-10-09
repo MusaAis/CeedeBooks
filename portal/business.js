@@ -78,7 +78,8 @@
     var points = h("ul", { class: "points" }, [
       h("li", null, ["You sign messages and one transaction, from your own wallet."]),
       h("li", null, ["Your funds are in your contract. We cannot withdraw them."]),
-      h("li", null, ["Anyone can check a decision against the blockchain."])]);
+      h("li", null, ["Anyone can check a decision against the blockchain."]),
+      h("li", null, ["Shadow mode: give it a real bill and the agent decides on it. A testnet payment mirrors the bill only after you approve, so no real money moves. Shadow records are labelled shadow, and the real amount and currency are shown publicly."])]);
     var receipt = h("div", { class: "receipt" }, [
       h("div", { class: "rc-head" }, [h("h2", null, [title]), h("span", { class: "rc-run" }, [step])]),
       h("div", { class: "rc-body" }, kids)]);

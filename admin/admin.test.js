@@ -43,10 +43,13 @@ global.CeedeWallet = W;
 global.fetch = async (url, opt = {}) => {
   const full = url.replace(W.CONFIG.api, ""), path = full.split("?")[0], method = opt.method || "GET", auth = (opt.headers || {}).Authorization;
   const ok = (o) => ({ ok: true, status: 200, json: async () => o });
+  if (path === "/businesses/ceedebooks/traction") return ok({ live: { paid: 2, held: 1, escalated: 0, volume_usdc: 1.5 },
+    shadow: { paid: 3, held: 1, escalated: 1, awaiting_owner: 2, rejected: 0, mirrored_usdc: 1.5, real_totals: { NGN: "4500.50", KES: "99" }, agreement: { agree: 3, disagree: 1, n: 4, rate: 0.75 } },
+    latest_paid: [{ invoice: "SH-1", mode: "shadow", tx_url: "https://explorer.testnet.arc.io/tx/0xabc" }, { invoice: "LV-1", mode: "live", tx_url: null }] });
   if (path === "/admin/auth/state") { stateUrls.push(full); return ok(state); }
   if (path === "/admin/auth/challenge") { challengeBodies.push(JSON.parse(opt.body)); return ok({ nonce: "n".repeat(32), message: "sign me" }); }
   if (path === "/admin/auth/verify") { assert.strictEqual(JSON.parse(opt.body).signature.length, 132); return ok({ token: "tok", address: ADMIN }); }
-  if (path.startsWith("/admin/") || path.startsWith("/operator/") || ["/vendors", "/receipts"].includes(path)) {
+  if (path.startsWith("/admin/") || path.startsWith("/operator/") || ["/vendors", "/receipts", "/invoices"].includes(path)) {
     if (auth !== "Bearer tok" || expireSession) return { ok: false, status: 401, json: async () => ({ detail: "no" }) };
     if (path === "/admin/onboarding") return ok({ steps: [{ key: "pool_funded", label: "Fund your pool", done: false }, { key: "agent_gas", label: "Agent wallet gas", done: null }, { key: "vendor", label: "Add a vendor", done: true }], custody: "We run your agent's wallet." });
     if (path === "/operator/business-applications" && method === "GET") {
@@ -56,8 +59,16 @@ global.fetch = async (url, opt = {}) => {
     }
     if (path === "/operator/business-applications/7/accept" && method === "POST") { posts.push({ business_accepted: 7 }); return ok({ business: { agent_address: "0x" + "a1".repeat(20) } }); }
     if (path === "/operator/businesses/2/external" && method === "POST") { posts.push({ external: JSON.parse(opt.body).external }); return ok({ id: 2 }); }
-    if (path === "/admin/overview") return ok({ operator: operator, chain: { chain_ok: true, approver: ADMIN, paused: false, balance_usdc: 108.79, daily_limit_usdc: 100, per_tx_limit_usdc: 20, categories: [{ id: 1, name: "Infrastructure", daily_limit_usdc: 20, remaining_usdc: 20 }] }, invoices: { escalated: 3 }, vendors: 1, purchase_orders: 0 });
+    if (path === "/admin/overview") return ok({ operator: operator, business: { name: "CeedeBooks", slug: "ceedebooks" }, chain: { chain_ok: true, approver: ADMIN, paused: false, balance_usdc: 108.79, daily_limit_usdc: 100, per_tx_limit_usdc: 20, categories: [{ id: 1, name: "Infrastructure", daily_limit_usdc: 20, remaining_usdc: 20 }] }, invoices: { escalated: 3 }, vendors: 1, purchase_orders: 0 });
     if (path === "/admin/vendors") return ok({ vendors: [{ id: 1, name: "Ops", wallet_address: "0x" + "d7".repeat(20), approved_onchain: false }] });
+    if (path === "/admin/invoices") return ok({ invoices: [
+      { id: 11, invoice_number: "SH-1", vendor_name: "Lagos Hosting", amount_usdc: 0.5, status: "awaiting_owner", mode: "shadow", real_amount: "1200.50", real_currency: "NGN", reasoning_hash: "a1".repeat(32), verdict: null },
+      { id: 12, invoice_number: "SH-2", vendor_name: "Lagos Hosting", amount_usdc: 0.5, status: "held", mode: "shadow", real_amount: "99", real_currency: "KES", reasoning_hash: "b2".repeat(32), verdict: null },
+      { id: 13, invoice_number: "LV-1", vendor_name: "Ops", amount_usdc: 2, status: "paid", mode: "live", real_amount: null, real_currency: null, reasoning_hash: "c3".repeat(32), verdict: null }] });
+    if (path === "/admin/purchase-orders") return ok({ purchase_orders: [{ id: 5, po_number: "PO-5", vendor_id: 1, vendor_name: "Lagos Hosting", amount_usdc: 0.5, category: 1, received: 1 }] });
+    if (path === "/invoices" && method === "POST") { posts.push({ invoice: JSON.parse(opt.body) }); return ok({ invoice_id: 20, decision: "await_owner" }); }
+    if (/^\/admin\/invoices\/\d+\/shadow-(approve|reject)$/.test(path) && method === "POST") { posts.push({ shadow: path }); return ok({ ok: true }); }
+    if (/^\/admin\/decisions\/[0-9a-f]{64}\/verdict$/.test(path) && method === "POST") { posts.push({ verdict: path, body: JSON.parse(opt.body) }); return ok({ ok: true }); }
     if (path === "/admin/applications" && method === "GET") return ok({ applications: [{ id: 4, business_name: "Acme Data", wallet: "0x" + "ee".repeat(20), contact: "acme@example.com", status: "pending", created_at: 1 }] });
     if (path === "/admin/applications/4/accept" && method === "POST") { posts.push({ accepted: 4 }); return ok({ ok: true, vendor_id: 3 }); }
     if (path === "/admin/actions" && method === "POST") { posts.push(JSON.parse(opt.body)); return ok({ ok: true }); }
@@ -75,6 +86,12 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
   assert.ok(/Admin wallet connected/.test(root.textContent) && findBtn(root, "Sign in"));
   await findBtn(root, "Sign in").listeners.click(); await tick();
   assert.ok(/Pool balance/.test(root.textContent) && /108.79 USDC/.test(root.textContent), "overview renders after sign-in");
+  // the copy block: plain text for the Canteen CLI, never a blank line (an empty line ends its input)
+  await findBtn(root, "Copy traction update").listeners.click(); await tick();
+  let copied = ""; walk(root, (x) => { if (x.tag === "textarea" && x.value) copied = x.value; });
+  assert.ok(copied.split("\n").every((l) => l.trim() !== ""), "no blank line in the traction text");
+  assert.ok(/Shadow \(real bills/.test(copied) && /4500.50 NGN, 99 KES/.test(copied) && /75% \(3 agree, 1 disagree, 4 verdicts\)/.test(copied) && /Paid SH-1 \(shadow\): https:\/\/explorer/.test(copied), copied);
+  assert.ok(/Paid LV-1: no transaction link yet/.test(copied));
   assert.ok(calls.some((c) => c.method === "personal_sign" && c.params[0] === W.utf8Hex("sign me") && c.params[1] === ADMIN));
   assert.ok(stateUrls[0] === (BIZ ? "/admin/auth/state?business=" + BIZ : "/admin/auth/state"), "state is read for the chosen business: " + stateUrls[0]);
   assert.deepStrictEqual(challengeBodies[0], BIZ ? { address: ADMIN, business: BIZ } : { address: ADMIN }, "the challenge names the business only when one was chosen");
@@ -94,6 +111,27 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
   assert.strictEqual(tx.data, W.CALLS.setVendor("0x" + "d7".repeat(20), true));
   assert.strictEqual(tx.from, ADMIN);
   assert.deepStrictEqual(posts[0], { action: "set_vendor", tx_hash: "0x" + "cd".repeat(32) });
+
+  // invoices tab: shadow mode. Approve and reject are server calls with a confirmation, never a wallet transaction.
+  let invTab = []; walk(root, (x) => { if (x.attrs && x.attrs["data-tab"] === "invoices") invTab.push(x); });
+  await invTab[0].listeners.click(); await tick();
+  assert.ok(/1200.50 NGN/.test(root.textContent) && /waiting for you/.test(root.textContent) && /shadow/.test(root.textContent), "a shadow row shows the real bill and that it waits for the owner");
+  const txBeforeShadow = calls.filter((c) => c.method === "eth_sendTransaction").length;
+  await findBtn(root, "Approve and pay").listeners.click(); await tick(60);
+  await findBtn(root, "Reject").listeners.click(); await tick(60);
+  await findBtn(root, "I would do the same").listeners.click(); await tick(60);
+  await findBtn(root, "I would not").listeners.click(); await tick(60);
+  assert.deepStrictEqual(posts.filter((p) => p.shadow).map((p) => p.shadow), ["/admin/invoices/11/shadow-approve", "/admin/invoices/11/shadow-reject"]);
+  assert.deepStrictEqual(posts.filter((p) => p.verdict).map((p) => p.body), [{ verdict: "agree" }, { verdict: "disagree" }]);
+  assert.ok(posts.filter((p) => p.verdict).every((p) => p.verdict === "/admin/decisions/" + "b2".repeat(32) + "/verdict"), "the verdict goes to the held decision's hash");
+  assert.strictEqual(calls.filter((c) => c.method === "eth_sendTransaction").length, txBeforeShadow, "shadow approval needs no wallet transaction");
+  let inputs = {}; walk(root, (x) => { if (x.tag === "input" && x.attrs.placeholder) inputs[x.attrs.placeholder] = x; });
+  walk(root, (x) => { if (x.tag === "select" && /PO-5/.test(x.textContent)) x.value = "5"; });   // a real select starts on its first option
+  inputs["INV-001"].value = "SH-9"; inputs["1200.50"].value = "5000"; inputs["NGN"].value = "ngn"; inputs["64-character SHA-256, or pick the file"].value = "ab".repeat(32);
+  await findBtn(root, "Submit shadow invoice").listeners.click(); await tick(60);
+  assert.deepStrictEqual(posts.find((p) => p.invoice).invoice, { invoice_number: "SH-9", vendor_id: 1, amount_usdc: "0.5", category: 1, doc_hash: "ab".repeat(32),
+    po_number: "PO-5", mode: "shadow", real_amount: "5000", real_currency: "NGN" }, "the form sends the PO's mirrored amount and the real bill, currency capitalised");
+  posts.length = 0;
 
   // applications tab: review, accept (no wallet transaction: it only creates the vendor record)
   let apptab = []; walk(root, (x) => { if (x.attrs && x.attrs["data-tab"] === "applications") apptab.push(x); });

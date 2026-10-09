@@ -124,15 +124,20 @@ async def recent(limit: int = 20, business_id: Optional[int] = None) -> list:
 
 
 async def stats(business_id: Optional[int] = None) -> dict:
-    """Counts of agent decisions. Manual entries (model_used = 'manual') are reported separately, never as agent decisions.
-    business_id=None is the public aggregate; a number scopes it to one business."""
-    where, args = ("WHERE business_id = ? ", (business_id,)) if business_id is not None else ("", ())
+    """Counts of live agent decisions. Manual entries (model_used = 'manual') are reported separately, never as agent decisions.
+    Shadow decisions (a real bill mirrored as a testnet payment, v1.2.8.3) are left out: they are reported apart by
+    models.shadow_stats and never mixed into these numbers. business_id=None is the public aggregate; a number scopes it to one business."""
+    scope, args = ("AND business_id = ? ", (business_id,)) if business_id is not None else ("", ())
+    shadow_hashes = "AND reasoning_hash NOT IN (SELECT reasoning_hash FROM invoices WHERE mode = 'shadow' AND reasoning_hash IS NOT NULL) "
+    query = ("SELECT action, model_used = 'manual', COUNT(*), COALESCE(SUM(amount_usdc), 0) FROM audit_log WHERE action IN "
+             "('INVOICE_PAID', 'INVOICE_HELD', 'INVOICE_ESCALATED') {extra}GROUP BY action, model_used = 'manual'")
     async with aiosqlite.connect(config.db_path) as db:
-        async with db.execute(
-            "SELECT action, model_used = 'manual', COUNT(*), COALESCE(SUM(amount_usdc), 0) "
-            f"FROM audit_log {where}GROUP BY action, model_used = 'manual'", args
-        ) as cursor:
-            rows = await cursor.fetchall()
+        try:
+            async with db.execute(query.format(extra=scope + shadow_hashes), args) as cursor:
+                rows = await cursor.fetchall()
+        except aiosqlite.OperationalError:  # no invoices table yet (audit log used on its own): nothing can be shadow
+            async with db.execute(query.format(extra=scope), args) as cursor:
+                rows = await cursor.fetchall()
     out = {"paid": 0, "held": 0, "escalated": 0, "paid_usdc": 0.0, "manual_paid": 0, "manual_paid_usdc": 0.0}
     for action, manual, count, usdc in rows:
         if manual:

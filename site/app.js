@@ -225,15 +225,47 @@
         row.appendChild(t);
         var btn = el("button", "mini", scope === r.slug ? "Showing" : "Show its decisions");
         btn.type = "button";
-        btn.addEventListener("click", function () { scope = scope === r.slug ? null : r.slug; loadStats(); loadFeed(); loadBusinesses(); });
+        btn.addEventListener("click", function () { scope = scope === r.slug ? null : r.slug; loadStats(); loadFeed(); loadBusinesses(); loadTraction(); });
         row.appendChild(btn);
         box.appendChild(row);
       });
       var n = data.counts || {};
-      $("biz-note").textContent = (n.external > 0 ? n.external + " of " + n.total + " businesses are confirmed outside parties. " : "Only the builder's own business so far. ")
+      $("biz-note").textContent = (n.external > 0 ? n.external + " of " + n.total + " businesses are confirmed outside parties. " : (n.total > 1 ? "None of these is confirmed as an outside party yet. " : "Only the builder's own business so far. "))
         + (scope ? "Showing the decisions of one business. Press its button again to see all." : "");
     } catch (e) {
       box.textContent = "The business list could not be loaded just now.";
+    }
+  }
+
+  // One business's numbers: live and shadow apart, the agreement rate with its n, and links to check the latest payments.
+  async function loadTraction() {
+    var box = $("biz-traction");
+    box.textContent = "";
+    if (!scope) return;
+    try {
+      var v = V.tractionView(await getJson("/businesses/" + scope + "/traction"), C.explorer);
+      var card = el("div", "item");
+      var head = el("div", "t");
+      head.appendChild(el("strong", null, v.kind));
+      head.appendChild(el("span", null, "Live: " + v.live));
+      head.appendChild(el("span", null, "Shadow (real bills, mirrored as testnet payments after the owner approves): " + v.shadow));
+      head.appendChild(el("span", null, "Owner agreement with the agent: " + v.agreement));
+      v.paid.forEach(function (p) {
+        var line = el("span", null, "Paid " + p.label + " ");
+        if (p.txUrl) line.appendChild(anchor("transaction", p.txUrl));
+        if (p.hash) {
+          var b = el("button", "mini", "Check it");
+          b.type = "button";
+          b.addEventListener("click", function () { $("hash").value = p.hash; runVerify(); $("verify").scrollIntoView({ behavior: reduce ? "auto" : "smooth" }); });
+          line.appendChild(b);
+        }
+        head.appendChild(line);
+      });
+      card.appendChild(el("span", "chip shadow", "shadow + live"));
+      card.appendChild(head);
+      box.appendChild(card);
+    } catch (e) {
+      box.textContent = "This business's numbers could not be loaded just now.";
     }
   }
 

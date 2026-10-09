@@ -1,5 +1,6 @@
 """SQLite schema and queries for vendors, purchase orders, receipts, and invoices."""
 import time
+from decimal import Decimal
 from typing import Optional
 
 import aiosqlite
@@ -80,7 +81,22 @@ CREATE TABLE IF NOT EXISTS invoices (
     onchain_tx_id TEXT,
     created_at REAL NOT NULL,
     origin TEXT NOT NULL DEFAULT 'agent',
+    mode TEXT NOT NULL DEFAULT 'live',
+    real_amount TEXT,
+    real_currency TEXT,
     UNIQUE (business_id, invoice_number)
+);
+
+CREATE TABLE IF NOT EXISTS decision_verdicts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    invoice_id INTEGER NOT NULL,
+    reasoning_hash TEXT NOT NULL,
+    verdict TEXT NOT NULL CHECK (verdict IN ('agree', 'disagree')),
+    admin_address TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    UNIQUE (business_id, reasoning_hash),
+    UNIQUE (business_id, invoice_id)
 );
 
 CREATE TABLE IF NOT EXISTS vendor_applications (
@@ -182,6 +198,9 @@ async def _migrate(db) -> None:
         await db.execute("DROP TABLE invoices")
         await db.execute("ALTER TABLE invoices_new RENAME TO invoices")
     await db.execute("DROP INDEX IF EXISTS ux_application_pending_wallet")  # was unique per wallet, now per business
+    for column, ddl in (("mode", "TEXT NOT NULL DEFAULT 'live'"), ("real_amount", "TEXT"), ("real_currency", "TEXT")):  # v1.2.8.3
+        if column not in await _columns(db, "invoices"):
+            await db.execute(f"ALTER TABLE invoices ADD COLUMN {column} {ddl}")
 
 
 async def _seed_home_business(db) -> None:
@@ -284,13 +303,16 @@ async def _insert(sql: str, args: tuple) -> int:
 
 async def save_invoice(
     business_id: int, invoice_number: str, vendor_id: int, po_id: Optional[int], amount_usdc: float, category: int,
-    doc_hash: str, origin: str = "agent",
+    doc_hash: str, origin: str = "agent", mode: str = "live", real_amount: Optional[str] = None, real_currency: Optional[str] = None,
 ) -> int:
-    """Raises sqlite3.IntegrityError if this business already has that invoice number."""
+    """Raises sqlite3.IntegrityError if this business already has that invoice number. A shadow invoice must carry the real
+    amount and currency; a live one must not."""
+    if (mode == "shadow") != (real_amount is not None and real_currency is not None) or mode not in MODES:
+        raise ValueError("shadow invoices need a real amount and currency; live invoices must not have them")
     return await _insert(
-        "INSERT INTO invoices (business_id, invoice_number, vendor_id, po_id, amount_usdc, category, doc_hash, origin, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (business_id, invoice_number, vendor_id, po_id, amount_usdc, category, doc_hash, origin, time.time()),
+        "INSERT INTO invoices (business_id, invoice_number, vendor_id, po_id, amount_usdc, category, doc_hash, origin, mode, real_amount, "
+        "real_currency, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (business_id, invoice_number, vendor_id, po_id, amount_usdc, category, doc_hash, origin, mode, real_amount, real_currency, time.time()),
     )
 
 
@@ -396,8 +418,9 @@ async def list_purchase_orders(business_id: int, limit: int = 100) -> list:
 async def list_invoices(business_id: int, limit: int = 50) -> list:
     return await _all(
         """SELECT i.id, i.invoice_number, i.vendor_id, v.name AS vendor_name, i.amount_usdc, i.category,
-                  i.status, i.reasoning_hash, i.created_at
+                  i.status, i.reasoning_hash, i.created_at, i.mode, i.real_amount, i.real_currency, d.verdict
            FROM invoices i JOIN vendors v ON v.id = i.vendor_id AND v.business_id = i.business_id
+           LEFT JOIN decision_verdicts d ON d.invoice_id = i.id AND d.business_id = i.business_id
            WHERE i.business_id = ? ORDER BY i.id DESC LIMIT ?""",
         (business_id, limit),
     )
@@ -411,6 +434,7 @@ async def invoice_counts(business_id: int) -> dict:
 # ---- vendor portal (v1.2.7)
 
 ORIGINS = ("agent", "manual", "demo")
+MODES = ("live", "shadow")
 
 
 async def get_vendor_by_wallet(business_id: int, wallet: str) -> Optional[aiosqlite.Row]:
@@ -516,12 +540,13 @@ async def log_rejected_submission(business_id: int, reason: str, origin: str = "
 
 async def submission_stats(business_id: Optional[int] = None) -> dict:
     """Invoices processed, USDC paid and duplicates caught, split by origin. All three origins are always present.
+    Live invoices only: shadow invoices (a real bill mirrored as a testnet payment) are reported apart, see shadow_stats.
     business_id=None is the public aggregate over every business (counts only); a number scopes it to one business."""
     out = {o: {"invoices_processed": 0, "payment_volume_usdc": 0.0, "duplicates_caught": 0} for o in ORIGINS}
     where, args = ("AND business_id = ?", (business_id,)) if business_id is not None else ("", ())
     inv = await _all(
         "SELECT origin, COUNT(*) AS n, COALESCE(SUM(CASE WHEN status = 'paid' THEN amount_usdc ELSE 0 END), 0) AS volume "
-        f"FROM invoices WHERE status IN ('paid', 'held', 'escalated', 'rejected') {where} GROUP BY origin", args,
+        f"FROM invoices WHERE status IN ('paid', 'held', 'escalated', 'rejected') AND mode = 'live' {where} GROUP BY origin", args,
     )
     for r in inv:
         if r["origin"] in out:
@@ -663,3 +688,84 @@ async def list_public_businesses() -> list:
 async def business_counts() -> dict:
     row = await _one("SELECT COUNT(*) AS total, COALESCE(SUM(external), 0) AS external FROM businesses WHERE status = 'active'", ())
     return {"total": int(row["total"]), "external": int(row["external"])}
+
+
+# ---- shadow mode (v1.2.8.3): a real bill is read, decided and, once the owner approves, mirrored as a testnet payment
+
+async def claim_shadow_approval(business_id: int, invoice_id: int) -> bool:
+    """awaiting_owner -> approving, atomically, so two clicks can never start two payments."""
+    async with aiosqlite.connect(config.db_path) as db:
+        cur = await db.execute(
+            "UPDATE invoices SET status = 'approving' WHERE id = ? AND business_id = ? AND mode = 'shadow' AND status = 'awaiting_owner'",
+            (invoice_id, business_id),
+        )
+        await db.commit()
+        return cur.rowcount == 1
+
+
+async def release_shadow_approval(business_id: int, invoice_id: int) -> None:
+    """approving -> awaiting_owner after a failed payment attempt, so the owner can try again."""
+    async with aiosqlite.connect(config.db_path) as db:
+        await db.execute(
+            "UPDATE invoices SET status = 'awaiting_owner' WHERE id = ? AND business_id = ? AND status = 'approving'", (invoice_id, business_id)
+        )
+        await db.commit()
+
+
+async def save_verdict(business_id: int, invoice_id: int, reasoning_hash: str, verdict: str, admin_address: str) -> int:
+    """One verdict per decision, final once recorded. Raises sqlite3.IntegrityError on a second one."""
+    return await _insert(
+        "INSERT INTO decision_verdicts (business_id, invoice_id, reasoning_hash, verdict, admin_address, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        (business_id, invoice_id, reasoning_hash, verdict, admin_address.lower(), time.time()),
+    )
+
+
+async def get_invoice_by_decision(business_id: int, reasoning_hash: str) -> Optional[aiosqlite.Row]:
+    return await _one("SELECT * FROM invoices WHERE reasoning_hash = ? AND business_id = ?", (reasoning_hash, business_id))
+
+
+async def shadow_stats(business_id: Optional[int] = None) -> dict:
+    """Shadow invoices only, never summed with live ones. Agreement counts only verdicts the owner actually recorded."""
+    where, args = ("AND business_id = ?", (business_id,)) if business_id is not None else ("", ())
+    rows = await _all(f"SELECT status, COUNT(*) AS n, COALESCE(SUM(amount_usdc), 0) AS usdc FROM invoices WHERE mode = 'shadow' {where} GROUP BY status", args)
+    by = {r["status"]: r for r in rows}
+    paid = by.get("paid", {"n": 0, "usdc": 0})
+    real = {}
+    for r in await _all(
+        f"SELECT real_amount, real_currency FROM invoices WHERE mode = 'shadow' AND status = 'paid' {where}", args
+    ):
+        real[r["real_currency"]] = real.get(r["real_currency"], Decimal(0)) + Decimal(r["real_amount"])
+    votes = {r["verdict"]: r["n"] for r in await _all(
+        f"SELECT verdict, COUNT(*) AS n FROM decision_verdicts WHERE 1 = 1 {where} GROUP BY verdict", args)}
+    agree, disagree = votes.get("agree", 0), votes.get("disagree", 0)
+    n = agree + disagree
+    return {
+        "paid": paid["n"], "held": by.get("held", {"n": 0})["n"], "escalated": by.get("escalated", {"n": 0})["n"],
+        "awaiting_owner": by.get("awaiting_owner", {"n": 0})["n"] + by.get("approving", {"n": 0})["n"],
+        "rejected": by.get("rejected", {"n": 0})["n"],
+        "mirrored_usdc": round(float(paid["usdc"]), 6),
+        "real_totals": {cur: format(total, "f") for cur, total in sorted(real.items())},
+        "agreement": {"agree": agree, "disagree": disagree, "n": n, "rate": round(agree / n, 4) if n else None},
+    }
+
+
+async def live_counts(business_id: int) -> dict:
+    """Live (non-shadow) invoice outcomes for one business, from the invoices table."""
+    rows = await _all(
+        "SELECT status, COUNT(*) AS n, COALESCE(SUM(amount_usdc), 0) AS usdc FROM invoices WHERE mode = 'live' AND business_id = ? GROUP BY status",
+        (business_id,),
+    )
+    by = {r["status"]: r for r in rows}
+    return {"paid": by.get("paid", {"n": 0})["n"], "held": by.get("held", {"n": 0})["n"], "escalated": by.get("escalated", {"n": 0})["n"],
+            "volume_usdc": round(float(by.get("paid", {"usdc": 0})["usdc"]), 6)}
+
+
+async def latest_paid(business_id: int, limit: int = 10) -> list:
+    """The newest paid decisions with what a judge needs to check them. No contacts, no private fields."""
+    return await _all(
+        """SELECT i.invoice_number, i.amount_usdc, i.mode, i.real_amount, i.real_currency, i.reasoning_hash,
+                  a.chain_tx_hash, a.timestamp
+           FROM invoices i LEFT JOIN audit_log a ON a.reasoning_hash = i.reasoning_hash
+           WHERE i.business_id = ? AND i.status = 'paid' ORDER BY i.id DESC LIMIT ?""",
+        (business_id, limit),
+    )

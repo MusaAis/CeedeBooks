@@ -94,6 +94,9 @@ class InvoiceIn(_Strict):
     doc_hash: Annotated[str, Field(min_length=1, max_length=128)]
     po_number: Optional[Ref] = None
     origin: Optional[Literal["agent", "demo"]] = None  # buyer only: label a demo run so it never counts as real traffic
+    mode: Literal["live", "shadow"] = "live"  # buyer only. shadow: a real bill mirrored as a testnet payment after the owner approves
+    real_amount: Optional[Annotated[Decimal, Field(gt=0, max_digits=16, decimal_places=2)]] = None  # shadow only: the real bill
+    real_currency: Optional[Annotated[str, Field(pattern=r"^[A-Z]{3}$")]] = None  # shadow only: ISO-style code, e.g. NGN
 
     @field_validator("vendor_wallet")
     @classmethod
@@ -102,6 +105,11 @@ class InvoiceIn(_Strict):
 
 
 # ---- middleware
+
+def _plain_decimal(value: Optional[Decimal]) -> Optional[str]:
+    """Exact decimal text with no exponent, so the same bill always reads the same in the hashed record."""
+    return None if value is None else format(value, "f")
+
 
 class _BodyTooLarge(Exception):
     pass
@@ -232,6 +240,14 @@ async def _checked_submission(body: InvoiceIn, who: auth.Principal):
         raise HTTPException(403, "A vendor key can only submit invoices for its own vendor_id")
     if body.origin is not None and who.role != "buyer":
         raise HTTPException(403, "Only the buyer can label an invoice's origin")
+    if body.mode == "shadow" and who.role != "buyer":
+        raise HTTPException(403, "Only the business owner can submit a shadow invoice")
+    if body.mode == "shadow" and (body.real_amount is None or body.real_currency is None):
+        raise HTTPException(422, "A shadow invoice needs the real amount and currency of the bill")
+    if body.mode == "live" and (body.real_amount is not None or body.real_currency is not None):
+        raise HTTPException(422, "The real amount and currency belong to shadow invoices only")
+    if body.mode == "shadow" and body.origin is not None:
+        raise HTTPException(422, "A shadow invoice cannot also carry an origin label")
 
     vendor = await models.get_vendor(who.business_id, body.vendor_id)
     if vendor is None:
@@ -264,6 +280,8 @@ async def preflight_invoice(body: InvoiceIn, who: auth.Principal = Depends(auth.
     except Exception:
         log.exception("Preflight failed for %s", body.invoice_number)
         raise HTTPException(503, "Could not read the chain right now; try again shortly")
+    if body.mode == "shadow" and result["outcome"] == "would_pay":
+        result = {**result, "outcome": "would_await_owner", "reasons": ["Shadow mode: the agent would pay; the owner approves first"]}
     return {**result, "dry_run": True}
 
 
@@ -274,7 +292,7 @@ async def submit_invoice(body: InvoiceIn, who: auth.Principal = Depends(auth.req
     try:
         invoice_id = await models.save_invoice(
             who.business_id, body.invoice_number, body.vendor_id, po["id"] if po else None, amount, body.category, body.doc_hash,
-            body.origin or "agent",
+            body.origin or "agent", body.mode, _plain_decimal(body.real_amount), body.real_currency,
         )
     except sqlite3.IntegrityError:
         await models.log_rejected_submission(who.business_id, "duplicate_invoice", body.origin or "agent")
@@ -289,6 +307,9 @@ async def submit_invoice(body: InvoiceIn, who: auth.Principal = Depends(auth.req
         category=body.category,
         doc_hash=body.doc_hash,
         po_number=body.po_number,
+        mode=body.mode,
+        real_amount=_plain_decimal(body.real_amount),
+        real_currency=body.real_currency,
     )
     try:
         runway = await treasury.runway_days(amount, business)  # computed server-side from the chain; not a request field
@@ -365,7 +386,7 @@ async def get_stats(business: Optional[Slug] = None):
     Without `business` this is the aggregate over every business (counts only); with it, that one business."""
     scope = await _public_scope(business)
     return {**await decision_log.stats(scope), "submissions": await models.submission_stats(scope),
-            "businesses": await models.business_counts()}
+            "shadow": await models.shadow_stats(scope), "businesses": await models.business_counts()}
 
 
 @app.get("/.well-known/agent.json")
@@ -523,7 +544,8 @@ async def admin_overview(who: auth.Principal = Depends(auth.require_admin)):
         models.list_purchase_orders(who.business_id), models.count_pending_applications(who.business_id),
     )
     return {"chain": snap, "invoices": counts, "vendors": len(vendors), "purchase_orders": len(pos),
-            "pending_applications": pending, "operator": who.business_id == models.HOME_BUSINESS_ID}
+            "pending_applications": pending, "operator": who.business_id == models.HOME_BUSINESS_ID,
+            "business": {"name": business["name"], "slug": business["slug"]}}
 
 
 @app.get("/admin/vendors")
@@ -573,6 +595,78 @@ async def admin_escalation(invoice_id: int, who: auth.Principal = Depends(auth.r
     if key is None:
         raise HTTPException(404, "No escalation event found in that transaction")
     return {"invoice_key": key}
+
+
+class VerdictIn(_Strict):
+    verdict: Literal["agree", "disagree"]
+
+
+async def _shadow_invoice(who: auth.Principal, invoice_id: int) -> sqlite3.Row:
+    invoice = await models.get_invoice(who.business_id, invoice_id)
+    if invoice is None or invoice["mode"] != "shadow":
+        raise HTTPException(404, "No shadow invoice with that id")
+    return invoice
+
+
+@app.post("/admin/invoices/{invoice_id}/shadow-approve")
+async def admin_shadow_approve(invoice_id: int, who: auth.Principal = Depends(auth.require_admin)):
+    """The owner approves a parked shadow decision: it is paid now as a testnet USDC payment through the normal
+    commit-then-pay, so the contract still enforces vendor, limits and pause. The verdict (agree) is recorded only after
+    the payment is confirmed."""
+    business = await _writable(who)
+    invoice = await _shadow_invoice(who, invoice_id)
+    pending_hash = invoice["reasoning_hash"]
+    if invoice["status"] != "awaiting_owner" or not pending_hash:
+        raise HTTPException(409, "This invoice is not waiting for your approval")
+    vendor = await models.get_vendor(who.business_id, invoice["vendor_id"])
+    if vendor is None or not await models.claim_shadow_approval(who.business_id, invoice_id):
+        raise HTTPException(409, "This invoice is not waiting for your approval")
+    parked = payables.Invoice(
+        business_id=who.business_id, id=invoice_id, invoice_number=invoice["invoice_number"], vendor_wallet=vendor["wallet_address"],
+        amount_usdc=float(invoice["amount_usdc"]), category=invoice["category"], doc_hash=invoice["doc_hash"], po_number=None,
+        mode="shadow", real_amount=invoice["real_amount"], real_currency=invoice["real_currency"],
+    )
+    try:
+        paid_hash = await payables.pay_approved_shadow(parked, pending_hash, business)
+    except Exception:
+        log.exception("Shadow payment for invoice %s failed", invoice_id)
+        await models.release_shadow_approval(who.business_id, invoice_id)
+        raise HTTPException(502, "The payment was not completed. Nothing is recorded as paid; you can approve again")
+    await models.save_verdict(who.business_id, invoice_id, pending_hash, "agree", who.admin_address)
+    await _admin_log(who, "shadow_approve", f"invoice {invoice_id}")
+    return {"ok": True, "status": "paid", "reasoning_hash": paid_hash}
+
+
+@app.post("/admin/invoices/{invoice_id}/shadow-reject")
+async def admin_shadow_reject(invoice_id: int, who: auth.Principal = Depends(auth.require_admin)):
+    """The owner would not have paid this: nothing is paid, and the disagreement is recorded for good."""
+    await _writable(who)
+    invoice = await _shadow_invoice(who, invoice_id)
+    pending_hash = invoice["reasoning_hash"]
+    if invoice["status"] != "awaiting_owner" or not pending_hash or not await models.claim_shadow_approval(who.business_id, invoice_id):
+        raise HTTPException(409, "This invoice is not waiting for your approval")
+    await models.save_verdict(who.business_id, invoice_id, pending_hash, "disagree", who.admin_address)
+    await models.update_invoice_status(who.business_id, invoice_id, "rejected")
+    await _admin_log(who, "shadow_reject", f"invoice {invoice_id}")
+    return {"ok": True, "status": "rejected"}
+
+
+@app.post("/admin/decisions/{reasoning_hash}/verdict")
+async def admin_decision_verdict(reasoning_hash: DecisionHash, body: VerdictIn, who: auth.Principal = Depends(auth.require_admin)):
+    """Would the owner have done the same? Only for a held or escalated shadow decision of the owner's own business;
+    a parked decision is judged by approving or rejecting it. One verdict per decision, final once recorded."""
+    await _writable(who)
+    invoice = await models.get_invoice_by_decision(who.business_id, reasoning_hash)
+    if invoice is None or invoice["mode"] != "shadow":
+        raise HTTPException(404, "No shadow decision with that hash in your business")
+    if invoice["status"] not in ("held", "escalated"):
+        raise HTTPException(409, "Only a held or escalated decision takes a verdict here; approve or reject a waiting one")
+    try:
+        await models.save_verdict(who.business_id, invoice["id"], reasoning_hash, body.verdict, who.admin_address)
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, "A verdict is already recorded for this decision and cannot be changed")
+    await _admin_log(who, "verdict_" + body.verdict, f"invoice {invoice['id']}")
+    return {"ok": True, "verdict": body.verdict}
 
 
 @app.post("/admin/actions")
@@ -914,6 +1008,31 @@ async def public_businesses():
 
 
 # ---- operator (the home business's wallet-signed admin)
+
+EXPLORER_URL = "https://explorer.testnet.arc.io"
+
+
+@app.get("/businesses/{slug}/traction")
+async def business_traction(slug: Slug):
+    """Public, no login. One business's outcomes with live and shadow kept apart, the agreement rate with how many
+    verdicts it rests on, and its latest paid decisions with links anyone can check. No contacts or private fields."""
+    business = await _business_by_slug(slug, active_only=True)
+    paid = await models.latest_paid(business["id"])
+    return {
+        "business": {"name": business["name"], "slug": business["slug"], "contract": business["enforcer_address"],
+                     "agent_wallet": business["agent_address"],
+                     "kind": "own" if business["id"] == models.HOME_BUSINESS_ID else ("outside" if business["external"] else "unconfirmed")},
+        "live": await models.live_counts(business["id"]),
+        "shadow": await models.shadow_stats(business["id"]),
+        "latest_paid": [
+            {"invoice": r["invoice_number"], "mode": r["mode"], "usdc": r["amount_usdc"],
+             "real_amount": r["real_amount"], "real_currency": r["real_currency"],
+             "reasoning_hash": r["reasoning_hash"], "tx_hash": r["chain_tx_hash"], "time": r["timestamp"],
+             "tx_url": f"{EXPLORER_URL}/tx/{r['chain_tx_hash']}" if r["chain_tx_hash"] else None}
+            for r in paid
+        ],
+    }
+
 
 @app.get("/operator/business-applications")
 async def operator_business_applications(_: auth.Principal = Depends(auth.require_operator)):

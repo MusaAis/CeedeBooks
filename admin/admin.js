@@ -25,6 +25,24 @@
     (kids || []).forEach(function (c) { if (c != null) n.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
     return n;
   }
+  // The plain text for `arc-canteen update-traction`. No blank lines: an empty line ends the CLI's input.
+  function tractionText(name, t) {
+    var live = t.live, sh = t.shadow, ag = sh.agreement;
+    var real = Object.keys(sh.real_totals).map(function (c) { return sh.real_totals[c] + " " + c; }).join(", ");
+    var lines = [
+      name + " traction update (Arc testnet)",
+      "Live: " + live.paid + " paid, " + live.held + " held, " + live.escalated + " escalated, " + live.volume_usdc + " USDC paid",
+      "Shadow (real bills, each mirrored as a testnet payment only after the owner approved): " + sh.paid + " paid, " + sh.mirrored_usdc + " USDC mirrored" +
+        (real ? ", real bills " + real : "") + ", " + sh.held + " held, " + sh.escalated + " escalated, " + sh.awaiting_owner + " waiting for the owner",
+      ag.n ? "Owner agreement with the agent: " + Math.round(ag.rate * 100) + "% (" + ag.agree + " agree, " + ag.disagree + " disagree, " + ag.n + " verdicts)" : "Owner agreement with the agent: no verdicts yet"
+    ];
+    t.latest_paid.slice(0, 3).forEach(function (p) { lines.push("Paid " + p.invoice + (p.mode === "shadow" ? " (shadow)" : "") + ": " + (p.tx_url || "no transaction link yet")); });
+    return lines.join("\n");
+  }
+  async function sha256Hex(bytes) {
+    var d = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+    return Array.prototype.map.call(d, function (b) { return (b < 16 ? "0" : "") + b.toString(16); }).join("");
+  }
   function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
   function when(ts) { return new Date(Number(ts) * 1000).toISOString().replace("T", " ").slice(0, 16) + " UTC"; }
   function usdc(n) { return Number(n).toLocaleString("en-US", { maximumFractionDigits: 6 }) + " USDC"; }
@@ -275,6 +293,17 @@
     });
     return h("div", { class: "panel" }, [h("h3", null, ["Finish setting up"]), h("ul", { class: "steps" }, items), h("p", { class: "note" }, [data.custody])]);
   }
+  function copyPanel(biz) {
+    var out = h("textarea", { readonly: "readonly", rows: "6", "aria-label": "Traction update text" });
+    return h("div", { class: "panel" }, [h("p", null, ["Traction update for the Canteen CLI, built from your public numbers."]),
+      h("button", { class: "btn ghost sm", onclick: guard(async function () {
+        var t = await api("/businesses/" + biz.slug + "/traction");
+        var text = tractionText(biz.name, t);
+        out.value = text;
+        try { await navigator.clipboard.writeText(text); say("Copied. Paste it into arc-canteen update-traction.", "ok"); }
+        catch (e) { say("Select the text below and copy it.", "ok"); }
+      }) }, ["Copy traction update"]), out]);
+  }
   function categories() { return (S.overview && S.overview.chain.categories) || []; }
 
   // ---------- views
@@ -291,6 +320,7 @@
           card("Vendors", o.vendors), card("Purchase orders", o.purchase_orders),
           card("Applications waiting", o.pending_applications || 0)]));
         wrap.appendChild(fundPanel());
+        wrap.appendChild(copyPanel(o.business));
         wrap.appendChild(h("h3", null, ["Spending categories"]));
         wrap.appendChild(table(["Category", "Daily limit", "Left today"], c.categories.map(function (x) { return [x.name, usdc(x.daily_limit_usdc), usdc(x.remaining_usdc)]; })));
         wrap.appendChild(h("p", { class: "note" }, ["Admin wallet: " + c.approver]));
@@ -412,10 +442,64 @@
     },
 
     invoices: async function () {
-      var data = await api("/admin/invoices");
+      var results = await Promise.all([api("/admin/invoices"), api("/admin/purchase-orders")]);
+      var data = results[0], pos = results[1].purchase_orders.filter(function (p) { return p.received; });
       var kinds = { paid: "ok", held: "warn", escalated: "warn", rejected: "bad", error: "bad" };
+      var labels = { awaiting_owner: "waiting for you", approving: "paying" };
+      var psel = h("select", null, pos.map(function (p) { return h("option", { value: String(p.id) }, [p.po_number + " · " + p.vendor_name + " · " + usdc(p.amount_usdc)]); }));
+      var num = h("input", { maxlength: "64", autocomplete: "off", placeholder: "INV-001" });
+      var real = h("input", { inputmode: "decimal", placeholder: "1200.50" }), cur = h("input", { maxlength: "3", autocomplete: "off", placeholder: "NGN" });
+      var docHash = h("input", { autocomplete: "off", spellcheck: "false", placeholder: "64-character SHA-256, or pick the file" });
+      var file = h("input", { type: "file" });
+      file.addEventListener("change", guard(async function () {
+        var f = file.files && file.files[0];
+        if (!f) return;
+        docHash.value = await sha256Hex(await f.arrayBuffer());
+        say("Hashed in your browser. The file itself is not uploaded.", "ok");
+      }));
+      var shadow = h("div", { class: "panel" }, [h("div", { class: "row" }, [
+        field("Purchase order (receipt confirmed)", psel), field("Invoice number", num), field("Real amount of the bill", real), field("Currency", cur),
+        field("Invoice file", file), field("Document hash", docHash),
+        h("button", { class: "btn sm", onclick: guard(async function () {
+          var po = pos.filter(function (p) { return String(p.id) === psel.value; })[0];
+          if (!po) throw new Error("Create a purchase order and confirm its receipt first.");
+          var hash = String(docHash.value || "").trim().toLowerCase().replace(/^0x/, "");
+          if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error("The document hash must be 64 hex characters (a SHA-256). Pick the file to hash it here.");
+          var code = String(cur.value || "").trim().toUpperCase();
+          if (!/^[A-Z]{3}$/.test(code)) throw new Error("The currency is three letters, for example NGN.");
+          var r = await api("/invoices", { method: "POST", body: { invoice_number: num.value.trim(), vendor_id: po.vendor_id, amount_usdc: String(po.amount_usdc),
+            category: po.category, doc_hash: hash, po_number: po.po_number, mode: "shadow", real_amount: real.value.trim(), real_currency: code } });
+          say("Decision: " + r.decision + (r.decision === "await_owner" ? ". It waits below for your approval." : "."), "ok");
+          await show("invoices");
+        }) }, ["Submit shadow invoice"])]),
+        h("p", { class: "note" }, ["The real amount and currency are shown publicly on your proof page. The testnet payment mirrors the PO amount in USDC and only goes out after you approve."])]);
       var rows = data.invoices.map(function (i) {
-        var acts = [];
+        var acts = [], shadowRow = i.mode === "shadow";
+        async function judge(path, text, lines, done) {
+          if (!(await confirmAction(text, lines))) return;
+          await api(path, { method: "POST", body: path.indexOf("/verdict") > -1 ? { verdict: done } : undefined });
+          say(done === "approved" ? "Paid on testnet. Recorded: you agreed with the agent." : done === "disagree" ? "Recorded: you would not have done the same." : "Recorded: you would have done the same.", "ok");
+          await show("invoices");
+        }
+        if (shadowRow && i.status === "awaiting_owner") {
+          acts.push(h("button", { class: "btn ghost sm", onclick: guard(function () {
+            return judge("/admin/invoices/" + i.id + "/shadow-approve", "Approve and pay (testnet)",
+              [i.invoice_number + " from " + i.vendor_name, "Real bill: " + i.real_amount + " " + i.real_currency, "Mirrored as " + usdc(i.amount_usdc) + " testnet USDC to the vendor.",
+               "The contract still enforces your limits. You also record that you agree with the agent."], "approved");
+          }) }, ["Approve and pay"]));
+          acts.push(h("button", { class: "btn ghost sm", onclick: guard(function () {
+            return judge("/admin/invoices/" + i.id + "/shadow-reject", "Reject payment",
+              [i.invoice_number + " from " + i.vendor_name, "Nothing is paid. You also record that you would not have done the same."], "disagree");
+          }) }, ["Reject"]));
+        }
+        if (shadowRow && (i.status === "held" || i.status === "escalated") && !i.verdict && i.reasoning_hash) {
+          [["agree", "I would do the same"], ["disagree", "I would not"]].forEach(function (v) {
+            acts.push(h("button", { class: "btn ghost sm", onclick: guard(function () {
+              return judge("/admin/decisions/" + i.reasoning_hash + "/verdict", "Record your verdict",
+                [i.invoice_number + ": the agent did not pay this one.", v[0] === "agree" ? "You record that you would have done the same." : "You record that you would not have done the same.", "A verdict cannot be changed."], v[0]);
+            }) }, [v[1]]));
+          });
+        }
         if (i.status === "escalated") {
           ["approve", "reject"].forEach(function (verb) {
             acts.push(h("button", { class: "btn ghost sm", onclick: guard(async function () {
@@ -427,10 +511,14 @@
             }) }, [verb === "approve" ? "Approve and pay" : "Reject"]));
           });
         }
-        return [i.invoice_number, i.vendor_name, usdc(i.amount_usdc), chip(i.status, kinds[i.status] || "warn"),
+        var kind = shadowRow ? chip("shadow", "warn") : "";
+        var status = [chip(labels[i.status] || i.status, kinds[i.status] || "warn")];
+        if (i.verdict) status.push(chip(i.verdict === "agree" ? "you agreed" : "you disagreed", i.verdict === "agree" ? "ok" : "bad"));
+        return [i.invoice_number, i.vendor_name, usdc(i.amount_usdc), shadowRow ? i.real_amount + " " + i.real_currency : "", h("span", null, [kind].concat(status)),
           h("span", { class: "mono" }, [i.reasoning_hash ? W.short(i.reasoning_hash) : ""]), h("div", { class: "actions" }, acts)];
       });
-      return h("div", null, [h("h2", null, ["Invoices"]), table(["Invoice", "Vendor", "Amount", "Status", "Reasoning hash", ""], rows),
+      return h("div", null, [h("h2", null, ["Invoices"]), h("h3", null, ["Submit a shadow invoice"]), shadow,
+        h("h3", null, ["All invoices"]), table(["Invoice", "Vendor", "Amount", "Real bill", "Status", "Reasoning hash", ""], rows),
         h("p", { class: "note" }, ["Escalations from before v1.2.4 have no recorded transaction and cannot be settled here."])]);
     },
 

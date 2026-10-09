@@ -94,5 +94,20 @@ const zero = "0x" + "00".repeat(32);
   assert.ok(!calls.some((c) => c === "https://a eth_getTransactionReceipt"));
   await assert.rejects(V.readReceipt("0x" + "1".repeat(64), fake({ "https://a": "down", "https://b": "down", "https://c": { chain: "0x4cef52", receipt: null } }), rpcs),
     (e) => e.details.length === 3);
+  // the per-business card: live and shadow stay apart, and the rate always carries its n
+  const view = V.tractionView({ business: { kind: "outside" }, live: { paid: 1, held: 0, escalated: 2, volume_usdc: 3 },
+    shadow: { paid: 2, held: 1, escalated: 0, awaiting_owner: 1, mirrored_usdc: 1, real_totals: { NGN: "4500.50" }, agreement: { agree: 3, disagree: 1, n: 4, rate: 0.75 } },
+    latest_paid: [{ invoice: "SH-1", mode: "shadow", real_amount: "4500.50", real_currency: "NGN", reasoning_hash: "ab".repeat(32), tx_hash: "0x" + "cd".repeat(32) },
+                  { invoice: "LV-1", mode: "live", reasoning_hash: null, tx_hash: null }] }, "https://x");
+  assert.strictEqual(view.kind, "Outside business");
+  assert.strictEqual(view.live, "1 paid, 0 held, 2 escalated, 3 USDC paid");
+  assert.ok(/2 paid, 1 held, 0 escalated, 1 waiting for the owner, 1 USDC mirrored \(real bills: 4500.50 NGN\)/.test(view.shadow));
+  assert.strictEqual(view.agreement, "75% agree: 3 of 4 verdicts");
+  assert.strictEqual(view.paid[0].txUrl, "https://x/tx/0x" + "cd".repeat(32));
+  assert.ok(/shadow, real bill 4500.50 NGN/.test(view.paid[0].label) && view.paid[1].txUrl === null && !view.paid[1].shadow);
+  const none = V.tractionView({ business: { kind: "unconfirmed" }, live: { paid: 0, held: 0, escalated: 0, volume_usdc: 0 },
+    shadow: { paid: 0, held: 0, escalated: 0, awaiting_owner: 0, mirrored_usdc: 0, real_totals: {}, agreement: { agree: 0, disagree: 0, n: 0, rate: null } }, latest_paid: [] }, "https://x");
+  assert.strictEqual(none.agreement, "No verdicts yet");
+  assert.strictEqual(none.kind, "Not yet confirmed as outside");
   console.log("JS_TESTS_OK");
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -88,3 +88,15 @@ No database migration to run by hand: the first start adds the `business_applica
 Accepting a business is one click in the Businesses tab; it creates that business's agent wallet. If Circle cannot create it, the tab shows "The agent wallet could not be created right now; nothing was accepted": try again in a minute, nothing was changed. Then tell the owner to open `business.html` with the same wallet. They fund their pool from their admin page with **Add funds** (never the wallet's normal Send: the contract only accepts a USDC token transfer) and send a little USDC to the agent wallet for fees. They create their contract, then fund it and the agent wallet's fee balance themselves. Mark a business as outside (admin site, Businesses tab) only after you have confirmed a real outside party owns it and real money is on the other side of its payments.
 
 To go back: stop the service, restore the `.pre-1.2.8.2` copy and check out v1.2.8.1. The new table is ignored by the old code.
+
+## Upgrading to v1.2.8.3 (shadow mode)
+
+The first start adds `mode`, `real_amount` and `real_currency` to `invoices` (every existing invoice stays `live`) and creates the `decision_verdicts` table. No contract changes and no new environment variables.
+
+1. Back up: `cp "$CEEDEBOOKS_DB_PATH" "$CEEDEBOOKS_DB_PATH.pre-1.2.8.3"` (the path the systemd unit uses).
+2. Pull, then `sudo systemctl restart ceedebooks-api`.
+3. Re-copy the three sites (each changed): the proof page (`index.html`, `styles.css`, `app.js`, `verify.js`), the admin site (`admin.js`) and the portal (`business.js`), with the commands in their sections above.
+4. Check from outside: `curl -s https://api.ceedebooks.xyz/businesses/ceedebooks/traction` returns the live and shadow blocks (shadow all zero, agreement `rate` null); `curl -s https://api.ceedebooks.xyz/stats` now has a `shadow` block.
+5. Try it on testnet before an outside business does: in the admin site's Invoices tab submit a shadow invoice against a received purchase order, approve it, and open the transaction link on the proof card.
+
+To go back: stop the service, restore the `.pre-1.2.8.3` copy and check out v1.2.8.2. The new columns and table are ignored by the old code.

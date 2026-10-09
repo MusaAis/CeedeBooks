@@ -148,8 +148,26 @@
     });
   }
 
+  // What the per-business traction card shows. Live and shadow are never added together; the agreement rate always
+  // carries how many verdicts it rests on, and says so plainly when there are none.
+  function tractionView(t, explorer) {
+    var ag = t.shadow.agreement, sh = t.shadow, live = t.live;
+    var real = Object.keys(sh.real_totals).map(function (c) { return sh.real_totals[c] + " " + c; }).join(", ");
+    return {
+      kind: { own: "Builder's own", outside: "Outside business", unconfirmed: "Not yet confirmed as outside" }[t.business.kind] || t.business.kind,
+      live: live.paid + " paid, " + live.held + " held, " + live.escalated + " escalated, " + live.volume_usdc + " USDC paid",
+      shadow: sh.paid + " paid, " + sh.held + " held, " + sh.escalated + " escalated, " + sh.awaiting_owner + " waiting for the owner, " + sh.mirrored_usdc +
+        " USDC mirrored" + (real ? " (real bills: " + real + ")" : ""),
+      agreement: ag.n ? Math.round(ag.rate * 100) + "% agree: " + ag.agree + " of " + ag.n + " verdicts" : "No verdicts yet",
+      paid: (t.latest_paid || []).map(function (p) {
+        return { label: p.invoice + (p.mode === "shadow" ? " (shadow" + (p.real_amount ? ", real bill " + p.real_amount + " " + p.real_currency : "") + ")" : ""),
+                 hash: p.reasoning_hash, txUrl: p.tx_hash ? explorer + "/tx/" + p.tx_hash : null, shadow: p.mode === "shadow" };
+      })
+    };
+  }
+
   var api = {
-    CONFIG: CONFIG, TOPICS: TOPICS, normalizeHash: normalizeHash, isTxHash: isTxHash, sha256Hex: sha256Hex,
+    tractionView: tractionView, CONFIG: CONFIG, TOPICS: TOPICS, normalizeHash: normalizeHash, isTxHash: isTxHash, sha256Hex: sha256Hex,
     checkRecord: checkRecord, findEvent: findEvent, readReceipt: readReceipt, isKnownBusiness: isKnownBusiness, businessRows: businessRows
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;

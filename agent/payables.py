@@ -16,6 +16,7 @@ class Decision(str, Enum):
     PAY = "pay"
     HOLD = "hold"
     ESCALATE = "escalate"
+    AWAIT_OWNER = "await_owner"  # shadow mode: the rules say pay, the owner has not approved yet
 
 
 @dataclass
@@ -28,6 +29,20 @@ class Invoice:
     category: int
     doc_hash: str
     po_number: Optional[str]
+    mode: str = "live"  # "shadow": a real bill mirrored as a testnet payment, paid only after the owner approves
+    real_amount: Optional[str] = None  # exact decimal text of the real bill (shadow only)
+    real_currency: Optional[str] = None
+
+
+def _plain(amount: float) -> str:
+    return f"{amount:.6f}".rstrip("0").rstrip(".")
+
+
+def shadow_note(invoice: Invoice) -> str:
+    """Code-written text added to the reasoning of a shadow invoice, so the hash covers the real amount and currency."""
+    if invoice.mode != "shadow":
+        return ""
+    return f" Shadow mode: real bill {invoice.real_amount} {invoice.real_currency}, mirrored as {_plain(invoice.amount_usdc)} USDC."
 
 
 async def three_way_match(invoice: Invoice) -> tuple[bool, str]:
@@ -84,7 +99,7 @@ async def _log_and_escalate(
     chain, business: dict,
 ) -> None:
     reasoning_hash_hex = await decision_log.log_decision(
-        "INVOICE_ESCALATED", invoice.invoice_number, reason, model_used=model_used, amount=invoice.amount_usdc, business=business
+        "INVOICE_ESCALATED", invoice.invoice_number, reason + shadow_note(invoice), model_used=model_used, amount=invoice.amount_usdc, business=business
     )
     tx_id = chain.escalate(
         invoice.vendor_wallet, amount_units, invoice_number_b32, doc_hash,
@@ -177,14 +192,32 @@ async def process_invoice(invoice: Invoice, treasury_runway_days: float, busines
 
     if decision == Decision.HOLD:
         reasoning_hash_hex = await decision_log.log_decision(
-            "INVOICE_HELD", invoice.invoice_number, reason, model_used="rules", amount=invoice.amount_usdc, business=business
+            "INVOICE_HELD", invoice.invoice_number, reason + shadow_note(invoice), model_used="rules", amount=invoice.amount_usdc, business=business
         )
         await models.update_invoice_status(invoice.business_id, invoice.id, "held", reasoning_hash=reasoning_hash_hex)
         await _anchor_refusal(chain, reasoning_hash_hex)
         return decision
 
+    if invoice.mode == "shadow":
+        # The agent decided to pay, but this is a real bill the owner still pays their own way: park it for the owner.
+        # Off-chain only: nothing is committed, escalated or sent, and it is not counted as paid or refused.
+        pending_hash = await decision_log.log_decision(
+            "INVOICE_SHADOW_PENDING", invoice.invoice_number, reason + shadow_note(invoice) + " Waiting for the owner to approve.",
+            model_used="rules", amount=invoice.amount_usdc, business=business,
+        )
+        await models.update_invoice_status(invoice.business_id, invoice.id, "awaiting_owner", reasoning_hash=pending_hash)
+        return Decision.AWAIT_OWNER
+
+    await _commit_then_pay(invoice, "INVOICE_PAID", reason, chain, business, amount_units, doc_hash, invoice_number_b32)
+    return decision
+
+
+async def _commit_then_pay(
+    invoice: Invoice, action: str, reason: str, chain, business: dict, amount_units: int, doc_hash: bytes, invoice_number_b32: bytes
+) -> str:
+    """Hash first, then commit, wait, pay, wait. Returns the reasoning hash. The contract re-checks everything."""
     reasoning_hash_hex = await decision_log.log_decision(
-        "INVOICE_PAID", invoice.invoice_number, reason, model_used="rules", amount=invoice.amount_usdc, business=business
+        action, invoice.invoice_number, reason, model_used="rules", amount=invoice.amount_usdc, business=business
     )
     reasoning_hash = bytes.fromhex(reasoning_hash_hex)
     commitment = chain.commitment_for(
@@ -198,4 +231,19 @@ async def process_invoice(invoice: Invoice, treasury_runway_days: float, busines
     contract.wait_for_transaction(tx_id)
     await decision_log.record_onchain_tx(reasoning_hash_hex, tx_id, _chain_hash(tx_id))
     await models.update_invoice_status(invoice.business_id, invoice.id, "paid", reasoning_hash=reasoning_hash_hex, onchain_tx_id=tx_id)
-    return decision
+    return reasoning_hash_hex
+
+
+async def pay_approved_shadow(invoice: Invoice, pending_hash: str, business: dict) -> str:
+    """The owner approved a parked shadow decision: pay it now through the normal commit-then-pay. The contract still
+    enforces vendor approval, limits, pause and once-only payment, so approval can never exceed what the owner configured.
+    Raises if the chain refuses; the caller puts the invoice back to awaiting_owner."""
+    chain = contract.chain_for(business)
+    amount_units = int(round(invoice.amount_usdc * 1_000_000))
+    doc_hash = contract.to_bytes32(invoice.doc_hash)
+    invoice_number_b32 = contract.to_bytes32(invoice.invoice_number)
+    if chain.is_paid(contract.invoice_key(invoice.vendor_wallet, invoice_number_b32)):
+        await models.update_invoice_status(invoice.business_id, invoice.id, "paid")
+        return pending_hash
+    reason = f"Owner approved shadow decision {pending_hash[:12]}." + shadow_note(invoice)
+    return await _commit_then_pay(invoice, "INVOICE_SHADOW_PAID", reason, chain, business, amount_units, doc_hash, invoice_number_b32)

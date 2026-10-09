@@ -26,6 +26,11 @@ jobs:
       CIRCLE_ENTITY_SECRET: ci-placeholder
     steps:
       - uses: actions/checkout@v4
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Install forge-std
+        run: git clone --depth 1 https://github.com/foundry-rs/forge-std lib/forge-std
+      - name: Build contracts (the Node tests check selectors against the compiled output)
+        run: forge build
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
