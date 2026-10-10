@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from agent import contract, decision_log, payables, treasury
+from agent import contract, decision_log, ledger, payables, treasury
 from agent.config import config
 from agent.categories import Category as SpendCategory
 from backend import admin_auth, auth, models, vendor_auth
@@ -177,6 +177,11 @@ async def startup() -> None:
     await models.init_db()
     await decision_log.init_db()
     await models.backfill_origin()
+    await ledger.start()  # no usable ledger key: the API does not start (nothing could be logged, so nothing could be paid)
+    for business in await models.list_businesses():
+        report = await ledger.verify_chain(business["id"])
+        if not report["ok"]:
+            log.error("Ledger for business %s FAILED verification: %s", business["slug"], report["problems"][:3])
 
 
 # ---- setup (buyer only)
@@ -389,6 +394,30 @@ async def get_stats(business: Optional[Slug] = None):
             "shadow": await models.shadow_stats(scope), "businesses": await models.business_counts()}
 
 
+@app.get("/.well-known/ledger-key")
+async def ledger_key():
+    """The Ed25519 public key that signs every ledger entry. Public. The same server holds the private key, so this key alone
+    is not independent proof; the on-chain anchor (later) is."""
+    try:
+        public_key = ledger.public_key_hex()
+    except ledger.LedgerKeyError:
+        raise HTTPException(503, "The ledger key is not configured")
+    return {"algorithm": "Ed25519", "public_key": public_key, "key_id": ledger.key_id_of(public_key),
+            "signed_message": "ceedebooks-ledger-v1 + newline + the entry body, exactly as stored"}
+
+
+@app.get("/ledger/verify")
+async def verify_ledger(business: Optional[Slug] = None):
+    """Walks one business's hash chain (default: the home business; an archived business still verifies): links, hashes,
+    signatures, and that every entry still matches its decision-log row and every decision has an entry."""
+    biz = await _business_by_slug(business, active_only=False)
+    try:
+        report = await ledger.verify_chain(biz["id"])
+    except ledger.LedgerKeyError:
+        raise HTTPException(503, "The ledger key is not configured")
+    return {"business": biz["slug"], **report}
+
+
 @app.get("/.well-known/agent.json")
 async def agent_manifest():
     """Machine-readable description so another agent can discover how to work with this one. Public."""
@@ -426,6 +455,8 @@ async def agent_manifest():
             "GET /decisions/{hash}": "public",
             "GET /decisions/{hash}/verify": "public",
             "GET /stats": "public",
+            "GET /ledger/verify": "public; walks one business's hash chain (?business=<slug>)",
+            "GET /.well-known/ledger-key": "public; the key that signs ledger entries",
         },
         "guarantees": [
             "The agent cannot pay outside the on-chain vendor registry, per-transaction, daily or category limits",
@@ -674,7 +705,7 @@ async def admin_record_action(body: AdminActionIn, who: auth.Principal = Depends
     """Record an on-chain admin transaction after the wallet sent it. The server checks the chain itself: the transaction
     must be to this business's contract, from this admin, and successful. An escalation result also settles the invoice's status,
     but only if the event on-chain carries that invoice's own reasoning hash."""
-    business = await models.get_business(who.business_id)
+    business = await _writable(who)
     try:
         tx = await asyncio.to_thread(contract.chain_for(business).inspect_admin_tx, body.tx_hash)
     except Exception:
@@ -894,6 +925,10 @@ class ExternalIn(_Strict):
     external: bool
 
 
+class ArchiveIn(_Strict):
+    archived: bool
+
+
 def _business_view(business: dict) -> dict:
     return {"slug": business["slug"], "name": business["name"], "status": business["status"],
             "contract": business["enforcer_address"] or None, "agent_address": business["agent_address"] or None}
@@ -1004,7 +1039,7 @@ async def business_register(body: RegisterBusinessIn, request: Request):
 @app.get("/businesses")
 async def public_businesses():
     """Active businesses with their contract and agent wallet addresses, so anyone can check them on the explorer."""
-    return {"businesses": await models.list_public_businesses(), "counts": await models.business_counts(), "custody": CUSTODY_NOTICE}
+    return {"businesses": await models.list_public_businesses(), "counts": {**await models.business_counts(), "archived": await models.archived_count()}, "custody": CUSTODY_NOTICE}
 
 
 # ---- operator (the home business's wallet-signed admin)
@@ -1084,6 +1119,16 @@ async def operator_mark_external(business_id: int, body: ExternalIn, who: auth.P
         raise HTTPException(404, "Business not found, not active, or the operator's own")
     await _admin_log(who, "mark_external" if body.external else "unmark_external", str(business_id))
     return {"id": business_id, "external": body.external}
+
+
+@app.post("/operator/businesses/{business_id}/archive")
+async def operator_archive_business(business_id: int, body: ArchiveIn, who: auth.Principal = Depends(auth.require_operator)):
+    """Hide a business from the public pages and make it read-only (or undo that). Its decisions and ledger still verify.
+    The home business can never be archived."""
+    if not await models.set_business_archived(business_id, body.archived):
+        raise HTTPException(404, "Business not found, not in the right state, or the operator's own")
+    await _admin_log(who, "archive_business" if body.archived else "unarchive_business", str(business_id))
+    return {"id": business_id, "archived": body.archived}
 
 
 # ---- the owner's setup checklist (their own admin session, their own business only)

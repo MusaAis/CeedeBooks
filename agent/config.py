@@ -66,6 +66,7 @@ class Config:
     # App
     backend_url: str
     db_path: str
+    ledger_signing_key: str  # Ed25519 seed (hex) that signs ledger entries; not a wallet key, it moves no money
 
     # API hardening
     max_body_bytes: int
@@ -105,6 +106,7 @@ class Config:
             usyc_idle_threshold_days=int(_optional("USYC_IDLE_THRESHOLD_DAYS", "3")),
             backend_url=_optional("BACKEND_URL", "https://api.ceedebooks.xyz"),
             db_path=_optional("CEEDEBOOKS_DB_PATH", "./ceedebooks.db"),
+            ledger_signing_key=_optional("LEDGER_SIGNING_KEY"),
             max_body_bytes=int(_optional("MAX_BODY_BYTES") or "16384"),
             rate_limit_per_min=int(_optional("RATE_LIMIT_PER_MIN") or "60"),
             failed_auth_per_min=int(_optional("FAILED_AUTH_PER_MIN") or "10"),

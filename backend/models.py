@@ -435,6 +435,8 @@ async def invoice_counts(business_id: int) -> dict:
 
 ORIGINS = ("agent", "manual", "demo")
 MODES = ("live", "shadow")
+# The public aggregate leaves out archived businesses; a read scoped to one business is never filtered.
+_NOT_ARCHIVED = "AND business_id NOT IN (SELECT id FROM businesses WHERE status = 'archived')"
 
 
 async def get_vendor_by_wallet(business_id: int, wallet: str) -> Optional[aiosqlite.Row]:
@@ -543,7 +545,7 @@ async def submission_stats(business_id: Optional[int] = None) -> dict:
     Live invoices only: shadow invoices (a real bill mirrored as a testnet payment) are reported apart, see shadow_stats.
     business_id=None is the public aggregate over every business (counts only); a number scopes it to one business."""
     out = {o: {"invoices_processed": 0, "payment_volume_usdc": 0.0, "duplicates_caught": 0} for o in ORIGINS}
-    where, args = ("AND business_id = ?", (business_id,)) if business_id is not None else ("", ())
+    where, args = ("AND business_id = ?", (business_id,)) if business_id is not None else (_NOT_ARCHIVED, ())
     inv = await _all(
         "SELECT origin, COUNT(*) AS n, COALESCE(SUM(CASE WHEN status = 'paid' THEN amount_usdc ELSE 0 END), 0) AS volume "
         f"FROM invoices WHERE status IN ('paid', 'held', 'escalated', 'rejected') AND mode = 'live' {where} GROUP BY origin", args,
@@ -678,6 +680,19 @@ async def set_business_external(business_id: int, external: bool) -> bool:
         return cur.rowcount > 0
 
 
+async def set_business_archived(business_id: int, archived: bool) -> bool:
+    """Operator only. Archived is the hidden, read-only state: no new activity (see _writable in main.py), gone from the public
+    list and the public totals, but its records stay readable by slug and every decision still verifies. active <-> archived
+    only (a business that is not live yet has nothing to hide), and the home business can never be archived."""
+    if business_id == HOME_BUSINESS_ID:
+        return False
+    before, after = ("active", "archived") if archived else ("archived", "active")
+    async with aiosqlite.connect(config.db_path) as db:
+        cur = await db.execute("UPDATE businesses SET status = ? WHERE id = ? AND status = ?", (after, business_id, before))
+        await db.commit()
+        return cur.rowcount > 0
+
+
 async def list_public_businesses() -> list:
     """Active businesses only. Everything here is already public on-chain, which is the point (judges check it on the explorer)."""
     return await _all(
@@ -688,6 +703,12 @@ async def list_public_businesses() -> list:
 async def business_counts() -> dict:
     row = await _one("SELECT COUNT(*) AS total, COALESCE(SUM(external), 0) AS external FROM businesses WHERE status = 'active'", ())
     return {"total": int(row["total"]), "external": int(row["external"])}
+
+
+async def archived_count() -> int:
+    """How many businesses are archived (hidden). Only the number is public, never a name."""
+    row = await _one("SELECT COUNT(*) AS n FROM businesses WHERE status = 'archived'", ())
+    return int(row["n"])
 
 
 # ---- shadow mode (v1.2.8.3): a real bill is read, decided and, once the owner approves, mirrored as a testnet payment
@@ -726,7 +747,7 @@ async def get_invoice_by_decision(business_id: int, reasoning_hash: str) -> Opti
 
 async def shadow_stats(business_id: Optional[int] = None) -> dict:
     """Shadow invoices only, never summed with live ones. Agreement counts only verdicts the owner actually recorded."""
-    where, args = ("AND business_id = ?", (business_id,)) if business_id is not None else ("", ())
+    where, args = ("AND business_id = ?", (business_id,)) if business_id is not None else (_NOT_ARCHIVED, ())
     rows = await _all(f"SELECT status, COUNT(*) AS n, COALESCE(SUM(amount_usdc), 0) AS usdc FROM invoices WHERE mode = 'shadow' {where} GROUP BY status", args)
     by = {r["status"]: r for r in rows}
     paid = by.get("paid", {"n": 0, "usdc": 0})
@@ -769,3 +790,42 @@ async def latest_paid(business_id: int, limit: int = 10) -> list:
            WHERE i.business_id = ? AND i.status = 'paid' ORDER BY i.id DESC LIMIT ?""",
         (business_id, limit),
     )
+
+
+# ---- relabelling test runs (scripts/relabel_origin.py): rule 14, a payment to a wallet the owner controls is `demo`, not `agent`
+
+async def list_relabel_candidates(business_id: int, prefix: str, wallets: Optional[list] = None) -> list:
+    """Live invoices of this business still labelled `agent` whose number starts with `prefix`, newest last. With `wallets`,
+    only those whose vendor's wallet (current or previous) is one of them. Read-only."""
+    rows = await _all(
+        """SELECT i.id, i.invoice_number, i.status, i.amount_usdc, i.created_at, v.name AS vendor_name,
+                  v.wallet_address, v.previous_wallet_address
+           FROM invoices i JOIN vendors v ON v.id = i.vendor_id AND v.business_id = i.business_id
+           WHERE i.business_id = ? AND i.origin = 'agent' AND i.mode = 'live' AND substr(i.invoice_number, 1, ?) = ?
+           ORDER BY i.id""",
+        (business_id, len(prefix), prefix),
+    )
+    if wallets is None:
+        return rows
+    mine = {w.lower() for w in wallets}
+    return [r for r in rows if r["wallet_address"].lower() in mine or (r["previous_wallet_address"] or "").lower() in mine]
+
+
+async def relabel_agent_to_demo(business_id: int, invoice_ids: list) -> int:
+    """agent -> demo for exactly these invoices of this business, all or nothing. Returns how many changed; if any id is not
+    a live `agent` invoice of this business, nothing changes and 0 is returned."""
+    ids = sorted(set(invoice_ids))
+    if not ids:
+        return 0
+    marks = ",".join("?" * len(ids))
+    async with aiosqlite.connect(config.db_path) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        cur = await db.execute(
+            f"UPDATE invoices SET origin = 'demo' WHERE business_id = ? AND origin = 'agent' AND mode = 'live' AND id IN ({marks})",
+            (business_id, *ids),
+        )
+        if cur.rowcount != len(ids):
+            await db.rollback()
+            return 0
+        await db.commit()
+        return cur.rowcount

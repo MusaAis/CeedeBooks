@@ -6,6 +6,7 @@ from typing import Optional
 
 import aiosqlite
 
+from agent import ledger
 from agent.config import config
 
 _SCHEMA = """
@@ -43,10 +44,13 @@ async def init_db() -> None:
             await db.execute("ALTER TABLE audit_log ADD COLUMN contract_address TEXT")
             await db.execute("ALTER TABLE audit_log ADD COLUMN contract_version INTEGER")
         await db.execute("CREATE INDEX IF NOT EXISTS ix_audit_business ON audit_log(business_id, id)")
+        await ledger.ensure_schema(db)
         await db.commit()
 
 
 HASH_VERSION = 2
+_VISIBLE_AND = "AND business_id NOT IN (SELECT id FROM businesses WHERE status = 'archived') "
+_VISIBLE_WHERE = "WHERE business_id NOT IN (SELECT id FROM businesses WHERE status = 'archived') "
 
 
 def compute_reasoning_hash(
@@ -79,23 +83,37 @@ async def log_decision(
     *,
     business: dict,
 ) -> str:
-    """Writes the audit row (hash format 2) for one business before anything touches its contract."""
+    """Writes the audit row (hash format 2) for one business before anything touches its contract. The row and its signed
+    ledger entry go in one transaction under the database write lock: both are stored or neither is, and concurrent writers
+    queue behind each other, so the chain cannot fork. Without a usable ledger key this raises and nothing is logged."""
     timestamp = time.time()
     hash_input, reasoning_hash = compute_reasoning_hash(
         action, subject, reasoning, amount, model_used, timestamp, business
     )
+    contract_address = business["enforcer_address"].lower()
 
     async with aiosqlite.connect(config.db_path) as db:
         await db.execute(_SCHEMA)
-        await db.execute(
-            """INSERT INTO audit_log
-               (action, subject, reasoning, amount_usdc, treasury_balance_after,
-                model_used, timestamp, hash_input, reasoning_hash, business_id, hash_version, contract_address, contract_version)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (action, subject, reasoning, amount, treasury_balance_after, model_used, timestamp, hash_input, reasoning_hash,
-             business["id"], HASH_VERSION, business["enforcer_address"].lower(), business["contract_version"]),
-        )
-        await db.commit()
+        await ledger.ensure_schema(db)
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            await ledger.ensure_chain(db, business["id"])
+            await db.execute(
+                """INSERT INTO audit_log
+                   (action, subject, reasoning, amount_usdc, treasury_balance_after,
+                    model_used, timestamp, hash_input, reasoning_hash, business_id, hash_version, contract_address, contract_version)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (action, subject, reasoning, amount, treasury_balance_after, model_used, timestamp, hash_input, reasoning_hash,
+                 business["id"], HASH_VERSION, contract_address, business["contract_version"]),
+            )
+            await ledger.append_decision(db, business["id"], {
+                "reasoning_hash": reasoning_hash, "action": action, "subject": subject, "amount_usdc": amount,
+                "model_used": model_used, "timestamp": timestamp, "contract_address": contract_address,
+            })
+            await db.commit()
+        except BaseException:
+            await db.rollback()
+            raise
 
     return reasoning_hash
 
@@ -112,14 +130,17 @@ async def record_onchain_tx(reasoning_hash: str, tx_id: str, chain_tx_hash: Opti
 
 async def recent(limit: int = 20, business_id: Optional[int] = None) -> list:
     """Newest first. business_id=None is the public aggregate; a number scopes it to one business."""
-    where, args = ("WHERE business_id = ? ", (business_id, limit)) if business_id is not None else ("", (limit,))
+    sql = "SELECT reasoning_hash, action, subject, model_used, amount_usdc, timestamp, chain_tx_hash, business_id FROM audit_log {where}ORDER BY id DESC LIMIT ?"
     async with aiosqlite.connect(config.db_path) as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT reasoning_hash, action, subject, model_used, amount_usdc, timestamp, chain_tx_hash, business_id "
-            f"FROM audit_log {where}ORDER BY id DESC LIMIT ?",
-            args,
-        ) as cursor:
+        if business_id is not None:
+            cursor = await db.execute(sql.format(where="WHERE business_id = ? "), (business_id, limit))
+        else:
+            try:  # the public aggregate leaves out archived businesses
+                cursor = await db.execute(sql.format(where=_VISIBLE_WHERE), (limit,))
+            except aiosqlite.OperationalError:  # no businesses table (audit log used on its own)
+                cursor = await db.execute(sql.format(where=""), (limit,))
+        async with cursor:
             return [dict(row) for row in await cursor.fetchall()]
 
 
@@ -127,7 +148,7 @@ async def stats(business_id: Optional[int] = None) -> dict:
     """Counts of live agent decisions. Manual entries (model_used = 'manual') are reported separately, never as agent decisions.
     Shadow decisions (a real bill mirrored as a testnet payment, v1.2.8.3) are left out: they are reported apart by
     models.shadow_stats and never mixed into these numbers. business_id=None is the public aggregate; a number scopes it to one business."""
-    scope, args = ("AND business_id = ? ", (business_id,)) if business_id is not None else ("", ())
+    scope, args = ("AND business_id = ? ", (business_id,)) if business_id is not None else (_VISIBLE_AND, ())
     shadow_hashes = "AND reasoning_hash NOT IN (SELECT reasoning_hash FROM invoices WHERE mode = 'shadow' AND reasoning_hash IS NOT NULL) "
     query = ("SELECT action, model_used = 'manual', COUNT(*), COALESCE(SUM(amount_usdc), 0) FROM audit_log WHERE action IN "
              "('INVOICE_PAID', 'INVOICE_HELD', 'INVOICE_ESCALATED') {extra}GROUP BY action, model_used = 'manual'")
@@ -135,8 +156,8 @@ async def stats(business_id: Optional[int] = None) -> dict:
         try:
             async with db.execute(query.format(extra=scope + shadow_hashes), args) as cursor:
                 rows = await cursor.fetchall()
-        except aiosqlite.OperationalError:  # no invoices table yet (audit log used on its own): nothing can be shadow
-            async with db.execute(query.format(extra=scope), args) as cursor:
+        except aiosqlite.OperationalError:  # no invoices or businesses table yet (audit log used on its own)
+            async with db.execute(query.format(extra=scope if business_id is not None else ""), args) as cursor:
                 rows = await cursor.fetchall()
     out = {"paid": 0, "held": 0, "escalated": 0, "paid_usdc": 0.0, "manual_paid": 0, "manual_paid_usdc": 0.0}
     for action, manual, count, usdc in rows:

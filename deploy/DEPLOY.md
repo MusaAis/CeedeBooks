@@ -11,7 +11,7 @@ Requirements: Ubuntu server, repo at `~/ceedebooks` with `.env` filled in (never
    - `curl -i -X POST https://api.ceedebooks.xyz/vendors` returns 401 (no key)
 6. **API keys:** `python3 scripts/create_api_key.py create --role vendor --vendor-id N --label <name>`. Never hand out the buyer key.
 
-Notes: `TRUST_PROXY=1` is set in the unit so rate limits apply per real client (nginx overwrites `X-Forwarded-For`). The SQLite file (`CEEDEBOOKS_DB_PATH`) holds the audit log and keys: back it up and keep it out of git.
+Notes: `TRUST_PROXY=1` is set in the unit so rate limits apply per real client (nginx overwrites `X-Forwarded-For`). The SQLite file (`ceedebooks.db` in the repo folder unless `CEEDEBOOKS_DB_PATH` is set) holds the audit log and keys: back it up and keep it out of git.
 
 ## Public proof page at ceedebooks.xyz
 
@@ -64,19 +64,19 @@ The portal loads its typeface (Bricolage Grotesque, the same as the proof page) 
 
 The first start migrates the database in place: it adds `business_id` to every table, rebuilds `purchase_orders` and `invoices` so their numbers are unique per business, and records the live contract as business 1. Take a copy first and rehearse it on the copy:
 
-1. Back up: `cp "$CEEDEBOOKS_DB_PATH" "$CEEDEBOOKS_DB_PATH.pre-1.2.8.1"` (use the path the systemd unit uses).
+1. Back up: `mkdir -p ~/backups && cp ceedebooks.db ~/backups/ceedebooks.db.pre-1.2.8.1` (from `~/ceedebooks`).
 2. Rehearse: `CEEDEBOOKS_DB_PATH=/tmp/rehearsal.db` with a copy of the file, then `PYTHONPATH=. python3 -c "import asyncio; from backend import models; from agent import decision_log; asyncio.run(models.init_db()); asyncio.run(decision_log.init_db()); print('migrated')"` and check `sqlite3 /tmp/rehearsal.db "select id,slug,enforcer_address,contract_version,status from businesses; select count(*), min(business_id), max(business_id) from invoices;"` (one business, version 1, every invoice in business 1).
 3. Pull, then `sudo systemctl restart ceedebooks-api`.
 4. Re-copy the proof page: `sudo cp site/index.html site/styles.css site/app.js site/verify.js /var/www/ceedebooks/` (`verify.js` and `app.js` changed).
 5. Existing API keys keep working (they become business 1's keys). Check `curl -s https://api.ceedebooks.xyz/stats` and the verify button on one old decision.
 
-To go back: stop the service, restore the `.pre-1.2.8.1` copy and check out the previous tag. Do not run the old code on a migrated database.
+To go back: stop the service, restore `~/backups/ceedebooks.db.pre-1.2.8.1` and check out the previous tag. Do not run the old code on a migrated database.
 
 ## Upgrading to v1.2.8.2 (business onboarding)
 
 No database migration to run by hand: the first start adds the `business_applications` table and two indexes, and keeps every row. Back up first anyway.
 
-1. Back up: `cp "$CEEDEBOOKS_DB_PATH" "$CEEDEBOOKS_DB_PATH.pre-1.2.8.2"` (the path the systemd unit uses).
+1. Back up: `mkdir -p ~/backups && cp ceedebooks.db ~/backups/ceedebooks.db.pre-1.2.8.2` (from `~/ceedebooks`).
 2. Pull, then `sudo systemctl restart ceedebooks-api`. `BUDGET_FACTORY_ADDRESS` is optional: the deployed Arc Testnet factory is the default.
 3. Re-copy the three sites (the proof page, the admin site and the portal all changed; the portal now also has `business.html` and `business.js`):
    - `sudo cp site/index.html site/styles.css site/app.js site/verify.js /var/www/ceedebooks/`
@@ -87,16 +87,33 @@ No database migration to run by hand: the first start adds the `business_applica
 
 Accepting a business is one click in the Businesses tab; it creates that business's agent wallet. If Circle cannot create it, the tab shows "The agent wallet could not be created right now; nothing was accepted": try again in a minute, nothing was changed. Then tell the owner to open `business.html` with the same wallet. They fund their pool from their admin page with **Add funds** (never the wallet's normal Send: the contract only accepts a USDC token transfer) and send a little USDC to the agent wallet for fees. They create their contract, then fund it and the agent wallet's fee balance themselves. Mark a business as outside (admin site, Businesses tab) only after you have confirmed a real outside party owns it and real money is on the other side of its payments.
 
-To go back: stop the service, restore the `.pre-1.2.8.2` copy and check out v1.2.8.1. The new table is ignored by the old code.
+To go back: stop the service, restore `~/backups/ceedebooks.db.pre-1.2.8.2` and check out v1.2.8.1. The new table is ignored by the old code.
 
 ## Upgrading to v1.2.8.3 (shadow mode)
 
 The first start adds `mode`, `real_amount` and `real_currency` to `invoices` (every existing invoice stays `live`) and creates the `decision_verdicts` table. No contract changes and no new environment variables.
 
-1. Back up: `cp "$CEEDEBOOKS_DB_PATH" "$CEEDEBOOKS_DB_PATH.pre-1.2.8.3"` (the path the systemd unit uses).
+1. Back up: `mkdir -p ~/backups && cp ceedebooks.db ~/backups/ceedebooks.db.pre-1.2.8.3` (from `~/ceedebooks`).
 2. Pull, then `sudo systemctl restart ceedebooks-api`.
 3. Re-copy the three sites (each changed): the proof page (`index.html`, `styles.css`, `app.js`, `verify.js`), the admin site (`admin.js`) and the portal (`business.js`), with the commands in their sections above.
 4. Check from outside: `curl -s https://api.ceedebooks.xyz/businesses/ceedebooks/traction` returns the live and shadow blocks (shadow all zero, agreement `rate` null); `curl -s https://api.ceedebooks.xyz/stats` now has a `shadow` block.
 5. Try it on testnet before an outside business does: in the admin site's Invoices tab submit a shadow invoice against a received purchase order, approve it, and open the transaction link on the proof card.
 
-To go back: stop the service, restore the `.pre-1.2.8.3` copy and check out v1.2.8.2. The new columns and table are ignored by the old code.
+To go back: stop the service, restore `~/backups/ceedebooks.db.pre-1.2.8.3` and check out v1.2.8.2. The new columns and table are ignored by the old code.
+
+## Upgrading to v1.2.9 (hash-chained ledger, archive, relabel tool)
+
+The first start adds the `ledger` table and chains every existing decision once, in order, under a genesis entry per business. It needs a ledger signing key: **the API refuses to start without one**, because without it nothing could be logged and so nothing could be paid. The key is an Ed25519 seed, not a wallet key; it moves no money, but anyone who holds it can forge ledger entries.
+
+1. Back up: `mkdir -p ~/backups && cp ceedebooks.db ~/backups/ceedebooks.db.pre-1.2.9` (from `~/ceedebooks`).
+2. Install the new dependency: `pip install -r agent/requirements.txt` (adds `cryptography`).
+3. Create the key without showing it: `python3 scripts/ledger_key.py new --env .env`. It prints only the public key and a key id. Keep a copy of `.env` in your backups: if the seed is lost, old entries can no longer be shown to be signed by the published key.
+4. Pull or apply the patch, run the tests, then `sudo systemctl restart ceedebooks-api` and wait about 15 seconds. `sudo journalctl -u ceedebooks-api -n 30` should show no "Ledger ... FAILED" line.
+5. Check from outside: `curl -s https://api.ceedebooks.xyz/.well-known/ledger-key` shows the public key (the same as step 3); `curl -s https://api.ceedebooks.xyz/ledger/verify` returns `"ok": true`, and so does `?business=<slug>` for each other business.
+6. Re-copy the sites that changed: the proof page (`site/app.js`) and the admin site (`admin/admin.js`), with the commands in their sections above.
+
+**Archiving a business** (operator, admin site, Businesses tab, **Archive**): it leaves the public list and totals, takes no new activity, and still verifies. The proof page says how many are archived, never which. **Unarchive** brings it back. The home business cannot be archived.
+
+**Relabelling test invoices** (rule: a payment to a wallet you control is `demo`, not `agent`): `PYTHONPATH=. python3 scripts/relabel_origin.py list --wallets <your wallet>,<another>` shows the rows and changes nothing; it prints the exact `apply` command, which only works with the code `list` printed and a typed `yes`.
+
+To go back: stop the service, restore `~/backups/ceedebooks.db.pre-1.2.9` and check out v1.2.8.3. Do not just run the old code on this database: decisions it logs would have no ledger entry and `/ledger/verify` would report them as unchained.

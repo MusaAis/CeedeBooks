@@ -510,3 +510,80 @@ def test_models_refuse_to_run_without_a_business():
         asyncio.run(models.get_vendor(1))          # business_id and vendor_id are both required
     with pytest.raises(TypeError):
         asyncio.run(models.list_invoices())
+
+
+# ---- archiving a business (v1.2.9): hidden from the public pages, read-only, still verifiable
+
+def _bearer(client, account, business=None):
+    return {"Authorization": "Bearer " + _admin_token(client, account, business).json()["token"]}
+
+
+def _decision(business_id, subject):
+    business = asyncio.run(models.get_business(business_id))
+    return asyncio.run(decision_log.log_decision("INVOICE_PAID", subject, "because", model_used="rules", amount=3.0, business=business))
+
+
+def _archive(client, business_id, archived=True, who=None):
+    return client.post(f"/operator/businesses/{business_id}/archive", json={"archived": archived}, headers=who or _bearer(client, ADMIN_1))
+
+
+def test_only_the_operator_can_archive_and_never_the_home_business(client, two):
+    b2 = two["b2"]
+    assert client.post(f"/operator/businesses/{b2}/archive", json={"archived": True}).status_code == 401
+    assert _archive(client, b2, who=_bearer(client, ADMIN_2, "acme")).status_code == 403   # a business admin
+    assert _archive(client, b2, who=two[1]["buyer"]).status_code == 403                    # an API key
+    assert _archive(client, 1).status_code == 404                                           # the operator's own business
+    assert _archive(client, 99).status_code == 404
+    assert asyncio.run(models.get_business(b2))["status"] == "active"
+    assert _archive(client, b2).status_code == 200
+    assert _archive(client, b2).status_code == 404                                          # already archived
+    assert _archive(client, b2, archived=False).status_code == 200
+    assert asyncio.run(models.get_business(b2))["status"] == "active"
+
+
+def test_a_business_that_is_not_live_yet_cannot_be_archived(client, two):
+    pending = _add_business("later", "0x" + "dd" * 20, status="pending")
+    assert _archive(client, pending).status_code == 404
+
+
+def test_archived_is_read_only(client, two):
+    b2 = two["b2"]
+    assert _archive(client, b2).status_code == 200
+    h = two[2]["buyer"]
+    assert client.post("/vendors", json={"name": "N", "wallet_address": "0x" + "f6" * 20}, headers=h).status_code == 403
+    body = {"invoice_number": "INV-9", "vendor_id": two[2]["vendor"], "amount_usdc": "1", "category": 0, "doc_hash": "ab" * 32}
+    assert client.post("/invoices", json=body, headers=h).status_code == 403
+    admin = _bearer(client, ADMIN_2, "acme")  # the owner can still sign in and read
+    assert client.get("/admin/invoices", headers=admin).status_code == 200
+    assert client.post("/admin/actions", json={"action": "set_paused", "tx_hash": "0x" + "ab" * 32}, headers=admin).status_code == 403
+    assert client.get(f"/invoices/{two[2]['invoice']}", headers=h).status_code == 200
+    assert client.post("/invoices", json=body | {"vendor_id": two[1]["vendor"]}, headers=two[1]["buyer"]).status_code == 200  # business 1 unaffected
+
+
+def test_archived_still_verifies(client, two):
+    reasoning = _decision(two["b2"], "B-1")
+    assert _archive(client, two["b2"]).status_code == 200
+    assert client.get(f"/decisions/{reasoning}/verify").json()["verified"] is True
+    assert client.get("/ledger/verify?business=acme").json()["ok"] is True
+    assert client.get("/stats?business=acme").json()["paid"] == 1  # a read scoped to it still works
+
+
+def test_archived_is_hidden_from_the_public_pages_and_totals(client, two):
+    _decision(1, "A-1"); _decision(two["b2"], "B-1")
+    for n, bid in ((1, 1), (2, two["b2"])):
+        asyncio.run(models.update_invoice_status(bid, two[n]["invoice"], "paid"))
+    assert client.get("/stats").json()["paid"] == 2
+    assert client.get("/stats").json()["submissions"]["invoices_processed"] == 2
+    assert _archive(client, two["b2"]).status_code == 200
+    assert client.get("/stats").json()["submissions"]["invoices_processed"] == 1  # the invoice counts leave the aggregate too
+    assert client.get("/stats?business=acme").json()["submissions"]["invoices_processed"] == 1
+    listing = client.get("/businesses").json()
+    assert [b["slug"] for b in listing["businesses"]] == ["ceedebooks"] and listing["counts"]["archived"] == 1  # only a number is shown
+    assert client.get("/businesses/acme/traction").status_code == 404
+    assert client.get("/stats").json()["paid"] == 1 and client.get("/stats").json()["businesses"] == {"total": 1, "external": 0}
+    assert [d["subject"] for d in client.get("/decisions").json()["decisions"]] == ["A-1"]
+    assert "acme" not in [b["slug"] for b in client.get("/.well-known/agent.json").json()["businesses"]]
+    assert _archive(client, two["b2"], archived=False).status_code == 200  # and back
+    assert client.get("/stats").json()["paid"] == 2 and client.get("/stats").json()["submissions"]["invoices_processed"] == 2
+    assert client.get("/businesses/acme/traction").status_code == 200
+    assert client.get("/businesses").json()["counts"]["archived"] == 0

@@ -381,8 +381,17 @@
           say("Updated.", "ok");
           await show("businesses");
         }) }, [b.external ? "Remove outside mark" : "Mark as outside"]) : "";
+        var hide = ((b.status === "active" || b.status === "archived") && b.id !== 1) ? h("button", { class: "btn ghost sm", onclick: guard(async function () {
+          var to = b.status === "active";
+          if (!(await confirmAction(to ? "Archive this business" : "Bring this business back",
+            [b.name, to ? "It disappears from the public pages and totals and becomes read-only: no new invoices, vendors or approvals. Its records and ledger stay readable and every decision still verifies." : "It shows on the public pages again and takes activity again."],
+            to ? "Archive" : "Bring back"))) return;
+          await api("/operator/businesses/" + b.id + "/archive", { method: "POST", body: { archived: to } });
+          say("Updated.", "ok");
+          await show("businesses");
+        }) }, [b.status === "active" ? "Archive" : "Unarchive"]) : "";
         return [b.name, h("span", { class: "mono" }, [b.slug]), chip(b.status, kind[b.status] || "warn"), b.id === 1 ? "Your own" : (b.external ? "Outside" : "Not marked"),
-          h("span", { class: "mono" }, [b.enforcer_address || "not created yet"]), h("span", { class: "mono" }, [b.agent_address || ""]), mark];
+          h("span", { class: "mono" }, [b.enforcer_address || "not created yet"]), h("span", { class: "mono" }, [b.agent_address || ""]), h("span", { class: "actions" }, [mark, " ", hide])];
       });
       return h("div", null, [h("h2", null, ["Businesses"]),
         h("p", { class: "note" }, ["Only you see this tab. Accepting creates a hosted agent wallet for the business: say so to them (it can only pay their approved vendors within their limits, and they can replace it any time)."]),

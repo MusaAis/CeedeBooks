@@ -58,6 +58,7 @@ global.fetch = async (url, opt = {}) => {
         businesses: [{ id: 1, name: "CeedeBooks", slug: "ceedebooks", status: "active", external: 0, enforcer_address: "0x" + "47".repeat(20), agent_address: "" }, { id: 2, name: "Acme", slug: "acme", status: "active", external: 0, enforcer_address: ACME_CONTRACT, agent_address: "0x" + "a1".repeat(20) }] });
     }
     if (path === "/operator/business-applications/7/accept" && method === "POST") { posts.push({ business_accepted: 7 }); return ok({ business: { agent_address: "0x" + "a1".repeat(20) } }); }
+    if (path === "/operator/businesses/2/archive" && method === "POST") { posts.push({ archived: JSON.parse(opt.body).archived }); return ok({ id: 2 }); }
     if (path === "/operator/businesses/2/external" && method === "POST") { posts.push({ external: JSON.parse(opt.body).external }); return ok({ id: 2 }); }
     if (path === "/admin/overview") return ok({ operator: operator, business: { name: "CeedeBooks", slug: "ceedebooks" }, chain: { chain_ok: true, approver: ADMIN, paused: false, balance_usdc: 108.79, daily_limit_usdc: 100, per_tx_limit_usdc: 20, categories: [{ id: 1, name: "Infrastructure", daily_limit_usdc: 20, remaining_usdc: 20 }] }, invoices: { escalated: 3 }, vendors: 1, purchase_orders: 0 });
     if (path === "/admin/vendors") return ok({ vendors: [{ id: 1, name: "Ops", wallet_address: "0x" + "d7".repeat(20), approved_onchain: false }] });
@@ -151,6 +152,12 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
   await findBtn(root, "Mark as outside").listeners.click(); await tick(100);
   assert.deepStrictEqual(posts[posts.length - 1], { external: true });
   assert.strictEqual(calls.filter((c) => c.method === "eth_sendTransaction").length, txMid, "accepting or marking a business sends no transaction");
+  // archiving hides a business and makes it read-only: it needs a confirmation, offers the button only for another business, and sends no transaction
+  let archiveButtons = 0; walk(root, (x) => { if (x.tag === "button" && x.textContent === "Archive") archiveButtons++; });
+  assert.strictEqual(archiveButtons, 1, "one Archive button (Acme), none for the operator's own business");
+  await findBtn(root, "Archive").listeners.click(); await tick(100);
+  assert.deepStrictEqual(posts[posts.length - 1], { archived: true });
+  assert.strictEqual(calls.filter((c) => c.method === "eth_sendTransaction").length, txMid, "archiving sends no transaction");
 
   // funding: a USDC token transfer from the owner's wallet to the business's contract, never a plain send
   await findBtn(root, "Overview").listeners.click(); await tick();

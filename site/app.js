@@ -231,6 +231,7 @@
       });
       var n = data.counts || {};
       $("biz-note").textContent = (n.external > 0 ? n.external + " of " + n.total + " businesses are confirmed outside parties. " : (n.total > 1 ? "None of these is confirmed as an outside party yet. " : "Only the builder's own business so far. "))
+        + (n.archived > 0 ? n.archived + (n.archived === 1 ? " archived business is" : " archived businesses are") + " hidden from this list and the totals; its records stay readable and verifiable. " : "")
         + (scope ? "Showing the decisions of one business. Press its button again to see all." : "");
     } catch (e) {
       box.textContent = "The business list could not be loaded just now.";

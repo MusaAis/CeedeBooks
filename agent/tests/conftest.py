@@ -106,6 +106,12 @@ class Chains:
 
 
 @pytest.fixture(autouse=True)
+def ledger_key(monkeypatch):
+    """A throwaway Ed25519 seed for the decision ledger (a test value, not a secret)."""
+    monkeypatch.setattr(config, "ledger_signing_key", "11" * 32)
+
+
+@pytest.fixture(autouse=True)
 def chains(monkeypatch):
     registry = Chains()
     monkeypatch.setattr(contract, "chain_for", registry.for_business)
