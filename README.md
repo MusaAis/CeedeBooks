@@ -4,7 +4,7 @@
 ![CI](https://github.com/MusaAis/CeedeBooks/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Foundry tests](https://img.shields.io/badge/forge%20tests-69%2F69%20passing-brightgreen)
-![Python tests](https://img.shields.io/badge/pytest-235%2F235%20passing-brightgreen)
+![Python tests](https://img.shields.io/badge/pytest-285%2F285%20passing-brightgreen)
 ![Network](https://img.shields.io/badge/Arc-Testnet-informational)
 
 *"Ceede" means money in Pulaar/Fulfulde.*
@@ -13,7 +13,7 @@ An autonomous accounts-payable agent for African SMEs on Arc: it validates and p
 
 Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 – Oct 17, 2026.
 
-**Current: v1.2.8.3 (Phase L4, shadow mode and per-business proof).** A business can now give CeedeBooks a real bill in *shadow mode*: the agent reads it and decides, the owner approves or rejects in the admin site, and only an approved decision becomes a testnet USDC payment, labelled shadow and kept apart from live numbers. Built and tested; **v1.2.8.2** added business onboarding: a business can register itself: it applies with a wallet signature, the operator accepts, the server creates its hosted agent wallet, and the owner creates the contract from their own wallet. The server records the business only after the chain proves our factory made it, with the applicant's wallet as approver and the issued agent wallet as agent. Every key, session, record and query belongs to one business. Only the original business exists so far (the live v1 `BudgetEnforcer`); no outside business has registered yet. `BudgetFactory` and `LedgerAnchor` are deployed and verified on Arc Testnet. The AP/AR engine is live on Arc Testnet behind a key-authenticated HTTPS API (`api.ceedebooks.xyz`), with a public proof page (`ceedebooks.xyz`), a wallet-signed admin site (`admin.ceedebooks.xyz`), a vendor portal (`portal.ceedebooks.xyz`) and a business registration page (`portal.ceedebooks.xyz/business.html`). No outside business or paying user yet: every payment so far is self-owned. See [Custody trade-off](#custody-trade-off), the [Roadmap](#roadmap) and the [Changelog](#changelog).
+**Current: v1.2.9 (Phase E1, a signed, hash-chained decision ledger).** Every decision a business makes is now also written to a per-business chain: each entry carries the hash of the one before it and an Ed25519 signature, and `GET /ledger/verify` re-checks the whole chain (an edited, deleted, reordered or forked entry fails). The public key is at `/.well-known/ledger-key`. This release also adds an archive flag (an archived business is read-only, hidden from the public lists and still verifiable) and an operator script that relabels self-run test invoices from `agent` to `demo`. The chain is not anchored on-chain yet, so the server's own key plus database can still rewrite it; anchoring is the next piece. **v1.2.8.3** added shadow mode: a business can give CeedeBooks a real bill in *shadow mode*: the agent reads it and decides, the owner approves or rejects in the admin site, and only an approved decision becomes a testnet USDC payment, labelled shadow and kept apart from live numbers. Built and tested; **v1.2.8.2** added business onboarding: a business can register itself: it applies with a wallet signature, the operator accepts, the server creates its hosted agent wallet, and the owner creates the contract from their own wallet. The server records the business only after the chain proves our factory made it, with the applicant's wallet as approver and the issued agent wallet as agent. Every key, session, record and query belongs to one business. Only the original business exists so far (the live v1 `BudgetEnforcer`); no outside business has registered yet. `BudgetFactory` and `LedgerAnchor` are deployed and verified on Arc Testnet. The AP/AR engine is live on Arc Testnet behind a key-authenticated HTTPS API (`api.ceedebooks.xyz`), with a public proof page (`ceedebooks.xyz`), a wallet-signed admin site (`admin.ceedebooks.xyz`), a vendor portal (`portal.ceedebooks.xyz`) and a business registration page (`portal.ceedebooks.xyz/business.html`). No outside business or paying user yet: every payment so far is self-owned. See [Custody trade-off](#custody-trade-off), the [Roadmap](#roadmap) and the [Changelog](#changelog).
 
 ## 60-second tour for reviewers
 
@@ -59,12 +59,14 @@ It isn't "an LLM with a wallet." The agent proposes; a smart contract, not a pro
 - **Wallet-signed admin site** (`admin.ceedebooks.xyz`): a session is accepted only if its signature recovers to the contract's current `approver()`; vendor approval, POs, receipts, escalations, limits and pause are signed in the admin's own wallet
 - **Vendor portal** (`portal.ceedebooks.xyz`): a vendor applies with a wallet signature that proves it controls the payee address, the admin reviews the application, and once approved the vendor signs in with the same wallet. It sees only its own purchase orders and invoices, runs a dry run first, submits, and links to the proof page for the decision. No key or password is issued, and the portal never asks for a transaction. Spam controls: one pending application per wallet, at most 3 pending per IP, 5 submissions per hour per IP, small body cap
 - **Shadow mode** (built and tested): a real bill is mirrored as a testnet payment only after the owner approves it. See [Shadow mode](#shadow-mode)
+- **Signed hash-chained ledger (v1.2.9):** per business, each decision is chained to the previous one and signed with an Ed25519 key; `GET /ledger/verify` detects edits, deletions, reordering, forks, a wrong key and decisions added behind the chain's back. If the key is missing the agent refuses to log and so pays nothing. Not yet anchored on-chain
+- **Archive flag (v1.2.9):** the operator can archive a business: it becomes read-only, leaves the public lists and totals, and its ledger still verifies
 - **Invoice metrics on the proof page**: invoices processed, USDC paid and duplicates caught, split by origin (`agent`, `manual`, `demo`) so hand-run payments and demo runs never count as agent traffic
 
 **Planned** (see the [Roadmap](#roadmap) for order and status; nothing below is live)
 
 - **Multi-business onboarding (built, no outside business yet):** a business applies with a wallet signature at `portal.ceedebooks.xyz/business.html`, the operator accepts it (the server creates the business's hosted agent wallet), and the owner creates the contract with one transaction from their own wallet and picks their own limits. The server activates the business only after verifying the creation on-chain. The owner gets a setup checklist and an Add funds button in the admin site, and only the operator can mark a business as an outside party. The home business is not yet moved onto a factory contract (optional, last)
-- **Audit hardening:** hash-chained ledger per business anchored on-chain, a log comparing the model's verdict with the rules' verdict, on-chain red-team log, key-custody check, re-evaluate for stuck invoices
+- **Audit hardening (rest of it):** anchoring each business's ledger head on-chain, a log comparing the model's verdict with the rules' verdict, on-chain red-team log, key-custody check, re-evaluate for stuck invoices
 - **Oversight:** maker-checker approvals, pause with a stated reason, every figure in a narrative written by code
 - Circle Gateway unified balance
 - Treasury: economics-gated yield sweep via a pooled USYC wrapper, continuous vendor screening, other-currency invoices
@@ -113,7 +115,7 @@ Everything below is checkable on-chain. Nothing here is estimated.
 | What | Evidence |
 |---|---|
 | Contract deployed and verified on Arc Testnet | [`BudgetEnforcer`](https://explorer.testnet.arc.io/address/0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB) |
-| Test suites | 69 Foundry (24 on the v1 contract, 45 on the multi-business contracts) + 235 Python tests + browser-side JS tests, run by CI on every push |
+| Test suites | 69 Foundry (24 on the v1 contract, 45 on the multi-business contracts) + 285 Python tests + browser-side JS tests, run by CI on every push |
 | First self-owned vendor bill paid through the contract | `ceedebooks.xyz` registration, 2.20 USDC, category 1 |
 | Multi-business contracts deployed and verified (v1.2.8) | [`BudgetFactory`](https://explorer.testnet.arc.io/address/0x97b9A3802bA6B258cBeF6070532a265656bb391C), [`LedgerAnchor`](https://explorer.testnet.arc.io/address/0x008217BeC86462E76126F94e50eBe68fb4a41444) |
 | Outside businesses or paying users | None yet |
@@ -146,7 +148,7 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 - **Model output is an input, never a release condition.** Circle's own `arc-escrow` sample releases contractor funds on a bare JSON response from GPT-4o with no structural check behind it. CeedeBooks is built specifically not to repeat that pattern.
 - **Independent receipt witness.** A three-way match proves nothing if the agent can confirm its own receipts. It can't.
 - **Settlement is confirmed, not hoped for.** Circle's transaction API is asynchronous — accepting a request isn't the same as it succeeding on-chain. CeedeBooks waits for a terminal state before trusting any result, closing a real phantom-payment risk most demos never test for.
-- **Tested, not just described.** 69 Foundry tests (24 cover the v1 contract, 45 cover the multi-business contracts) plus 235 Python tests covering the decision pipeline, the isolation between businesses and the onboarding flow.
+- **Tested, not just described.** 69 Foundry tests (24 cover the v1 contract, 45 cover the multi-business contracts) plus 285 Python tests covering the decision pipeline, the isolation between businesses and the onboarding flow.
 
 ---
 
@@ -188,7 +190,7 @@ An unregistered category has a limit of 0, so the contract refuses it. Names liv
 - **What the contract guarantees:** only registered vendors are paid, within per-transaction, daily and per-category limits, once per invoice, and only after a commitment from an earlier block. The agent cannot change any of that, whatever it is told.
 - **What it does not guarantee:** that an invoice is genuine. A human approves vendors and confirms receipts; the three-way match is only as honest as those people.
 - **One operator.** The agent wallet is a Circle developer-controlled wallet under one account. "A second wallet" is not an independent agent.
-- **The audit log is a database.** Each record's hash is checked against an on-chain event, but the log is not yet hash-chained, so a deleted row would not be detected. This is planned (Audit hardening).
+- **The audit log is a database.** Each record's hash is checked against an on-chain event, and since v1.2.9 each business's decisions are also hash-chained and signed, so an edited, deleted or reordered row is detected by `GET /ledger/verify`. Limits: the signing key sits on the same server as the database, so someone holding both could rewrite the chain, and the newest entries could be dropped together with their rows. Anchoring the chain head on-chain (next piece) is meant to close both; it is not built yet. Backfilled entries prove nothing about the period before the backfill.
 - **The admin key.** The approver is a wallet held off the server. If it is lost, nobody can approve vendors or change limits.
 - **Testnet.** Everything runs on Arc Testnet with test USDC. No outside business or paying user yet; every payment so far is self-owned.
 - **One business so far.** The backend is multi-tenant and onboarding is built, but only the original business (the live v1 contract) exists. Isolation between businesses and the registration checks are enforced in code and tested against mocked businesses and, for the factory event, a real factory on a local node; no real second business has used them yet.
@@ -228,7 +230,8 @@ Each business's contract and agent wallet addresses are public on the proof page
 | L3. Business onboarding | Application with wallet signature, operator accepts, hosted agent wallet per business, owner creates the contract from their own wallet, registration verified on-chain, owner checklist, operator-only outside flag, businesses on the proof page | v1.2.8.2 | ✅ Built (no outside business has used it yet) |
 | L4. Shadow mode and per-business proof | A business keeps paying as today while its real invoices are mirrored as testnet USDC payments; the owner records whether they agree with each decision; a public traction summary per business (transaction links, reasoning, agreement rate) | v1.2.8.3 | ✅ Built and tested with mocks (no outside business has run it yet) |
 | L5. Home business on the factory | Create the home business through the factory, move the pool, archive the v1 contract as business #1. Optional and last: it moves a live pool | v1.2.8.4 | ⏳ Optional |
-| E. Audit hardening | Per-business hash-chained ledger anchored on-chain, model-vs-rules log, on-chain red-team log, key-custody check, re-evaluate | v1.2.9 | ⏳ Planned |
+| E1. Signed hash-chained ledger | Per-business chain with Ed25519 signatures, `/ledger/verify`, archive flag, test-invoice relabel tool | v1.2.9 | ✅ Built |
+| E2-E5. Audit hardening, rest | On-chain anchoring of the ledger head, model-vs-rules log, on-chain red-team log, key-custody check, re-evaluate | v1.2.9.x | ⏳ Planned |
 | O. Oversight | Maker-checker, pause with reason, figures written by code | v1.2.10 | ⏳ Planned |
 | F. Gateway | `POST /v1/balances` unified balance on the dashboard | v1.3.0 | ⏳ Planned |
 | P. Proof and evidence | Outcomes numbers (decisions made vs escalated, human agreement rate, duplicates caught), "try it in 5 minutes" demo path, rollout records | | ⏳ Planned |
@@ -334,6 +337,9 @@ Run with a **single worker**: `uvicorn backend.main:app` (the rate limiter is pe
 | `POST /admin/decisions/{hash}/verdict` | admin session | `{"verdict": "agree" or "disagree"}` on a held or escalated shadow decision of the admin's own business. One verdict per decision; a second returns 409 |
 | `GET /businesses/{slug}/traction` | public | One active business: live and shadow counts apart, shadow real-amount totals per currency, agreement `{agree, disagree, n, rate}` (`rate` null when `n` is 0), the latest paid decisions with transaction and reasoning hashes, its contract, agent wallet and own / outside / unconfirmed label. No contacts or private fields |
 | `GET /admin/onboarding` | admin session | The owner's own setup checklist: agent wallet gas, pool funded, a category limit set, a vendor, a purchase order. Unreadable steps show as unknown, never as done |
+| `GET /.well-known/ledger-key` | public | The Ed25519 public key and key id that sign ledger entries |
+| `GET /ledger/verify?business=<slug>` | public | Re-checks that business's whole chain: links, hashes, signatures, sequence, and that every decision is chained exactly once. Returns the first problems found (at most 20). 503 if no key is configured |
+| `POST /operator/businesses/{id}/archive` | operator session | `{archived: true or false}`. An archived business accepts no writes and is hidden from public lists and totals; still readable with `?business=<slug>` and still verifies. Never the home business |
 | `GET /stats` | public | Counts of paid, held and escalated agent decisions (manual entries are reported separately and never counted as agent decisions), plus `submissions`: invoices processed, USDC paid and duplicates caught, split by origin |
 
 Hardening: amounts are exact decimals (positive, at most 6 places); request bodies over `MAX_BODY_BYTES` return 413; per-IP rate limit (`RATE_LIMIT_PER_MIN`) and a stricter limit on failed keys (`FAILED_AUTH_PER_MIN`) return 429; CORS allows only `CORS_ORIGINS` (default `https://ceedebooks.xyz`). Behind a reverse proxy set `TRUST_PROXY=1` so limits apply per real client.
@@ -342,7 +348,7 @@ Deploy steps (nginx + certbot + systemd, and the admin site): [deploy/DEPLOY.md]
 
 Limits: runway uses ledger history only (paid invoices in the last 30 days), so a fresh ledger gets the 365-day cap.
 
-`verify` checks the stored record and, where a transaction is recorded, the matching on-chain event. A hash-chain link between entries is planned (Phase E).
+`verify` checks the stored record and, where a transaction is recorded, the matching on-chain event. Since v1.2.9 the chain itself is checked by `GET /ledger/verify` (server side); a browser check and on-chain anchoring are planned.
 
 ---
 
@@ -354,6 +360,7 @@ ceedebooks/
 │   ├── config.py           # env loader
 │   ├── categories.py       # spend category enum (off-chain names for on-chain uint8 keys)
 │   ├── llm.py              # openai/gpt-oss-120b escalation narrative (Groq)
+│   ├── ledger.py           # signed hash-chained ledger per business (v1.2.9)
 │   ├── decision_log.py     # canonical-JSON SHA-256 audit log, hash-before-action
 │   ├── contract.py         # reads + Circle-signed writes, wait_for_transaction
 │   ├── payables.py         # three-way match, rules baseline, commit-then-pay, retry guard
@@ -369,9 +376,13 @@ ceedebooks/
 │       ├── test_multibusiness.py
 │       ├── test_onboarding.py
 │       ├── test_shadow.py
+│       ├── test_ledger.py
+│       ├── test_relabel.py
 │       └── conftest.py        # FakeChain: the chain is never real in tests
 ├── scripts/
 │   ├── create_api_key.py   # create / revoke API keys (printed once, stored hashed)
+│   ├── ledger_key.py       # create the ledger signing key without printing it
+│   ├── relabel_origin.py   # list, then (after confirmation) relabel test invoices agent -> demo
 │   └── pay_domain.py       # one-off: manual commit-then-pay of the ceedebooks.xyz domain bill
 ├── .github/workflows/ci.yml  # forge test + pytest on every push
 ├── backend/
@@ -436,7 +447,7 @@ pytest agent/tests/
 
 **69 Foundry tests** (24 for the v1 contract, 35 for `BudgetEnforcerV2`, 6 for `BudgetFactory`, 4 for `LedgerAnchor`), one per revert path or acceptance scenario: unregistered and revoked vendor, over per-tx / daily / category limits, unset category (fail-closed), same invoice resubmitted as a different file, missing / reused / mismatched commit, crash-and-retry, simulated prompt injection (contract refuses even if the agent were fooled), the escalate → approve / reject flow, escalated invoices blocked from direct payment, pause, withdraw, agent rotation, two-step approver rotation, and the `reasoningHash` round-trip via the `PaymentMade` event.
 
-**235 Python tests** covering the three-way match, rules-baseline decisions (pay / hold / escalate), retry safety (reprocessing a paid invoice is a no-op), API access control (every denied path), server-side runway, input validation, the public audit endpoints and on-chain verification, the invoice pre-flight dry run (it writes nothing and reveals no balances or limits), and the admin wallet sign-in and routes. Browser-side tests check the proof page's hash recomputation (`site/verify.test.js`) and the admin app's call encoding and rendering (`admin/*.test.js`). The vendor portal suite covers: a signature from another wallet is refused, a sign-in signature cannot be replayed as an application, challenges are single use, the pending and per-IP limits, accepting once only, vendor sessions seeing only their own data, sessions ending on wallet change, idle time and logout, a vendor never labelling its own origin, and the metrics split by origin.
+**285 Python tests** covering the three-way match, rules-baseline decisions (pay / hold / escalate), retry safety (reprocessing a paid invoice is a no-op), API access control (every denied path), server-side runway, input validation, the public audit endpoints and on-chain verification, the invoice pre-flight dry run (it writes nothing and reveals no balances or limits), and the admin wallet sign-in and routes. Browser-side tests check the proof page's hash recomputation (`site/verify.test.js`) and the admin app's call encoding and rendering (`admin/*.test.js`). The vendor portal suite covers: a signature from another wallet is refused, a sign-in signature cannot be replayed as an application, challenges are single use, the pending and per-IP limits, accepting once only, vendor sessions seeing only their own data, sessions ending on wallet change, idle time and logout, a vendor never labelling its own origin, and the metrics split by origin.
 
 ### Deploy
 
@@ -484,6 +495,15 @@ Deployment transactions: [LedgerAnchor `0x45c031cd...9f9f4d`](https://explorer.t
 ---
 
 ## Changelog
+
+**v1.2.9: Phase E1, signed hash-chained ledger, archive flag, relabel tool (built and tested)**
+- New `ledger` table per business: `sequence`, `prev_hash`, `entry_hash`, canonical JSON body, `key_id` and an Ed25519 signature. The audit row and its ledger entry are written in one `BEGIN IMMEDIATE` transaction. With no usable key nothing is logged and nothing is paid
+- One-time ordered backfill for a business with no chain, starting from a genesis entry that records how many entries were backfilled and that this shows nothing about the period before. Decisions added behind the chain later show as `unchained_decision`, never auto-chained
+- `GET /ledger/verify?business=<slug>` and `GET /.well-known/ledger-key`. Detects fork, bad sequence, bad body, bad hash, broken link, wrong key, bad signature, bad genesis, duplicate, missing or changed decision. The API refuses to start without the key and logs any business whose chain fails at startup
+- Archive flag (reuses `businesses.status`): operator-only `POST /operator/businesses/{id}/archive`; archived is read-only, excluded from public lists, `/stats`, `/decisions` and the manifest, and still verifies. Archive button in the admin site
+- `scripts/relabel_origin.py` lists self-run test invoices first and relabels them `demo` only for the exact rows you confirm; `scripts/ledger_key.py` creates the key without printing it
+- `deploy/DEPLOY.md` backup lines fixed to `cp ceedebooks.db ~/backups/ceedebooks.db.pre-<version>`, with an "Upgrading to v1.2.9" section
+- New Python tests for the ledger, archive and relabel tool (285 in total). Not in this release: on-chain anchoring, browser-side chain check, key rotation. The key and database share a server, so this is tamper-evident against partial edits, not against someone holding both
 
 **v1.2.8.3: Phase L4, shadow mode and per-business proof (built and tested)**
 - Invoices gain `mode` (`live` or `shadow`), `real_amount` (exact decimal text) and `real_currency`. A shadow invoice must carry both, a live one must not, a vendor cannot submit one, and the model layer refuses a half-shadow invoice. Older databases gain the columns in place and their invoices stay live
