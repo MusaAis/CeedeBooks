@@ -29,7 +29,7 @@ def _env(tmp_path, monkeypatch, chain):
     monkeypatch.setattr(config, "failed_auth_per_min", 1000)
     CHAIN["approver"] = ADMIN.address
     chain.approver = lambda: CHAIN["approver"]
-    monkeypatch.setattr(main, "_chain_snapshot", lambda business: {"chain_ok": True, "approver": CHAIN["approver"].lower()})
+    monkeypatch.setattr(main, "_chain_snapshot", lambda business, categories=(): {"chain_ok": True, "approver": CHAIN["approver"].lower()})
 
 
 @pytest.fixture
@@ -273,7 +273,7 @@ ORIGINAL_SNAPSHOT = main._chain_snapshot  # captured at import, before the fixtu
 def test_the_real_chain_snapshot_lists_the_spend_categories(chain):
     chain.approver_addr = ADMIN.address
     chain.balance, chain.remaining, chain.category_cap = 5_000_000, (1, 2_000_000), 3_000_000
-    snap = ORIGINAL_SNAPSHOT(asyncio.run(models.get_business(1)))
+    snap = ORIGINAL_SNAPSHOT(asyncio.run(models.get_business(1)), asyncio.run(models.list_categories(1)))
     assert snap["chain_ok"] is True
     assert [x["name"] for x in snap["categories"]] == ["Data Oracle", "Infrastructure"]
     assert "weekly_limit_usdc" not in snap  # the v1 contract has no weekly cap

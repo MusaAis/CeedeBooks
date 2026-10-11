@@ -71,7 +71,9 @@ def _add_business(slug="acme", address=ACME_ADDRESS, version=2, status="active")
                 (slug.title(), slug, address, version, status))
             await db.commit()
             return cur.lastrowid
-    return asyncio.run(go())
+    business_id = asyncio.run(go())
+    asyncio.run(models.add_category(business_id, "Hosting"))  # category 0 of this business
+    return business_id
 
 
 def _key(business_id, role="buyer", vendor_id=None):

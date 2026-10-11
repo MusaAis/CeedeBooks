@@ -12,6 +12,15 @@ from backend import models
 log = logging.getLogger(__name__)
 
 
+# A rounding allowance, not a price range: an invoice amount further than this from its purchase order goes to the owner.
+AMOUNT_TOLERANCE_USDC = 0.01
+
+
+def amount_matches(po_amount: float, invoice_amount: float) -> bool:
+    """Compares in whole micro-USDC so binary floats cannot turn an exact 0.01 difference into a mismatch."""
+    return abs(round(po_amount * 1_000_000) - round(invoice_amount * 1_000_000)) <= round(AMOUNT_TOLERANCE_USDC * 1_000_000)
+
+
 class Decision(str, Enum):
     PAY = "pay"
     HOLD = "hold"
@@ -52,7 +61,7 @@ async def three_way_match(invoice: Invoice) -> tuple[bool, str]:
     po = await models.get_purchase_order(invoice.business_id, invoice.po_number)
     if po is None:
         return False, f"No matching PO for {invoice.po_number}"
-    if abs(po["amount_usdc"] - invoice.amount_usdc) > 0.01:
+    if not amount_matches(po["amount_usdc"], invoice.amount_usdc):
         return False, f"Amount mismatch: PO {po['amount_usdc']} vs invoice {invoice.amount_usdc}"
 
     receipt = await models.get_receipt(invoice.business_id, po["id"])
@@ -130,7 +139,7 @@ async def preflight(invoice: Invoice, treasury_runway_days: float, business: dic
     checks = {
         "not_already_paid": not already_paid,
         "po_found": po is not None,
-        "amount_matches_po": po is not None and abs(po["amount_usdc"] - invoice.amount_usdc) <= 0.01,
+        "amount_matches_po": po is not None and amount_matches(po["amount_usdc"], invoice.amount_usdc),
         "receipt_on_file": receipt is not None,
         "receipt_independent": receipt is not None and receipt["confirmed_by_role"] != "agent",
         "vendor_registered_onchain": vendor_registered,

@@ -16,9 +16,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from agent import categories as category_rules
 from agent import contract, decision_log, ledger, payables, treasury
 from agent.config import config
-from agent.categories import Category as SpendCategory
 from backend import admin_auth, auth, models, vendor_auth
 
 log = logging.getLogger("ceedebooks.api")
@@ -210,11 +210,28 @@ async def get_vendor(vendor_id: int, who: auth.Principal = Depends(auth.require(
     return dict(vendor)
 
 
+async def _require_category(business: dict, category: int, *, need_limit: bool = True) -> None:
+    """The category must be one of THIS business's own. With need_limit it must also have a daily limit above zero
+    on-chain right now; a limit that cannot be read refuses the request (fail closed, nothing is saved)."""
+    if await models.get_category(business["id"], category) is None:
+        raise HTTPException(422, "Unknown category for this business")
+    if not need_limit:
+        return
+    try:
+        limit = await asyncio.to_thread(contract.chain_for(business).category_limit, category)
+    except Exception:
+        log.exception("Could not read the category limit for business %s", business["id"])
+        raise HTTPException(503, "Could not read this category's limit from the chain right now; nothing was saved")
+    if not category_rules.usable(limit):
+        raise HTTPException(422, "This category has no daily limit on-chain yet; the owner sets one in the admin site first")
+
+
 @app.post("/purchase-orders")
 async def create_purchase_order(body: PurchaseOrderIn, who: auth.Principal = Depends(auth.require("buyer"))):
-    await _writable(who)
+    business = await _writable(who)
     if await models.get_vendor(who.business_id, body.vendor_id) is None:
         raise HTTPException(404, "Vendor not found")
+    await _require_category(business, body.category)
     try:
         po_id = await models.save_purchase_order(who.business_id, body.po_number, body.vendor_id, float(body.amount_usdc), body.category)
     except sqlite3.IntegrityError:
@@ -238,8 +255,9 @@ async def create_receipt(body: ReceiptIn, who: auth.Principal = Depends(auth.req
 
 # ---- invoices (buyer, or the vendor itself)
 
-async def _checked_submission(body: InvoiceIn, who: auth.Principal):
-    """Access and consistency checks shared by /invoices and /invoices/preflight. Returns (vendor, po, business)."""
+async def _checked_submission(body: InvoiceIn, who: auth.Principal, *, need_limit: bool = True):
+    """Access and consistency checks shared by /invoices and /invoices/preflight. Returns (vendor, po, business).
+    A dry run (need_limit False) only checks that the category exists; its on-chain limit shows up in the outcome."""
     business = await _writable(who)
     if who.role == "vendor" and who.vendor_id != body.vendor_id:
         raise HTTPException(403, "A vendor key can only submit invoices for its own vendor_id")
@@ -266,6 +284,7 @@ async def _checked_submission(body: InvoiceIn, who: auth.Principal):
 
     if po is not None and po["category"] != body.category:
         raise HTTPException(422, "Invoice category does not match the purchase order's category")
+    await _require_category(business, body.category, need_limit=need_limit)
     return vendor, po, business
 
 
@@ -273,7 +292,7 @@ async def _checked_submission(body: InvoiceIn, who: auth.Principal):
 async def preflight_invoice(body: InvoiceIn, who: auth.Principal = Depends(auth.require("buyer", "vendor"))):
     """Dry run: would this invoice be paid, held or escalated right now, and why? Nothing is saved, logged or sent
     on-chain, so an agent can fix problems before submitting. Same access rules as POST /invoices."""
-    vendor, _, business = await _checked_submission(body, who)
+    vendor, _, business = await _checked_submission(body, who, need_limit=False)
     amount = float(body.amount_usdc)
     invoice = payables.Invoice(
         business_id=who.business_id, id=0, invoice_number=body.invoice_number, vendor_wallet=vendor["wallet_address"],
@@ -458,6 +477,9 @@ async def agent_manifest():
             "GET /ledger/verify": "public; walks one business's hash chain (?business=<slug>)",
             "GET /.well-known/ledger-key": "public; the key that signs ledger entries",
         },
+        "amounts": ("amount_usdc is always entered by the submitter (there is no default). The three-way match accepts a difference of up to "
+                    f"{payables.AMOUNT_TOLERANCE_USDC} USDC from the purchase order as a rounding allowance; anything further goes to the owner."),
+        "categories": "Each business creates and names its own spending categories and signs each one's daily limit from its own wallet. A category with no on-chain limit cannot be used.",
         "guarantees": [
             "The agent cannot pay outside the on-chain vendor registry, per-transaction, daily or category limits",
             "The reasoning hash is committed on-chain in an earlier block than the payment",
@@ -538,7 +560,19 @@ async def admin_logout(request: Request, _: auth.Principal = Depends(auth.requir
     return {"ok": True}
 
 
-def _chain_snapshot(business: dict) -> dict:
+def _category_rows(business: dict, cats: list) -> list:
+    """The business's own category names (database) with their limits (chain). Raises if the chain cannot be read."""
+    chain = contract.chain_for(business)
+    rows = []
+    for c in cats:
+        limit = chain.category_limit(c["id"])
+        _, in_cat = chain.remaining_today(c["id"])
+        rows.append({"id": c["id"], "name": c["name"], "daily_limit_usdc": limit / 1_000_000,
+                     "remaining_usdc": in_cat / 1_000_000, "usable": category_rules.usable(limit)})
+    return rows
+
+
+def _chain_snapshot(business: dict, categories: list = ()) -> dict:
     snap = {"chain_ok": True, "business": business["slug"], "contract": business["enforcer_address"],
             "contract_version": business["contract_version"]}
     try:
@@ -555,12 +589,7 @@ def _chain_snapshot(business: dict) -> dict:
         weekly = chain.weekly_limit()
         if weekly is not None:  # v2 contracts only
             snap.update(weekly_limit_usdc=weekly / 1_000_000, remaining_week_usdc=chain.remaining_this_week() / 1_000_000)
-        cats = []
-        for c in SpendCategory:
-            overall, in_cat = chain.remaining_today(int(c))
-            cats.append({"id": int(c), "name": c.name.replace("_", " ").title(),
-                         "daily_limit_usdc": chain.category_limit(int(c)) / 1_000_000, "remaining_usdc": in_cat / 1_000_000})
-        snap["categories"] = cats
+        snap["categories"] = _category_rows(business, list(categories))
     except Exception:
         log.exception("admin overview chain read failed")
         snap["chain_ok"] = False
@@ -570,8 +599,9 @@ def _chain_snapshot(business: dict) -> dict:
 @app.get("/admin/overview")
 async def admin_overview(who: auth.Principal = Depends(auth.require_admin)):
     business = await models.get_business(who.business_id)
+    cats = await models.list_categories(who.business_id)
     snap, counts, vendors, pos, pending = await asyncio.gather(
-        asyncio.to_thread(_chain_snapshot, business), models.invoice_counts(who.business_id), models.list_vendors(who.business_id),
+        asyncio.to_thread(_chain_snapshot, business, cats), models.invoice_counts(who.business_id), models.list_vendors(who.business_id),
         models.list_purchase_orders(who.business_id), models.count_pending_applications(who.business_id),
     )
     return {"chain": snap, "invoices": counts, "vendors": len(vendors), "purchase_orders": len(pos),
@@ -597,6 +627,57 @@ async def admin_vendors(who: auth.Principal = Depends(auth.require_admin)):
 @app.get("/admin/purchase-orders")
 async def admin_purchase_orders(who: auth.Principal = Depends(auth.require_admin)):
     return {"purchase_orders": await models.list_purchase_orders(who.business_id)}
+
+
+class CategoryNameIn(_Strict):
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def _clean(cls, v: str) -> str:
+        return category_rules.clean_name(v)
+
+
+@app.get("/admin/categories")
+async def admin_categories(who: auth.Principal = Depends(auth.require_admin)):
+    """This business's own categories and their on-chain limits. A limit that cannot be read is null and never counts as usable."""
+    business = await models.get_business(who.business_id)
+    cats = await models.list_categories(who.business_id)
+    try:
+        rows = await asyncio.to_thread(_category_rows, business, cats)
+        return {"chain_ok": True, "categories": rows}
+    except Exception:
+        log.exception("admin categories chain read failed")
+        return {"chain_ok": False, "categories": [{"id": c["id"], "name": c["name"], "daily_limit_usdc": None, "remaining_usdc": None, "usable": None} for c in cats]}
+
+
+@app.post("/admin/categories")
+async def admin_create_category(body: CategoryNameIn, who: auth.Principal = Depends(auth.require_admin)):
+    """Names a new category and gives it the next free id. It cannot be used until the owner signs setCategoryDailyLimit
+    for that id from their own wallet; the server never holds that key."""
+    await _writable(who)
+    try:
+        category_id = await models.add_category(who.business_id, body.name)
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, "You already have a category with that name")
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    await _admin_log(who, "create_category", f"category {category_id}")
+    return {"id": category_id, "name": body.name}
+
+
+@app.patch("/admin/categories/{category_id}")
+async def admin_rename_category(body: CategoryNameIn, category_id: int = Path(ge=0, le=255), who: auth.Principal = Depends(auth.require_admin)):
+    """Only the name can change; the id is what the contract knows, so it never does."""
+    await _writable(who)
+    try:
+        found = await models.rename_category(who.business_id, category_id, body.name)
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, "You already have a category with that name")
+    if not found:
+        raise HTTPException(404, "Category not found")
+    await _admin_log(who, "rename_category", f"category {category_id}")
+    return {"id": category_id, "name": body.name}
 
 
 @app.get("/admin/invoices")
@@ -877,7 +958,7 @@ async def vendor_me(who: auth.Principal = Depends(auth.require("vendor"))):
         approved = None  # unknown, shown as such
     pos, invoices = await asyncio.gather(
         models.list_vendor_purchase_orders(who.business_id, who.vendor_id), models.list_vendor_invoices(who.business_id, who.vendor_id))
-    categories = {int(c): c.name.replace("_", " ").title() for c in SpendCategory}
+    categories = {c["id"]: c["name"] for c in await models.list_categories(who.business_id)}
     for po in pos:
         po["category_name"] = categories.get(po["category"], f"Category {po['category']}")
     return {"vendor": {"id": vendor["id"], "name": vendor["name"], "wallet_address": vendor["wallet_address"]},
@@ -1136,7 +1217,8 @@ async def operator_archive_business(business_id: int, body: ArchiveIn, who: auth
 @app.get("/admin/onboarding")
 async def admin_onboarding(who: auth.Principal = Depends(auth.require_admin)):
     business = await models.get_business(who.business_id)
-    vendors, pos = await asyncio.gather(models.list_vendors(who.business_id), models.list_purchase_orders(who.business_id))
+    vendors, pos, cats = await asyncio.gather(
+        models.list_vendors(who.business_id), models.list_purchase_orders(who.business_id), models.list_categories(who.business_id))
 
     def read():
         steps = []
@@ -1153,7 +1235,8 @@ async def admin_onboarding(who: auth.Principal = Depends(auth.require_admin)):
         step("agent_gas", f"Send about 0.5 USDC to the agent wallet {agent} so it can pay network fees" if agent else "Agent wallet gas",
              (lambda: contract.native_balance(agent) >= contract.GAS_DUST_UNITS) if agent else (lambda: None))
         step("pool_funded", "Add USDC to your pool with the Add funds button below (a normal wallet send to the contract does not work)", lambda: chain.usdc_balance() > 0)
-        step("category_limit", "Set a daily limit for at least one spending category", lambda: any(chain.category_limit(int(c)) > 0 for c in SpendCategory))
+        step("category_limit", "Create a spending category and set its daily limit (Limits tab)",
+             lambda: any(category_rules.usable(chain.category_limit(c["id"])) for c in cats))
         return steps
 
     steps = await asyncio.to_thread(read)

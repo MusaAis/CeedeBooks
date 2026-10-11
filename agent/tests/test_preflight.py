@@ -71,6 +71,7 @@ def _key(role, vendor_id=None):
 @pytest.fixture
 def world(client):
     buyer = _key("buyer")
+    asyncio.run(models.add_category(1, "Research"))  # id 2 next to the seeded 0 and 1
     a = client.post("/vendors", json={"name": "A", "wallet_address": WALLET_A}, headers=buyer).json()["id"]
     b = client.post("/vendors", json={"name": "B", "wallet_address": WALLET_B}, headers=buyer).json()["id"]
     po = client.post("/purchase-orders", json={"po_number": "PO-1", "vendor_id": a, "amount_usdc": "5", "category": 2},

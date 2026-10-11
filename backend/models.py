@@ -5,6 +5,7 @@ from typing import Optional
 
 import aiosqlite
 
+from agent.categories import HOME_SEED, MAX_ID
 from agent.config import config
 
 HOME_BUSINESS_ID = 1  # the original CeedeBooks business (the v1 contract); existing rows belong to it
@@ -38,6 +39,14 @@ CREATE TABLE IF NOT EXISTS business_applications (
     business_id INTEGER REFERENCES businesses(id),
     created_at REAL NOT NULL,
     decided_at REAL
+);
+
+CREATE TABLE IF NOT EXISTS categories (
+    business_id INTEGER NOT NULL REFERENCES businesses(id),
+    id INTEGER NOT NULL CHECK (id BETWEEN 0 AND 255),
+    name TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    UNIQUE (business_id, id)
 );
 
 CREATE TABLE IF NOT EXISTS vendors (
@@ -151,6 +160,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_application_pending_wallet_v2
 CREATE UNIQUE INDEX IF NOT EXISTS ux_bizapp_pending_wallet ON business_applications(owner_wallet) WHERE status = 'pending';
 CREATE UNIQUE INDEX IF NOT EXISTS ux_bizapp_open_slug ON business_applications(slug) WHERE status IN ('pending', 'accepting', 'accepted');
 CREATE UNIQUE INDEX IF NOT EXISTS ux_business_contract ON businesses(enforcer_address) WHERE enforcer_address != '';
+CREATE UNIQUE INDEX IF NOT EXISTS ux_category_name ON categories(business_id, lower(name));
 CREATE INDEX IF NOT EXISTS ix_invoices_business ON invoices(business_id, id);
 CREATE INDEX IF NOT EXISTS ix_vendors_business ON vendors(business_id, id);
 """
@@ -216,12 +226,22 @@ async def _seed_home_business(db) -> None:
     )
 
 
+async def _seed_home_categories(db) -> None:
+    """The original business used categories 0 and 1 before names were stored; seed them so its history reads the same. Idempotent."""
+    for category_id, name in HOME_SEED:
+        await db.execute(
+            "INSERT OR IGNORE INTO categories (business_id, id, name, created_at) VALUES (?, ?, ?, ?)",
+            (HOME_BUSINESS_ID, category_id, name, time.time()),
+        )
+
+
 async def init_db() -> None:
     async with aiosqlite.connect(config.db_path) as db:
         await db.executescript(_TABLES)
         await _migrate(db)
         await db.executescript(_INDEXES)
         await _seed_home_business(db)
+        await _seed_home_categories(db)
         await db.commit()
 
 
@@ -270,6 +290,45 @@ async def list_businesses(status: Optional[str] = None) -> list:
     if status is None:
         return await _all("SELECT * FROM businesses ORDER BY id")
     return await _all("SELECT * FROM businesses WHERE status = ? ORDER BY id", (status,))
+
+
+# ---- categories (names for the on-chain uint8 keys; each business has its own, and ids never change or get reused)
+
+async def list_categories(business_id: int) -> list:
+    return await _all("SELECT id, name FROM categories WHERE business_id = ? ORDER BY id", (business_id,))
+
+
+async def get_category(business_id: int, category_id: int) -> Optional[dict]:
+    row = await _one("SELECT id, name FROM categories WHERE business_id = ? AND id = ?", (business_id, category_id))
+    return dict(row) if row else None
+
+
+async def add_category(business_id: int, name: str) -> int:
+    """Gives the business's next free id (lowest unused, 0 to 255) to a new name. Raises sqlite3.IntegrityError if the
+    business already has that name (any case) and ValueError when all 256 ids are taken."""
+    async with aiosqlite.connect(config.db_path) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        async with db.execute("SELECT id FROM categories WHERE business_id = ?", (business_id,)) as cur:
+            taken = {r[0] for r in await cur.fetchall()}
+        free = next((i for i in range(MAX_ID + 1) if i not in taken), None)
+        if free is None:
+            await db.rollback()
+            raise ValueError("This business has used all 256 category ids")
+        try:
+            await db.execute("INSERT INTO categories (business_id, id, name, created_at) VALUES (?, ?, ?, ?)", (business_id, free, name, time.time()))
+        except Exception:
+            await db.rollback()
+            raise
+        await db.commit()
+        return free
+
+
+async def rename_category(business_id: int, category_id: int, name: str) -> bool:
+    """Only the name changes. Raises sqlite3.IntegrityError on a duplicate name; returns False if this business has no such id."""
+    async with aiosqlite.connect(config.db_path) as db:
+        cur = await db.execute("UPDATE categories SET name = ? WHERE business_id = ? AND id = ?", (name, business_id, category_id))
+        await db.commit()
+        return cur.rowcount == 1
 
 
 # ---- vendors, purchase orders, receipts, invoices

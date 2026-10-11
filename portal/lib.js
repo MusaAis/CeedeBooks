@@ -35,6 +35,14 @@
     pay: ["ok", "Would be paid now"], hold: ["warn", "Would be held"], escalate: ["warn", "Would be sent to the admin for review"],
     already_paid: ["bad", "This invoice number was already paid"]
   };
+  // The amount is always typed or confirmed by the person; an empty or malformed one is an error, never a default.
+  function cleanAmount(text) {
+    var t = String(text == null ? "" : text).trim();
+    if (!t) throw new Error("Enter the amount on your invoice in USDC.");
+    var m = /^(\d{1,12})(?:\.(\d{1,6}))?$/.exec(t);
+    if (!m || /^0*(\.0*)?$/.test(t)) throw new Error("Enter an amount above zero such as 12.5 (at most 6 decimals).");
+    return t;
+  }
   function describeOutcome(o) { return OUTCOMES[o] || ["warn", "Result: " + String(o)]; }
   // "12.5" -> 12500000n (USDC has 6 decimals). Rejects anything that is not a plain decimal.
   function usdcToUnits(text) {
@@ -70,7 +78,7 @@
     return t;
   }
   var api = { CONFIG: CONFIG, usdcToUnits: usdcToUnits, validateLimits: validateLimits, createBusinessData: createBusinessData,
-              SEL_CREATE_BUSINESS: SEL_CREATE_BUSINESS, cleanSlug: cleanSlug, short: short, utf8Hex: utf8Hex, sha256Hex: sha256Hex, cleanDocHash: cleanDocHash,
+              SEL_CREATE_BUSINESS: SEL_CREATE_BUSINESS, cleanSlug: cleanSlug, short: short, utf8Hex: utf8Hex, sha256Hex: sha256Hex, cleanDocHash: cleanDocHash, cleanAmount: cleanAmount,
               cleanInvoiceNumber: cleanInvoiceNumber, describeOutcome: describeOutcome };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.CeedePortalLib = api;

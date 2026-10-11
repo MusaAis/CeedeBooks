@@ -61,6 +61,7 @@ def _h(key):
 def world(client):
     """Two vendors, a buyer key, and a vendor key for each; vendor A has a PO."""
     buyer = _key("buyer", label="musa")
+    asyncio.run(models.add_category(1, "Research"))  # id 2 next to the seeded 0 and 1
     a = client.post("/vendors", json={"name": "A", "wallet_address": WALLET_A}, headers=_h(buyer)).json()["id"]
     b = client.post("/vendors", json={"name": "B", "wallet_address": WALLET_B}, headers=_h(buyer)).json()["id"]
     po = client.post(

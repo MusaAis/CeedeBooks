@@ -70,6 +70,7 @@ def _add_acme():
                 "VALUES ('Acme', 'acme', ?, ?, ?, 2, 'active', 0)", (ACME, ADMIN_2.address, "0x" + "ab" * 20))
             await db.commit()
     asyncio.run(go())
+    asyncio.run(models.add_category(asyncio.run(models.get_business_by_slug("acme"))["id"], "Hosting"))
 
 
 def _setup(client, h, number="PO-1", amount="0.5", receipt=True, wallet=WALLET):
@@ -432,6 +433,6 @@ def test_a_business_not_confirmed_as_outside_is_labelled_so_and_an_outside_one_o
 
 
 def test_the_admin_overview_names_the_business_for_the_copy_block(client, chain, monkeypatch):
-    monkeypatch.setattr(main, "_chain_snapshot", lambda business: {"chain_ok": True, "approver": ADMIN_1.address.lower()})
+    monkeypatch.setattr(main, "_chain_snapshot", lambda business, categories=(): {"chain_ok": True, "approver": ADMIN_1.address.lower()})
     h = _bearer(client)
     assert client.get("/admin/overview", headers=h).json()["business"]["slug"] == "ceedebooks"

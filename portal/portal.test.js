@@ -71,6 +71,8 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
   // helpers
   assert.strictEqual(L.cleanDocHash("0x" + "AB".repeat(32)), "ab".repeat(32));
   assert.throws(() => L.cleanDocHash("not a hash")); assert.throws(() => L.cleanInvoiceNumber("  "));
+  assert.strictEqual(L.cleanAmount(" 12.5 "), "12.5");
+  ["", "   ", "0", "0.000000", "-1", "abc", "1.1234567", "1e3", "1,5"].forEach((bad) => assert.throws(() => L.cleanAmount(bad), bad + " is not an amount"));
   assert.strictEqual(await L.sha256Hex(new TextEncoder().encode("abc")), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
 
   require("./portal.js");
@@ -94,6 +96,8 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
   // invoice: PO values are fixed by the server's record, dry run first, then submit
   await findBtn(root, "Invoice this").listeners.click(); await tick();
+  assert.strictEqual(byId("inv-amount").value, "5", "the amount is filled in from the order so the vendor sees it");
+  assert.ok(/The order is for 5 USDC/.test(root.textContent) && /0\.01 USDC away/.test(root.textContent), "the order amount and the allowance are shown");
   byId("inv-number").value = "INV-9"; byId("inv-hash").value = "AB".repeat(32);
   await findBtn(root, "Check first (dry run)").listeners.click(); await tick();
   assert.deepStrictEqual(posts[1], { path: "/invoices/preflight", body: { invoice_number: "INV-9", vendor_id: 7, amount_usdc: "5", category: 2, doc_hash: "ab".repeat(32), po_number: "PO-1" } });
@@ -103,6 +107,22 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
   assert.ok(/Decision: pay/.test(root.textContent) && /Check this decision on the proof page/.test(root.textContent));
   let links = []; walk(root, (x) => { if (x.tag === "a" && x.attrs.href) links.push(x.attrs.href); });
   assert.ok(links.includes(L.CONFIG.proof + "/#check=" + "cd".repeat(32)));
+
+  // the amount is whatever the vendor enters: a changed value is what is sent, an empty or malformed one sends nothing
+  await findBtn(root, "Invoice this").listeners.click(); await tick();
+  byId("inv-number").value = "INV-11"; byId("inv-hash").value = "ab".repeat(32);
+  const beforeAmounts = posts.length;
+  byId("inv-amount").value = "";
+  await findBtn(root, "Check first (dry run)").listeners.click(); await tick();
+  await findBtn(root, "Submit invoice").listeners.click(); await tick();
+  assert.strictEqual(posts.length, beforeAmounts, "an empty amount sends nothing, not a default");
+  assert.ok(/Enter the amount on your invoice/.test(document.body.textContent), "the vendor is told to enter it");
+  byId("inv-amount").value = "abc";
+  await findBtn(root, "Check first (dry run)").listeners.click(); await tick();
+  assert.strictEqual(posts.length, beforeAmounts, "a malformed amount sends nothing");
+  byId("inv-amount").value = "5.01";
+  await findBtn(root, "Check first (dry run)").listeners.click(); await tick();
+  assert.strictEqual(posts[posts.length - 1].body.amount_usdc, "5.01", "the amount the vendor typed is what is sent, not the order's 5");
 
   // a bad hash is refused in the browser, before any request
   const before = posts.length;
@@ -124,5 +144,12 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
   expire = true;
   await findBtn(root, "Sign out").listeners.click(); await tick();
   assert.ok(/Connect wallet/.test(root.textContent) && !/PO-1/.test(root.textContent));
+    // no form sends a hidden amount: no default and no fixed 0.01 in the portal sources
+  const fs = require("fs");
+  ["portal.js", "lib.js", "business.js"].forEach((f) => {
+    const src = fs.readFileSync(__dirname + "/" + f, "utf8");
+    assert.ok(!/amount_usdc:\s*String\(po\./.test(src), f + ": no invoice body takes the amount straight from the purchase order");
+    assert.ok(!/(amount_usdc|\.value)\s*[:=]\s*["']?0\.01\b/.test(src), f + ": no fixed 0.01 amount");
+  });
   console.log("PORTAL_SMOKE_OK");
 })().catch((e) => { console.error(e); process.exit(1); });

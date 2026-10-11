@@ -117,3 +117,15 @@ The first start adds the `ledger` table and chains every existing decision once,
 **Relabelling test invoices** (rule: a payment to a wallet you control is `demo`, not `agent`): `PYTHONPATH=. python3 scripts/relabel_origin.py list --wallets <your wallet>,<another>` shows the rows and changes nothing; it prints the exact `apply` command, which only works with the code `list` printed and a typed `yes`.
 
 To go back: stop the service, restore `~/backups/ceedebooks.db.pre-1.2.9` and check out v1.2.8.3. Do not just run the old code on this database: decisions it logs would have no ledger entry and `/ledger/verify` would report them as unchained.
+
+## Upgrading to v1.2.9.1 (owner-created categories, entered invoice amounts)
+
+No contract change and no ledger or hash change. The first start adds the `categories` table and seeds the home business with categories 0 (Data Oracle) and 1 (Infrastructure), so its history reads the same. Every other business starts with no categories: **until its owner adds one and signs its limit, that business cannot create a purchase order or an invoice** (the admin Overview says so).
+
+1. Back up: `mkdir -p ~/backups && cp ceedebooks.db ~/backups/ceedebooks.db.pre-1.2.9.1` (from `~/ceedebooks`).
+2. Apply the patch, run `pytest agent/tests/` (set the CI placeholder variables first), then `sudo systemctl restart ceedebooks-api` and wait about 15 seconds. `sudo journalctl -u ceedebooks-api -n 30` should show no errors.
+3. Re-copy the admin site and the vendor portal: `sudo cp admin/index.html admin/admin.css admin/wallet.js admin/admin.js /var/www/ceedebooks-admin/` and `sudo cp portal/index.html portal/business.html portal/portal.css portal/lib.js portal/portal.js portal/business.js /var/www/ceedebooks-portal/`.
+4. Check: sign in to the admin site, open **Limits and safety**: the home business shows Data Oracle and Infrastructure with their limits and a Ready status. The **Purchase orders** form lists only Ready categories. The vendor portal's invoice form shows the order amount filled in and editable.
+5. For each other business, its owner adds a category in **Limits and safety** and signs its daily limit (a wallet transaction); only then can it raise a purchase order.
+
+To go back: stop the service, restore `~/backups/ceedebooks.db.pre-1.2.9.1` (or leave the database: the `categories` table is additive and the older code ignores it) and check out v1.2.9.

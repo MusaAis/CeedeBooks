@@ -304,7 +304,11 @@
         catch (e) { say("Select the text below and copy it.", "ok"); }
       }) }, ["Copy traction update"]), out]);
   }
-  function categories() { return (S.overview && S.overview.chain.categories) || []; }
+  // A category's state comes from the chain: its daily limit must be above zero before it can take orders or invoices.
+  function categoryStatus(x) {
+    return x.usable === true ? chip("Ready", "ok") : x.usable === false ? chip("Needs a limit", "warn") : chip("Unknown", "warn");
+  }
+  function limitText(x) { return x.daily_limit_usdc == null ? "Unknown" : usdc(x.daily_limit_usdc); }
 
   // ---------- views
   var VIEWS = {
@@ -322,7 +326,8 @@
         wrap.appendChild(fundPanel());
         wrap.appendChild(copyPanel(o.business));
         wrap.appendChild(h("h3", null, ["Spending categories"]));
-        wrap.appendChild(table(["Category", "Daily limit", "Left today"], c.categories.map(function (x) { return [x.name, usdc(x.daily_limit_usdc), usdc(x.remaining_usdc)]; })));
+        if (!c.categories.length) wrap.appendChild(h("p", { class: "note" }, ["You have no categories yet. Add one in the Limits tab, then set its daily limit."]));
+        else wrap.appendChild(table(["Category", "Daily limit", "Left today", "Status"], c.categories.map(function (x) { return [x.name, limitText(x), x.remaining_usdc == null ? "Unknown" : usdc(x.remaining_usdc), categoryStatus(x)]; })));
         wrap.appendChild(h("p", { class: "note" }, ["Admin wallet: " + c.approver]));
       }
       var setup = await setupChecklist();
@@ -425,19 +430,23 @@
     },
 
     pos: async function () {
-      var results = await Promise.all([api("/admin/purchase-orders"), api("/admin/vendors"), overview()]);
-      var pos = results[0].purchase_orders, vendors = results[1].vendors;
+      var results = await Promise.all([api("/admin/purchase-orders"), api("/admin/vendors"), api("/admin/categories")]);
+      var pos = results[0].purchase_orders, vendors = results[1].vendors, cats = results[2].categories;
+      var ready = cats.filter(function (c) { return c.usable === true; });
       var num = h("input", { maxlength: "64", autocomplete: "off" }), amt = h("input", { inputmode: "decimal", placeholder: "5.00" });
       var vsel = h("select", null, vendors.map(function (v) { return h("option", { value: String(v.id) }, [v.name]); }));
-      var csel = h("select", null, categories().map(function (c) { return h("option", { value: String(c.id) }, [c.name]); }));
+      var csel = h("select", null, ready.map(function (c) { return h("option", { value: String(c.id) }, [c.name]); }));
       var form = h("div", { class: "panel" }, [h("div", { class: "row" }, [
         field("PO number", num), field("Vendor", vsel), field("Amount (USDC)", amt), field("Category", csel),
         h("button", { class: "btn sm", onclick: guard(async function () {
+          if (!ready.length || csel.value === "") throw new Error("No category can take a purchase order yet. Add one in the Limits tab and set its daily limit.");
+          W.usdcToUnits(amt.value);   // the amount is typed by you; this only checks its shape
           await api("/purchase-orders", { method: "POST", body: { po_number: num.value.trim(), vendor_id: Number(vsel.value), amount_usdc: amt.value.trim(), category: Number(csel.value) } });
           say("Purchase order created.", "ok");
           await show("pos");
-        }) }, ["Create PO"])])]);
-      var names = {}; categories().forEach(function (c) { names[c.id] = c.name; });
+        }) }, ["Create PO"])]),
+        ready.length ? null : h("p", { class: "note" }, ["No category is ready. A category can take purchase orders only after you add it and sign its daily limit in the Limits tab."])]);
+      var names = {}; cats.forEach(function (c) { names[c.id] = c.name; });
       var rows = pos.map(function (p) {
         var act = p.received ? chip("Receipt confirmed", "ok") : h("button", { class: "btn ghost sm", onclick: guard(async function () {
           if (!(await confirmAction("Confirm receipt", ["You confirm " + p.vendor_name + " delivered what " + p.po_number + " ordered.", "Only the buyer can do this; it lets the agent pay."]))) return;
@@ -458,6 +467,9 @@
       var psel = h("select", null, pos.map(function (p) { return h("option", { value: String(p.id) }, [p.po_number + " · " + p.vendor_name + " · " + usdc(p.amount_usdc)]); }));
       var num = h("input", { maxlength: "64", autocomplete: "off", placeholder: "INV-001" });
       var real = h("input", { inputmode: "decimal", placeholder: "1200.50" }), cur = h("input", { maxlength: "3", autocomplete: "off", placeholder: "NGN" });
+      var amt = h("input", { inputmode: "decimal", autocomplete: "off", placeholder: "5.00" });
+      function prefill() { var po = pos.filter(function (p) { return String(p.id) === psel.value; })[0]; amt.value = po ? String(po.amount_usdc) : ""; }
+      psel.addEventListener("change", prefill); prefill();
       var docHash = h("input", { autocomplete: "off", spellcheck: "false", placeholder: "64-character SHA-256, or pick the file" });
       var file = h("input", { type: "file" });
       file.addEventListener("change", guard(async function () {
@@ -468,6 +480,7 @@
       }));
       var shadow = h("div", { class: "panel" }, [h("div", { class: "row" }, [
         field("Purchase order (receipt confirmed)", psel), field("Invoice number", num), field("Real amount of the bill", real), field("Currency", cur),
+        field("Amount to pay (USDC)", amt),
         field("Invoice file", file), field("Document hash", docHash),
         h("button", { class: "btn sm", onclick: guard(async function () {
           var po = pos.filter(function (p) { return String(p.id) === psel.value; })[0];
@@ -476,12 +489,14 @@
           if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error("The document hash must be 64 hex characters (a SHA-256). Pick the file to hash it here.");
           var code = String(cur.value || "").trim().toUpperCase();
           if (!/^[A-Z]{3}$/.test(code)) throw new Error("The currency is three letters, for example NGN.");
-          var r = await api("/invoices", { method: "POST", body: { invoice_number: num.value.trim(), vendor_id: po.vendor_id, amount_usdc: String(po.amount_usdc),
+          if (!String(amt.value || "").trim()) throw new Error("Enter the USDC amount to pay. It is filled in from the purchase order, and you can change it to match the invoice.");
+          W.usdcToUnits(amt.value);
+          var r = await api("/invoices", { method: "POST", body: { invoice_number: num.value.trim(), vendor_id: po.vendor_id, amount_usdc: amt.value.trim(),
             category: po.category, doc_hash: hash, po_number: po.po_number, mode: "shadow", real_amount: real.value.trim(), real_currency: code } });
           say("Decision: " + r.decision + (r.decision === "await_owner" ? ". It waits below for your approval." : "."), "ok");
           await show("invoices");
         }) }, ["Submit shadow invoice"])]),
-        h("p", { class: "note" }, ["The real amount and currency are shown publicly on your proof page. The testnet payment mirrors the PO amount in USDC and only goes out after you approve."])]);
+        h("p", { class: "note" }, ["The real amount and currency are shown publicly on your proof page. The testnet payment mirrors the USDC amount you enter here and only goes out after you approve. If it is more than 0.01 USDC away from the purchase order, the agent escalates instead of paying."])]);
       var rows = data.invoices.map(function (i) {
         var acts = [], shadowRow = i.mode === "shadow";
         async function judge(path, text, lines, done) {
@@ -532,16 +547,42 @@
     },
 
     limits: async function () {
-      var o = await overview(), c = o.chain;
-      var csel = h("select", null, categories().map(function (x) { return h("option", { value: String(x.id) }, [x.name]); }));
+      var results = await Promise.all([overview(), api("/admin/categories")]);
+      var c = results[0].chain, cats = results[1].categories;
+      var byId = {}; cats.forEach(function (x) { byId[x.id] = x; });
+      var catOptions = function () { return cats.map(function (x) { return h("option", { value: String(x.id) }, [x.name]); }); };
+      var list = cats.length
+        ? table(["Category", "Id", "Daily limit", "Left today", "Status"], cats.map(function (x) { return [x.name, String(x.id), limitText(x), x.remaining_usdc == null ? "Unknown" : usdc(x.remaining_usdc), categoryStatus(x)]; }))
+        : h("p", { class: "note" }, ["You have no categories yet. Add one below, then set its daily limit."]);
+      var name = h("input", { maxlength: "40", autocomplete: "off", placeholder: "Hosting" });
+      var add = h("div", { class: "panel" }, [h("div", { class: "row" }, [
+        field("New category name", name),
+        h("button", { class: "btn sm", onclick: guard(async function () {
+          var r = await api("/admin/categories", { method: "POST", body: { name: name.value.trim() } });
+          say("Added \"" + r.name + "\". It cannot be used until you set its daily limit below.", "ok");
+          await show("limits");
+        }) }, ["Add category"])]),
+        h("p", { class: "note" }, ["Keep names generic, for example Hosting or Software. They can be shown publicly, so put no private data in them. The daily limit is a separate step you sign from your own wallet."])]);
+      var rsel = h("select", null, catOptions()), rname = h("input", { maxlength: "40", autocomplete: "off", placeholder: "New name" });
+      var rename = cats.length ? h("div", { class: "panel" }, [h("div", { class: "row" }, [
+        field("Category", rsel), field("New name", rname),
+        h("button", { class: "btn ghost sm", onclick: guard(async function () {
+          if (rsel.value === "") throw new Error("Pick a category to rename.");
+          await api("/admin/categories/" + Number(rsel.value), { method: "PATCH", body: { name: rname.value.trim() } });
+          say("Renamed. Its id and its limit on-chain are unchanged.", "ok");
+          await show("limits");
+        }) }, ["Rename"])])]) : null;
+      var csel = h("select", null, catOptions());
       var amt = h("input", { inputmode: "decimal", placeholder: "20.00" });
-      var form = h("div", { class: "panel" }, [h("div", { class: "row" }, [
+      var form = cats.length ? h("div", { class: "panel" }, [h("div", { class: "row" }, [
         field("Category", csel), field("Daily limit (USDC)", amt),
         h("button", { class: "btn sm", onclick: guard(async function () {
+          var chosen = byId[Number(csel.value)];
+          if (csel.value === "" || !chosen) throw new Error("Pick a category first.");
           var units = W.usdcToUnits(amt.value);
-          if (await onchain("set_category_limit", "Set category limit", [csel.options ? "Category " + csel.value : "", "New daily limit: " + amt.value.trim() + " USDC"],
-            W.CALLS.setCategoryDailyLimit(Number(csel.value), units))) await show("limits");
-        }) }, ["Set limit"])])]);
+          if (await onchain("set_category_limit", "Set category limit", ["Category: " + chosen.name + " (id " + chosen.id + ")", "New daily limit: " + amt.value.trim() + " USDC"],
+            W.CALLS.setCategoryDailyLimit(chosen.id, units))) await show("limits");
+        }) }, ["Set limit"])])]) : h("p", { class: "note" }, ["Add a category first, then set its limit here."]);
       var pause = h("div", { class: "panel" }, [
         h("p", null, [c.paused ? "Payments are PAUSED. The agent cannot pay anyone." : "Payments are active."]),
         h("button", { class: "btn sm" + (c.paused ? "" : " warn"), onclick: guard(async function () {
@@ -549,9 +590,10 @@
           if (await onchain("set_paused", next ? "Pause all payments" : "Resume payments",
             [next ? "The agent cannot pay anyone until you resume." : "The agent can pay again within the limits."], W.CALLS.setPaused(next))) await show("limits");
         }) }, [c.paused ? "Resume payments" : "Pause all payments"])]);
-      return h("div", null, [h("h2", null, ["Limits and safety"]),
-        table(["Category", "Daily limit", "Left today"], (c.categories || []).map(function (x) { return [x.name, usdc(x.daily_limit_usdc), usdc(x.remaining_usdc)]; })),
-        h("h3", null, ["Set a category limit"]), form, h("h3", null, ["Emergency stop"]), pause]);
+      var kids = [h("h2", null, ["Limits and safety"]), h("h3", null, ["Spending categories"]), list, h("h3", null, ["Add a category"]), add];
+      if (rename) kids.push(h("h3", null, ["Rename a category"]), rename);
+      kids.push(h("h3", null, ["Set a category limit"]), form, h("h3", null, ["Emergency stop"]), pause);
+      return h("div", null, kids);
     },
 
     activity: async function () {

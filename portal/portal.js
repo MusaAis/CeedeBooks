@@ -237,6 +237,8 @@
 
   function invoiceForm(po) {
     var num = h("input", { id: "inv-number", maxlength: "64", autocomplete: "off", placeholder: "INV-001" });
+    var amount = h("input", { id: "inv-amount", inputmode: "decimal", autocomplete: "off", placeholder: "5.00" });
+    amount.value = String(po.amount_usdc);   // filled in from the order so you can see it; you can change it to match your invoice
     var docHash = h("input", { id: "inv-hash", autocomplete: "off", spellcheck: "false", placeholder: "64-character SHA-256, or pick the file" });
     var file = h("input", { id: "inv-file", type: "file" });
     var out = h("div", { id: "inv-out" });
@@ -247,7 +249,7 @@
       say("Hashed in your browser. The file itself is not uploaded.", "ok");
     }));
     function body() {
-      return { invoice_number: L.cleanInvoiceNumber(num.value), vendor_id: S.me.vendor.id, amount_usdc: String(po.amount_usdc),
+      return { invoice_number: L.cleanInvoiceNumber(num.value), vendor_id: S.me.vendor.id, amount_usdc: L.cleanAmount(amount.value),
                category: po.category, doc_hash: L.cleanDocHash(docHash.value), po_number: po.po_number };
     }
     function show(node) { out.textContent = ""; out.appendChild(node); }
@@ -272,8 +274,10 @@
     return h("div", { class: "receipt", id: "inv-form" }, [
       h("div", { class: "rc-head" }, [h("h2", null, ["Invoice for " + po.po_number]), h("span", { class: "rc-run" }, [usdc(po.amount_usdc)])]),
       h("div", { class: "rc-body" }, [
-        h("p", { class: "small" }, [po.category_name + " \u00B7 amount and category are set by the purchase order"]),
-        field("Invoice number", num), field("Document hash", docHash), field("Or pick the file to hash", file),
+        h("p", { class: "small" }, [po.category_name + " \u00B7 the category is set by the purchase order. The order is for " + usdc(po.amount_usdc) + "."]),
+        field("Invoice number", num), field("Amount on your invoice (USDC)", amount),
+        h("p", { class: "hint" }, ["Enter what your invoice says. It is filled in from the order. If it is more than 0.01 USDC away from the order, it goes to the owner for approval instead of being paid."]),
+        field("Document hash", docHash), field("Or pick the file to hash", file),
         h("div", { class: "stack" }, [check, submit]),
         po.received ? null : h("p", { class: "hint" }, ["You can submit once CeedeBooks confirms it received your delivery."]),
         out])]);

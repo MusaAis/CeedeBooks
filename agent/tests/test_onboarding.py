@@ -440,6 +440,9 @@ def test_the_owner_checklist_reports_each_step_and_never_guesses(client, registe
     monkeypatch.setattr(main.contract, "native_balance", lambda a: contract.GAS_DUST_UNITS)
     asyncio.run(models.save_vendor(2, "V", "0x" + "55" * 20))
     steps = {s["key"]: s["done"] for s in client.get("/admin/onboarding", headers=h).json()["steps"]}
+    assert steps["category_limit"] is False  # a business starts with no categories, so there is nothing to have a limit yet
+    asyncio.run(models.add_category(2, "Hosting"))
+    steps = {s["key"]: s["done"] for s in client.get("/admin/onboarding", headers=h).json()["steps"]}
     assert steps == {"agent_gas": True, "pool_funded": True, "category_limit": True, "vendor": True, "purchase_order": False}
     def boom(a): raise RuntimeError("rpc")
     monkeypatch.setattr(main.contract, "native_balance", boom)

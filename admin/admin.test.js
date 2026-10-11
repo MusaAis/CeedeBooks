@@ -49,7 +49,7 @@ global.fetch = async (url, opt = {}) => {
   if (path === "/admin/auth/state") { stateUrls.push(full); return ok(state); }
   if (path === "/admin/auth/challenge") { challengeBodies.push(JSON.parse(opt.body)); return ok({ nonce: "n".repeat(32), message: "sign me" }); }
   if (path === "/admin/auth/verify") { assert.strictEqual(JSON.parse(opt.body).signature.length, 132); return ok({ token: "tok", address: ADMIN }); }
-  if (path.startsWith("/admin/") || path.startsWith("/operator/") || ["/vendors", "/receipts", "/invoices"].includes(path)) {
+  if (path.startsWith("/admin/") || path.startsWith("/operator/") || ["/vendors", "/receipts", "/invoices", "/purchase-orders"].includes(path)) {
     if (auth !== "Bearer tok" || expireSession) return { ok: false, status: 401, json: async () => ({ detail: "no" }) };
     if (path === "/admin/onboarding") return ok({ steps: [{ key: "pool_funded", label: "Fund your pool", done: false }, { key: "agent_gas", label: "Agent wallet gas", done: null }, { key: "vendor", label: "Add a vendor", done: true }], custody: "We run your agent's wallet." });
     if (path === "/operator/business-applications" && method === "GET") {
@@ -60,7 +60,14 @@ global.fetch = async (url, opt = {}) => {
     if (path === "/operator/business-applications/7/accept" && method === "POST") { posts.push({ business_accepted: 7 }); return ok({ business: { agent_address: "0x" + "a1".repeat(20) } }); }
     if (path === "/operator/businesses/2/archive" && method === "POST") { posts.push({ archived: JSON.parse(opt.body).archived }); return ok({ id: 2 }); }
     if (path === "/operator/businesses/2/external" && method === "POST") { posts.push({ external: JSON.parse(opt.body).external }); return ok({ id: 2 }); }
-    if (path === "/admin/overview") return ok({ operator: operator, business: { name: "CeedeBooks", slug: "ceedebooks" }, chain: { chain_ok: true, approver: ADMIN, paused: false, balance_usdc: 108.79, daily_limit_usdc: 100, per_tx_limit_usdc: 20, categories: [{ id: 1, name: "Infrastructure", daily_limit_usdc: 20, remaining_usdc: 20 }] }, invoices: { escalated: 3 }, vendors: 1, purchase_orders: 0 });
+    if (path === "/admin/overview") return ok({ operator: operator, business: { name: "CeedeBooks", slug: "ceedebooks" }, chain: { chain_ok: true, approver: ADMIN, paused: false, balance_usdc: 108.79, daily_limit_usdc: 100, per_tx_limit_usdc: 20, categories: [{ id: 1, name: "Infrastructure", daily_limit_usdc: 20, remaining_usdc: 20, usable: true }] }, invoices: { escalated: 3 }, vendors: 1, purchase_orders: 0 });
+    if (path === "/admin/categories" && method === "GET") return ok({ chain_ok: true, categories: [
+      { id: 0, name: "Hosting", daily_limit_usdc: 0, remaining_usdc: 0, usable: false },
+      { id: 1, name: "Infrastructure", daily_limit_usdc: 20, remaining_usdc: 20, usable: true },
+      { id: 4, name: "Software", daily_limit_usdc: null, remaining_usdc: null, usable: null }] });
+    if (path === "/admin/categories" && method === "POST") { posts.push({ category_added: JSON.parse(opt.body) }); return ok({ id: 5, name: JSON.parse(opt.body).name }); }
+    if (/^\/admin\/categories\/\d+$/.test(path) && method === "PATCH") { posts.push({ category_renamed: path, body: JSON.parse(opt.body) }); return ok({ ok: true }); }
+    if (path === "/purchase-orders" && method === "POST") { posts.push({ po: JSON.parse(opt.body) }); return ok({ id: 9 }); }
     if (path === "/admin/vendors") return ok({ vendors: [{ id: 1, name: "Ops", wallet_address: "0x" + "d7".repeat(20), approved_onchain: false }] });
     if (path === "/admin/invoices") return ok({ invoices: [
       { id: 11, invoice_number: "SH-1", vendor_name: "Lagos Hosting", amount_usdc: 0.5, status: "awaiting_owner", mode: "shadow", real_amount: "1200.50", real_currency: "NGN", reasoning_hash: "a1".repeat(32), verdict: null },
@@ -127,12 +134,69 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
   assert.ok(posts.filter((p) => p.verdict).every((p) => p.verdict === "/admin/decisions/" + "b2".repeat(32) + "/verdict"), "the verdict goes to the held decision's hash");
   assert.strictEqual(calls.filter((c) => c.method === "eth_sendTransaction").length, txBeforeShadow, "shadow approval needs no wallet transaction");
   let inputs = {}; walk(root, (x) => { if (x.tag === "input" && x.attrs.placeholder) inputs[x.attrs.placeholder] = x; });
-  walk(root, (x) => { if (x.tag === "select" && /PO-5/.test(x.textContent)) x.value = "5"; });   // a real select starts on its first option
+  let poSelect = null; walk(root, (x) => { if (x.tag === "select" && /PO-5/.test(x.textContent)) poSelect = x; });
+  poSelect.value = "5"; poSelect.listeners.change();                       // choosing the order fills the amount in, visibly, and it stays editable
+  assert.strictEqual(inputs["5.00"].value, "0.5", "the amount field is prefilled from the purchase order");
   inputs["INV-001"].value = "SH-9"; inputs["1200.50"].value = "5000"; inputs["NGN"].value = "ngn"; inputs["64-character SHA-256, or pick the file"].value = "ab".repeat(32);
+  inputs["5.00"].value = "";                                                // nothing is sent with the amount left empty
   await findBtn(root, "Submit shadow invoice").listeners.click(); await tick(60);
-  assert.deepStrictEqual(posts.find((p) => p.invoice).invoice, { invoice_number: "SH-9", vendor_id: 1, amount_usdc: "0.5", category: 1, doc_hash: "ab".repeat(32),
-    po_number: "PO-5", mode: "shadow", real_amount: "5000", real_currency: "NGN" }, "the form sends the PO's mirrored amount and the real bill, currency capitalised");
+  assert.ok(!posts.some((p) => p.invoice), "an empty amount sends nothing");
+  assert.ok(/Enter the USDC amount/.test(document.body.textContent), "the person is told to enter it");
+  inputs["5.00"].value = "abc";
+  await findBtn(root, "Submit shadow invoice").listeners.click(); await tick(60);
+  assert.ok(!posts.some((p) => p.invoice), "an amount that is not a number sends nothing");
+  inputs["5.00"].value = "0.51";                                            // typed by the person, not the PO's 0.5
+  await findBtn(root, "Submit shadow invoice").listeners.click(); await tick(60);
+  assert.deepStrictEqual(posts.find((p) => p.invoice).invoice, { invoice_number: "SH-9", vendor_id: 1, amount_usdc: "0.51", category: 1, doc_hash: "ab".repeat(32),
+    po_number: "PO-5", mode: "shadow", real_amount: "5000", real_currency: "NGN" }, "the form sends the amount that was entered, and the real bill with its currency capitalised");
   posts.length = 0;
+
+  // purchase orders: only categories that are ready (on-chain limit above zero) can be chosen; the amount is always typed
+  await findBtn(root, "Purchase orders").listeners.click(); await tick();
+  let poSel = null; walk(root, (x) => { if (x.tag === "select" && /Infrastructure/.test(x.textContent)) poSel = x; });
+  assert.ok(poSel && !/Hosting/.test(poSel.textContent) && !/Software/.test(poSel.textContent), "categories without a readable limit above zero are not offered");
+  let poIn = {}; walk(root, (x) => { if (x.tag === "input" && x.attrs.placeholder) poIn[x.attrs.placeholder] = x; });
+  assert.strictEqual(poIn["5.00"].value, "", "the PO amount field starts empty");
+  poIn["5.00"].value = "";
+  await findBtn(root, "Create PO").listeners.click(); await tick(60);
+  assert.ok(!posts.some((p) => p.po), "no purchase order without an amount");
+  walk(root, (x) => { if (x.tag === "select" && /Infrastructure/.test(x.textContent)) x.value = "1"; });
+  poIn["5.00"].value = "12.5"; walk(root, (x) => { if (x.tag === "input" && !x.attrs.placeholder && x.attrs.maxlength === "64") x.value = "PO-77"; });
+  walk(root, (x) => { if (x.tag === "select" && /Ops/.test(x.textContent)) x.value = "1"; });
+  await findBtn(root, "Create PO").listeners.click(); await tick(60);
+  assert.deepStrictEqual(posts.find((p) => p.po).po, { po_number: "PO-77", vendor_id: 1, amount_usdc: "12.5", category: 1 });
+  posts.length = 0;
+
+  // limits tab: add a category (a server call), rename it, then set its limit with the owner's own wallet using its id
+  await findBtn(root, "Limits and safety").listeners.click(); await tick();
+  assert.ok(/Needs a limit/.test(root.textContent) && /Ready/.test(root.textContent) && /Unknown/.test(root.textContent), "each category shows its on-chain state, and an unreadable one is shown as unknown");
+  assert.ok(/no private data/.test(root.textContent), "the name hint warns against private data");
+  const txBeforeCats = calls.filter((c) => c.method === "eth_sendTransaction").length;
+  let lim = {}; walk(root, (x) => { if (x.tag === "input" && x.attrs.placeholder) lim[x.attrs.placeholder] = x; });
+  lim["Hosting"].value = "Marketing";
+  await findBtn(root, "Add category").listeners.click(); await tick(60);
+  assert.deepStrictEqual(posts.pop(), { category_added: { name: "Marketing" } });
+  lim = {}; walk(root, (x) => { if (x.tag === "input" && x.attrs.placeholder) lim[x.attrs.placeholder] = x; });   // the tab was redrawn
+  let selects = []; walk(root, (x) => { if (x.tag === "select") selects.push(x); });
+  selects[0].value = "0";                                                  // the first select is the rename picker
+  lim["New name"].value = "Hosting and domains";
+  await findBtn(root, "Rename").listeners.click(); await tick(60);
+  assert.deepStrictEqual(posts.pop(), { category_renamed: "/admin/categories/0", body: { name: "Hosting and domains" } });
+  assert.strictEqual(calls.filter((c) => c.method === "eth_sendTransaction").length, txBeforeCats, "adding or renaming a category sends no transaction");
+  lim = {}; walk(root, (x) => { if (x.tag === "input" && x.attrs.placeholder) lim[x.attrs.placeholder] = x; });
+  let limSel = null; walk(root, (x) => { if (x.tag === "select" && /Software/.test(x.textContent)) limSel = x; });
+  limSel.value = "4"; lim["20.00"].value = "15";
+  await findBtn(root, "Set limit").listeners.click(); await tick(200);
+  const limTx = calls.filter((c) => c.method === "eth_sendTransaction").pop().params[0];
+  assert.strictEqual(limTx.data, W.CALLS.setCategoryDailyLimit(4, 15000000n), "the transaction carries the chosen category's id");
+  assert.strictEqual(limTx.to, ACME_CONTRACT);
+  assert.strictEqual(limTx.from, ADMIN, "the limit is signed by the owner's wallet");
+  posts.length = 0;
+
+  // no form sends a hidden amount: the sources have no default and no fixed 0.01
+  const src = require("fs").readFileSync(__dirname + "/admin.js", "utf8");
+  assert.ok(!/amount_usdc:\s*String\(po\./.test(src), "no invoice body takes the amount straight from the purchase order");
+  assert.ok(!/(amount_usdc|\.value)\s*[:=]\s*["']?0\.01\b/.test(src), "no fixed 0.01 amount is put into a field or a request");
 
   // applications tab: review, accept (no wallet transaction: it only creates the vendor record)
   let apptab = []; walk(root, (x) => { if (x.attrs && x.attrs["data-tab"] === "applications") apptab.push(x); });

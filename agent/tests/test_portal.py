@@ -30,10 +30,11 @@ def _env(tmp_path, monkeypatch, chain):
     auth.failed_auth_limiter.reset()
     monkeypatch.setattr(config, "rate_limit_per_min", 1000)
     monkeypatch.setattr(config, "failed_auth_per_min", 1000)
+    asyncio.run(models.add_category(1, "Research"))  # id 2 next to the seeded 0 and 1
     CHAIN["approved"] = True
     chain.approver = lambda: ADMIN.address
     chain.is_vendor_approved = lambda w: CHAIN["approved"]
-    monkeypatch.setattr(main, "_chain_snapshot", lambda business: {"chain_ok": True})
+    monkeypatch.setattr(main, "_chain_snapshot", lambda business, categories=(): {"chain_ok": True})
 
     async def fake_runway(amount, business):
         return 42.0
