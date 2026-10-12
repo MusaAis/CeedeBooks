@@ -109,5 +109,95 @@ const zero = "0x" + "00".repeat(32);
     shadow: { paid: 0, held: 0, escalated: 0, awaiting_owner: 0, mirrored_usdc: 0, real_totals: {}, agreement: { agree: 0, disagree: 0, n: 0, rate: null } }, latest_paid: [] }, "https://x");
   assert.strictEqual(none.agreement, "No verdicts yet");
   assert.strictEqual(none.kind, "Not yet confirmed as outside");
+
+  // ---- the whole ledger chain: a real Ed25519-signed chain built here, checked by the browser code
+  const nodeCrypto = require("crypto"), fs = require("fs"), path = require("path");
+  const sha = (x) => nodeCrypto.createHash("sha256").update(x).digest("hex");
+  const kp = nodeCrypto.generateKeyPairSync("ed25519");
+  const pub = Buffer.from(kp.publicKey.export({ format: "jwk" }).x, "base64url").toString("hex");
+  const keyId = sha(Buffer.from(pub, "hex")).slice(0, 16);
+  function makeChain(n, businessId) {
+    const out = []; let prev = sha("ceedebooks-ledger-genesis:v1:business:" + businessId);
+    for (let i = 0; i < n; i++) {
+      const kind = i === 0 ? "genesis" : "decision";
+      const body = JSON.stringify({ business_id: businessId, key_id: keyId, kind, prev_hash: prev, sequence: i, v: 1 });
+      const entry_hash = sha(body);
+      out.push({ sequence: i, kind, body, prev_hash: prev, entry_hash, key_id: keyId,
+        signature: nodeCrypto.sign(null, Buffer.from("ceedebooks-ledger-v1\n" + body), kp.privateKey).toString("hex") });
+      prev = entry_hash;
+    }
+    return out;
+  }
+  const word = (h) => "0x" + String(h).replace(/^0x/, "").padStart(64, "0");
+  function world(entries, anchored, slug = "acme") {      // fake API + fake RPC; `anchored` = [sequence, head] the anchor contract holds
+    const agent = "0x" + "a9".repeat(20), calls = [];
+    return { calls, fetch: async (url, opts) => {
+      const ok = (b) => ({ ok: true, status: 200, json: async () => b });
+      if (url.includes("/ledger/entries")) {
+        const q = new URL(url), after = Number(q.searchParams.get("after")), limit = Number(q.searchParams.get("limit"));
+        assert.strictEqual(q.searchParams.get("business"), slug);
+        const rest = entries.filter((e) => e.sequence > after);
+        return ok({ entries: rest.slice(0, limit), more: rest.length > limit });
+      }
+      if (url.includes("/.well-known/ledger-key")) return ok({ public_key: pub });
+      const req = JSON.parse(opts.body);
+      if (req.method === "eth_chainId") return ok({ result: V.CONFIG.chainId });
+      const { to, data } = req.params[0]; calls.push({ to: to.toLowerCase(), data });
+      let result;
+      if (data === V.SELECTORS.agent) result = word(agent);
+      else if (data.startsWith(V.SELECTORS.lastSequence)) result = word(anchored[0].toString(16));
+      else if (data.startsWith(V.SELECTORS.lastHead)) result = word(anchored[1]);
+      assert.ok(data.length === 10 || data.endsWith(agent.slice(2)), "the anchor is read for the business's own agent");
+      return ok({ result });
+    } };
+  }
+  const run = (w, slug) => V.verifyWholeChain(slug || "acme", "0x" + "bb".repeat(20), w.fetch, { rpcs: ["https://rpc.test"] });
+
+  const chain = makeChain(6, 7);
+  let res = await run(world(chain, [5, chain[5].entry_hash]));
+  assert.ok(res.ok && res.fullyVerified && res.anchor.status === "match" && res.anchor.after === 0, JSON.stringify(res));
+  res = await run(world(chain, [3, chain[3].entry_hash]));
+  assert.ok(res.fullyVerified && res.anchor.after === 2);                 // entries after the anchor are reported, not hidden
+  res = await run(world(chain, [0, "00".repeat(32)]));
+  assert.ok(res.ok && !res.fullyVerified && res.anchor.status === "none");
+  res = await run(world(chain.slice(0, 4), [5, chain[5].entry_hash]));   // newest entries dropped, still a valid shorter chain
+  assert.ok(res.chain.problems.length === 0 && !res.ok && res.anchor.status === "short");
+  res = await run(world(chain, [4, "ab".repeat(32)]));
+  assert.ok(!res.ok && res.anchor.status === "mismatch");
+  const down = world(chain, [5, chain[5].entry_hash]);
+  const flaky = { fetch: (u, o) => (u.includes("rpc.test") ? Promise.reject(new Error("down")) : down.fetch(u, o)) };
+  res = await run(flaky);
+  assert.ok(res.ok && !res.fullyVerified && res.anchor.status === "unreadable");   // unknown is never "verified"
+
+  const edit = (i, f) => chain.map((e, k) => (k === i ? f({ ...e }) : e));
+  const codes = async (entries) => (await V.checkChain(entries, pub, nodeCrypto.webcrypto.subtle)).problems.map((p) => p.code);
+  assert.deepStrictEqual(await codes(chain), []);
+  assert.ok((await codes(edit(2, (e) => ({ ...e, body: e.body.replace("sequence\":2", "sequence\":2,\"x\":1") })))).includes("bad_hash"));
+  assert.ok((await codes(edit(2, (e) => ({ ...e, signature: chain[3].signature })))).includes("bad_signature"));
+  assert.ok((await codes(chain.filter((e) => e.sequence !== 2))).includes("bad_sequence"));
+  assert.ok((await codes([chain[0], chain[2], chain[3]])).includes("broken_link"));
+  assert.ok((await codes(edit(1, (e) => ({ ...e, key_id: "0".repeat(16) })))).includes("wrong_key"));
+  assert.ok((await codes(chain.slice(1))).includes("broken_link"));         // no genesis first
+  const noEd = await V.checkChain(chain, pub, { importKey: async () => { throw new Error("unsupported"); } });
+  assert.strictEqual(noEd.signatures, false);                               // reported, so it can never count as fully verified
+  const old = world(chain, [5, chain[5].entry_hash]);
+  res = await V.verifyWholeChain("acme", "0x" + "bb".repeat(20), old.fetch, { rpcs: ["https://rpc.test"], subtle: { importKey: async () => { throw new Error("x"); } } });
+  assert.ok(res.ok && !res.fullyVerified);
+
+  const big = makeChain(1203, 7);                                           // paged: 500 per request
+  res = await run(world(big, [1202, big[1202].entry_hash]));
+  assert.ok(res.fullyVerified && res.entries === 1203);
+
+  const lastW = world(chain, [5, chain[5].entry_hash]); await run(lastW);
+  assert.ok(lastW.calls.every((c) => c.to === "0x" + "bb".repeat(20) || c.to === V.CONFIG.anchor.toLowerCase()));
+  const compiled = path.join(__dirname, "..", "out", "LedgerAnchor.sol", "LedgerAnchor.json");
+  if (fs.existsSync(compiled)) {                                            // selectors must be the contract's own
+    const ids = JSON.parse(fs.readFileSync(compiled)).methodIdentifiers;
+    assert.strictEqual("0x" + ids["lastSequence(address)"], V.SELECTORS.lastSequence);
+    assert.strictEqual("0x" + ids["lastHead(address)"], V.SELECTORS.lastHead);
+    const be = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "out", "BudgetEnforcerV2.sol", "BudgetEnforcerV2.json"))).methodIdentifiers;
+    assert.strictEqual("0x" + be["agent()"], V.SELECTORS.agent);
+  }
+  assert.strictEqual(V.CONFIG.anchor, "0x008217BeC86462E76126F94e50eBe68fb4a41444");
   console.log("JS_TESTS_OK");
 })().catch((e) => { console.error(e); process.exit(1); });

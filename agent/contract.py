@@ -105,6 +105,24 @@ def _hex(value) -> str:
     return (text[2:] if text.startswith("0x") else text).lower()
 
 
+def execute_from_wallet(wallet_id: str, contract_address: str, abi_function_signature: str, abi_parameters: list) -> str:
+    """A contract call signed by one Circle wallet. Returns the Circle transaction id."""
+    if not wallet_id:
+        raise RuntimeError("This business has no Circle wallet configured")
+    request = developer_controlled_wallets.CreateContractExecutionTransactionForDeveloperRequest.from_dict({
+        "walletId": wallet_id,
+        "contractAddress": contract_address,
+        "abiFunctionSignature": abi_function_signature,
+        "abiParameters": abi_parameters,
+        "feeLevel": "MEDIUM",
+        "idempotencyKey": str(uuid.uuid4()),
+    })
+    response = _transactions_api.create_developer_transaction_contract_execution(
+        create_contract_execution_transaction_for_developer_request=request
+    )
+    return response.data.id
+
+
 class Chain:
     """One business's contract and Circle wallet."""
 
@@ -167,20 +185,7 @@ class Chain:
 
     # ---- Circle-signed writes (from this business's own wallet)
     def _execute(self, abi_function_signature: str, abi_parameters: list) -> str:
-        if not self.circle_wallet_id:
-            raise RuntimeError("This business has no Circle wallet configured")
-        request = developer_controlled_wallets.CreateContractExecutionTransactionForDeveloperRequest.from_dict({
-            "walletId": self.circle_wallet_id,
-            "contractAddress": self.address,
-            "abiFunctionSignature": abi_function_signature,
-            "abiParameters": abi_parameters,
-            "feeLevel": "MEDIUM",
-            "idempotencyKey": str(uuid.uuid4()),
-        })
-        response = _transactions_api.create_developer_transaction_contract_execution(
-            create_contract_execution_transaction_for_developer_request=request
-        )
-        return response.data.id
+        return execute_from_wallet(self.circle_wallet_id, self.address, abi_function_signature, abi_parameters)
 
     def commit_decision(self, commitment: bytes) -> str:
         return self._execute("commitDecision(bytes32)", [Web3.to_hex(commitment)])
@@ -243,6 +248,24 @@ class Chain:
             "block": receipt["blockNumber"],
             "escalation": escalation,
         }
+
+
+# ---- ledger anchoring (Phase E2): LedgerAnchor keeps, per sender, the last head and sequence it was given
+
+_ANCHOR_ABI = [_fn("lastSequence", ["address"], ["uint256"]), _fn("lastHead", ["address"], ["bytes32"])]
+
+
+def anchor_state(agent_address: str) -> tuple:
+    """(sequence, head_hex) most recently anchored by this address; (0, 64 zeros) if it never anchored. Raises if unreadable."""
+    anchor = _w3.eth.contract(address=Web3.to_checksum_address(config.ledger_anchor_address), abi=_ANCHOR_ABI)
+    who = Web3.to_checksum_address(agent_address)
+    return int(anchor.functions.lastSequence(who).call()), _hex(anchor.functions.lastHead(who).call())
+
+
+def anchor_ledger(wallet_id: str, head_hex: str, sequence: int) -> str:
+    """anchor(head, sequence), sent from that business's own agent wallet. Returns the Circle transaction id."""
+    return execute_from_wallet(wallet_id, Web3.to_checksum_address(config.ledger_anchor_address),
+                               "anchor(bytes32,uint256)", ["0x" + head_hex, str(sequence)])
 
 
 _chains: dict = {}

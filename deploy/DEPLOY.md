@@ -129,3 +129,17 @@ No contract change and no ledger or hash change. The first start adds the `categ
 5. For each other business, its owner adds a category in **Limits and safety** and signs its daily limit (a wallet transaction); only then can it raise a purchase order.
 
 To go back: stop the service, restore `~/backups/ceedebooks.db.pre-1.2.9.1` (or leave the database: the `categories` table is additive and the older code ignores it) and check out v1.2.9.
+
+## Upgrading to v1.2.9.2 (on-chain ledger anchor)
+
+No contract change, no hash change, no ledger change. The first start adds the `ledger_anchors` table. Nothing is sent on-chain until you run the anchor script yourself. Each business's own agent wallet pays the gas.
+
+1. Back up (from `~/ceedebooks`): `mkdir -p ~/backups && cp ceedebooks.db ~/backups/ceedebooks.db.pre-1.2.9.2`.
+2. Apply the patch, run `pytest agent/tests/` (set the CI placeholder variables first), then `sudo systemctl restart ceedebooks-api` and wait about 15 seconds. `sudo journalctl -u ceedebooks-api -n 30` should show no errors.
+3. Re-copy the proof page: `sudo cp site/index.html site/styles.css site/app.js site/verify.js /var/www/ceedebooks/`.
+4. Read-only check: `cd ~/ceedebooks && set -a && . ./.env && set +a && PYTHONPATH=. python3 scripts/anchor_ledger.py status` shows, per business, the agent wallet, its gas, the ledger head and the on-chain anchor.
+5. First anchor per business (an on-chain transaction, sent from that business's agent wallet): `PYTHONPATH=. python3 scripts/anchor_ledger.py anchor --business ceedebooks`. It prints the call and asks for `yes`. Repeat with `--business <slug>` for each other business.
+6. Check: `curl -s "https://api.ceedebooks.xyz/ledger/verify?business=ceedebooks"` shows `"fully_verified": true` and `anchor.status` `match`. On the proof page, press **Verify the whole chain**.
+7. Only after every first anchor worked, add `LEDGER_ANCHOR_AUTO=1` to `.env` and restart the service. The job then anchors every 25 new entries or 6 hours, only when the head moved.
+
+To go back: stop the service and check out v1.2.9.1; the `ledger_anchors` table is additive. An anchor already on-chain stays there. If the ledger is ever restored from an older backup, `/ledger/verify` will fail with `anchored_entries_missing`, which is the check working.

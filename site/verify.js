@@ -7,6 +7,7 @@
     api: "https://api.ceedebooks.xyz",
     enforcer: "0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB", // the original business (v1 contract)
     factory: "0x97b9A3802bA6B258cBeF6070532a265656bb391C",   // every other business's contract is created by this factory
+    anchor: "0x008217BeC86462E76126F94e50eBe68fb4a41444",    // LedgerAnchor: each agent wallet anchors its business's ledger head here
     chainId: "0x4cef52", // Arc Testnet, 5042002
     explorer: "https://explorer.testnet.arc.io",
     rpcs: [
@@ -166,9 +167,122 @@
     };
   }
 
+  // ---- the whole ledger chain
+  // Selectors of agent() on a business contract and of lastSequence(address) / lastHead(address) on LedgerAnchor.
+  var SELECTORS = { agent: "0xf5ff5c76", lastSequence: "0x0375b443", lastHead: "0x5f1eb783" };
+  var SIGN_PREFIX = "ceedebooks-ledger-v1\n";
+
+  function hexToBytes(hex) {
+    var out = new Uint8Array(hex.length / 2);
+    for (var i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16);
+    return out;
+  }
+
+  // One read-only eth_call, on the first public RPC that reports Arc Testnet's chain id.
+  async function ethCall(to, data, fetchImpl, rpcs) {
+    var list = rpcs || CONFIG.rpcs;
+    for (var i = 0; i < list.length; i++) {
+      try {
+        var id = await rpcCall(list[i], "eth_chainId", [], fetchImpl);
+        if (String(id).toLowerCase() !== CONFIG.chainId) continue;
+        return await rpcCall(list[i], "eth_call", [{ to: to, data: data }, "latest"], fetchImpl);
+      } catch (e) { /* try the next endpoint */ }
+    }
+    throw new Error("no public RPC answered");
+  }
+
+  // What the chain holds for this business: its agent address, and the newest head that agent anchored.
+  async function readAnchor(contract, fetchImpl, rpcs) {
+    var word = function (r) { return String(r || "").replace(/^0x/, "").padStart(64, "0"); };
+    var agent = "0x" + word(await ethCall(contract, SELECTORS.agent, fetchImpl, rpcs)).slice(24);
+    var arg = word(agent).slice(24).padStart(64, "0");
+    var seq = word(await ethCall(CONFIG.anchor, SELECTORS.lastSequence + arg, fetchImpl, rpcs));
+    var head = word(await ethCall(CONFIG.anchor, SELECTORS.lastHead + arg, fetchImpl, rpcs));
+    return { agent: agent.toLowerCase(), sequence: Number(BigInt("0x" + seq)), head: head.toLowerCase() };
+  }
+
+  // Re-checks every entry: hash, sequence, link, signature. Returns a list of problems (empty means intact) and says
+  // whether the signature check could run at all (older browsers lack Ed25519).
+  async function checkChain(entries, publicKey, subtle) {
+    var problems = [], signatures = true;
+    var bad = function (seq, code, detail) { problems.push({ sequence: seq, code: code, detail: detail }); };
+    var keyId = (await sha256Bytes(hexToBytes(publicKey))).slice(0, 16);
+    var key = null;
+    try { key = await subtle.importKey("raw", hexToBytes(publicKey), { name: "Ed25519" }, false, ["verify"]); }
+    catch (e) { signatures = false; }
+    var previous = null, businessId = null;
+    for (var i = 0; i < entries.length; i++) {
+      var e = entries[i], body = null;
+      try { body = JSON.parse(e.body); } catch (x) { /* handled below */ }
+      if (!body || typeof body !== "object") { bad(e.sequence, "bad_body", "the signed body is not readable"); previous = e.entry_hash; continue; }
+      if (i === 0) businessId = body.business_id;
+      if (e.sequence !== i || body.sequence !== i) bad(e.sequence, "bad_sequence", "position " + i + " holds sequence " + e.sequence);
+      if (body.business_id !== businessId) bad(e.sequence, "bad_body", "the entry belongs to a different business");
+      if (body.prev_hash !== e.prev_hash || body.kind !== e.kind || body.key_id !== e.key_id) bad(e.sequence, "bad_body", "the signed body does not match the entry's columns");
+      if ((await sha256Hex(e.body)) !== e.entry_hash) bad(e.sequence, "bad_hash", "the entry hash is not the hash of its body");
+      var wantPrev = i === 0 ? await sha256Hex("ceedebooks-ledger-genesis:v1:business:" + businessId) : previous;
+      if (e.prev_hash !== wantPrev) bad(e.sequence, "broken_link", i ? "the entry does not continue the one before it" : "the first entry is not a genesis entry");
+      if (e.key_id !== keyId) bad(e.sequence, "wrong_key", "signed under a key other than the published ledger key");
+      else if (key) {
+        var okSig = false;
+        try { okSig = await subtle.verify({ name: "Ed25519" }, key, hexToBytes(e.signature), new TextEncoder().encode(SIGN_PREFIX + e.body)); } catch (x) { okSig = false; }
+        if (!okSig) bad(e.sequence, "bad_signature", "the signature does not verify under the published ledger key");
+      }
+      if ((e.kind === "genesis") !== (i === 0)) bad(e.sequence, "bad_genesis", "a genesis entry must be first, and only first");
+      previous = e.entry_hash;
+    }
+    return { problems: problems, signatures: signatures, keyId: keyId };
+  }
+
+  async function sha256Bytes(bytes) {
+    var d = await root.crypto.subtle.digest("SHA-256", bytes);
+    return Array.prototype.map.call(new Uint8Array(d), function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+  }
+
+  // Compares the chain with what is anchored on-chain for this business's agent. Same statuses as the API's /ledger/verify.
+  function compareAnchor(entries, onchain) {
+    if (!onchain.sequence) return { status: "none" };
+    var mine = null;
+    for (var i = 0; i < entries.length; i++) if (entries[i].sequence === onchain.sequence) mine = entries[i];
+    if (!mine) return { status: "short", detail: "the chain has no entry " + onchain.sequence + ", but it was anchored on-chain" };
+    if (mine.entry_hash.toLowerCase() !== onchain.head) return { status: "mismatch", detail: "entry " + onchain.sequence + " is not what was anchored on-chain" };
+    return { status: "match", after: entries[entries.length - 1].sequence - onchain.sequence };
+  }
+
+  async function fetchAllEntries(slug, fetchImpl, apiBase) {
+    var all = [], after = -1;
+    for (var page = 0; page < 200; page++) {
+      var res = await fetchImpl((apiBase || CONFIG.api) + "/ledger/entries?business=" + encodeURIComponent(slug) + "&after=" + after + "&limit=500");
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      var data = await res.json();
+      all = all.concat(data.entries);
+      if (!data.more || !data.entries.length) return all;
+      after = data.entries[data.entries.length - 1].sequence;
+    }
+    throw new Error("ledger too long to check here");
+  }
+
+  // The button: everything above, end to end. `contract` is the business's enforcer address from /businesses.
+  async function verifyWholeChain(slug, contract, fetchImpl, opts) {
+    opts = opts || {};
+    var subtle = opts.subtle || root.crypto.subtle;
+    var entries = await fetchAllEntries(slug, fetchImpl, opts.api);
+    var kres = await fetchImpl((opts.api || CONFIG.api) + "/.well-known/ledger-key");
+    if (!kres.ok) throw new Error("HTTP " + kres.status);
+    var publicKey = (await kres.json()).public_key;
+    var chain = await checkChain(entries, publicKey, subtle);
+    var anchor = { status: "unreadable" }, onchain = null;
+    try { onchain = await readAnchor(contract, fetchImpl, opts.rpcs); anchor = compareAnchor(entries, onchain); }
+    catch (e) { /* the chain could not be read: unknown, not verified */ }
+    var ok = chain.problems.length === 0 && anchor.status !== "mismatch" && anchor.status !== "short";
+    return { entries: entries.length, chain: chain, anchor: anchor, onchain: onchain,
+             ok: ok, fullyVerified: ok && chain.signatures && anchor.status === "match" };
+  }
+
   var api = {
     tractionView: tractionView, CONFIG: CONFIG, TOPICS: TOPICS, normalizeHash: normalizeHash, isTxHash: isTxHash, sha256Hex: sha256Hex,
-    checkRecord: checkRecord, findEvent: findEvent, readReceipt: readReceipt, isKnownBusiness: isKnownBusiness, businessRows: businessRows
+    checkRecord: checkRecord, findEvent: findEvent, readReceipt: readReceipt, isKnownBusiness: isKnownBusiness, businessRows: businessRows,
+    SELECTORS: SELECTORS, checkChain: checkChain, compareAnchor: compareAnchor, readAnchor: readAnchor, verifyWholeChain: verifyWholeChain
   };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.CeedeVerify = api;

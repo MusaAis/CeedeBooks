@@ -11,13 +11,13 @@ import time
 from decimal import Decimal
 from typing import Annotated, Literal, Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Path, Request
+from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agent import categories as category_rules
-from agent import contract, decision_log, ledger, payables, treasury
+from agent import anchor, contract, decision_log, ledger, payables, treasury
 from agent.config import config
 from backend import admin_auth, auth, models, vendor_auth
 
@@ -178,6 +178,9 @@ async def startup() -> None:
     await decision_log.init_db()
     await models.backfill_origin()
     await ledger.start()  # no usable ledger key: the API does not start (nothing could be logged, so nothing could be paid)
+    await anchor.ensure_schema()
+    if config.ledger_anchor_auto:
+        app.state.anchor_task = asyncio.create_task(anchor.run_forever())  # apart from decisions: a failure there never blocks a payment
     for business in await models.list_businesses():
         report = await ledger.verify_chain(business["id"])
         if not report["ok"]:
@@ -434,7 +437,29 @@ async def verify_ledger(business: Optional[Slug] = None):
         report = await ledger.verify_chain(biz["id"])
     except ledger.LedgerKeyError:
         raise HTTPException(503, "The ledger key is not configured")
-    return {"business": biz["slug"], **report}
+    return {"business": biz["slug"], **_with_anchor(report, await anchor.check(biz))}
+
+
+def _with_anchor(report: dict, found: dict) -> dict:
+    """Adds the on-chain anchor to a chain report. A newest anchor that the chain contradicts (a different head at that
+    sequence, or a chain shorter than the anchored sequence) is a problem; never anchored or unreadable is not, but it
+    is also not 'fully verified': that needs the chain intact and the anchor confirmed."""
+    problems, count = list(report["problems"]), report["problem_count"]
+    if found["status"] in ("mismatch", "short"):
+        code = "anchor_mismatch" if found["status"] == "mismatch" else "anchored_entries_missing"
+        problems = ([{"sequence": found["anchored_sequence"], "code": code, "detail": found["detail"]}] + problems)[:ledger.MAX_PROBLEMS]
+        count += 1
+    return {**report, "ok": count == 0, "problem_count": count, "problems": problems, "anchor": found,
+            "fully_verified": count == 0 and found["status"] == "match"}
+
+
+@app.get("/ledger/entries")
+async def ledger_entries(business: Optional[Slug] = None, after: int = Query(-1, ge=-1), limit: int = Query(500, ge=1, le=500)):
+    """One business's signed entries after a sequence, exactly as stored, so a browser can re-check hashes, links and
+    signatures itself (site/verify.js). Public, like /decisions."""
+    biz = await _business_by_slug(business, active_only=False)
+    entries = await ledger.list_entries(biz["id"], after, limit)
+    return {"business": biz["slug"], "entries": entries, "more": len(entries) == limit}
 
 
 @app.get("/.well-known/agent.json")
@@ -474,7 +499,8 @@ async def agent_manifest():
             "GET /decisions/{hash}": "public",
             "GET /decisions/{hash}/verify": "public",
             "GET /stats": "public",
-            "GET /ledger/verify": "public; walks one business's hash chain (?business=<slug>)",
+            "GET /ledger/verify": "public; walks one business's hash chain and compares it with its newest on-chain anchor (?business=<slug>)",
+            "GET /ledger/entries": "public; the signed entries after a sequence, as stored (?business=<slug>&after=<n>)",
             "GET /.well-known/ledger-key": "public; the key that signs ledger entries",
         },
         "amounts": ("amount_usdc is always entered by the submitter (there is no default). The three-way match accepts a difference of up to "

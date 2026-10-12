@@ -12,6 +12,7 @@ load_dotenv()
 
 _ARC_TESTNET_USDC = "0x3600000000000000000000000000000000000000"
 _ARC_TESTNET_FACTORY = "0x97b9A3802bA6B258cBeF6070532a265656bb391C"  # BudgetFactory, v1.2.8
+_ARC_TESTNET_ANCHOR = "0x008217BeC86462E76126F94e50eBe68fb4a41444"  # LedgerAnchor, v1.2.8
 
 
 def _require(name: str) -> str:
@@ -35,6 +36,7 @@ class Config:
     usdc_address: str
     budget_enforcer_address: str
     budget_factory_address: str
+    ledger_anchor_address: str
     milestone_escrow_address: str
     ceedebooks_yield_address: str
 
@@ -67,6 +69,7 @@ class Config:
     backend_url: str
     db_path: str
     ledger_signing_key: str  # Ed25519 seed (hex) that signs ledger entries; not a wallet key, it moves no money
+    ledger_anchor_auto: bool  # run the background anchoring job (off until the first anchor was confirmed by hand)
 
     # API hardening
     max_body_bytes: int
@@ -87,6 +90,7 @@ class Config:
             usdc_address=_optional("USDC_ADDRESS") or _ARC_TESTNET_USDC,
             budget_enforcer_address=_optional("BUDGET_ENFORCER_ADDRESS"),
             budget_factory_address=_optional("BUDGET_FACTORY_ADDRESS") or _ARC_TESTNET_FACTORY,
+            ledger_anchor_address=_optional("LEDGER_ANCHOR_ADDRESS") or _ARC_TESTNET_ANCHOR,
             milestone_escrow_address=_optional("MILESTONE_ESCROW_ADDRESS"),
             ceedebooks_yield_address=_optional("CEEDEBOOKS_YIELD_ADDRESS"),
             circle_api_key=_optional("CIRCLE_API_KEY"),
@@ -107,6 +111,7 @@ class Config:
             backend_url=_optional("BACKEND_URL", "https://api.ceedebooks.xyz"),
             db_path=_optional("CEEDEBOOKS_DB_PATH", "./ceedebooks.db"),
             ledger_signing_key=_optional("LEDGER_SIGNING_KEY"),
+            ledger_anchor_auto=_optional("LEDGER_ANCHOR_AUTO").lower() in ("1", "true", "yes"),
             max_body_bytes=int(_optional("MAX_BODY_BYTES") or "16384"),
             rate_limit_per_min=int(_optional("RATE_LIMIT_PER_MIN") or "60"),
             failed_auth_per_min=int(_optional("FAILED_AUTH_PER_MIN") or "10"),

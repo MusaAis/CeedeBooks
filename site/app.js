@@ -270,6 +270,49 @@
     }
   }
 
+
+  // ---------- the whole ledger chain
+  var chainBiz = [];
+  async function loadChainChoices() {
+    var sel = $("chain-biz");
+    try {
+      chainBiz = (await getJson("/businesses")).businesses || [];
+      sel.textContent = "";
+      chainBiz.forEach(function (b) { var o = el("option", null, b.name); o.value = b.slug; sel.appendChild(o); });
+    } catch (e) { sel.textContent = ""; }
+  }
+  async function runChain() {
+    var out = $("chain-result"), slug = $("chain-biz").value;
+    out.textContent = "";
+    var b = chainBiz.filter(function (x) { return x.slug === slug; })[0];
+    if (!b) { out.appendChild(el("p", "bad-text", "Choose a business first.")); return; }
+    out.appendChild(el("p", "note", "Checking every entry…"));
+    var r;
+    try { r = await V.verifyWholeChain(slug, b.contract, function (u, o) { return fetch(u, o); }); }
+    catch (e) { out.textContent = ""; out.appendChild(el("p", "bad-text", "The ledger could not be loaded just now.")); return; }
+    out.textContent = "";
+    var box = el("div", "box"), list = el("ol", "checks");
+    var steps = [
+      [r.chain.problems.length === 0, r.entries + " entries: each hash, link and sequence re-computed", r.chain.problems.length + " problem(s), first: " + (r.chain.problems[0] ? r.chain.problems[0].detail : "")],
+      [r.chain.signatures ? r.chain.problems.every(function (p) { return p.code !== "bad_signature" && p.code !== "wrong_key"; }) : null, "Every signature checked against the published ledger key", "A signature or key does not match"]
+    ];
+    var a = r.anchor;
+    steps.push([a.status === "match" ? true : (a.status === "mismatch" || a.status === "short") ? false : null,
+      a.status === "match" ? "Anchored on-chain at entry " + r.onchain.sequence + "; " + a.after + " newer entries are not anchored yet" :
+        a.status === "none" ? "Never anchored on-chain yet" : a.status === "unreadable" ? "The on-chain anchor could not be read just now" : "On-chain anchor check",
+      a.detail || ""]);
+    steps.forEach(function (s) {
+      list.appendChild(stepNode({ s: s[0] === true ? "ok" : s[0] === false ? "bad" : "note", t: s[0] === false ? s[2] : s[1] }));
+    });
+    box.appendChild(list);
+    box.appendChild(el("p", "verdict " + (r.fullyVerified ? "ok" : r.ok ? "warn" : "bad"),
+      r.fullyVerified ? "Intact, and its head matches the on-chain anchor." :
+        r.ok ? "No tampering found, but this is not fully verified: " + (r.chain.signatures ? "no matching on-chain anchor yet." : "your browser cannot check Ed25519 signatures.") :
+          "This ledger does not verify."));
+    out.appendChild(box);
+  }
+  $("chain-go").addEventListener("click", runChain);
+  loadChainChoices();
   $("go").addEventListener("click", runVerify);
   $("hash").addEventListener("keydown", function (e) { if (e.key === "Enter") runVerify(); });
   Array.prototype.forEach.call(document.querySelectorAll("[data-hash]"), function (b) {

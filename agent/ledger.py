@@ -6,7 +6,7 @@ signed with the Ed25519 ledger key. Each business has its own chain: sequence 0 
 What this proves: nobody without the ledger key can edit, delete, reorder or insert entries, or edit a logged decision,
 without verification failing. What it does not prove: the key lives on the same server as the database, so someone who
 holds both can rewrite the whole chain, and the newest entries can be dropped together with their decision rows.
-That gap is closed only by anchoring the head on-chain (a later piece).
+That gap is closed by anchoring the head on-chain (agent/anchor.py, Phase E2).
 """
 import hashlib
 import json
@@ -227,6 +227,20 @@ def analyse(business_id: int, entries: list, decisions: list, public_key: str) -
         if d["reasoning_hash"] not in chained:
             bad(None, "unchained_decision", f"decision {d['reasoning_hash'][:12]} has no ledger entry")
     return problems
+
+
+async def list_entries(business_id: int, after: int = -1, limit: int = 500) -> list:
+    """This business's entries with sequence above `after`, in order, exactly as stored (so a browser can re-check them)."""
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        try:
+            async with db.execute(
+                "SELECT sequence, kind, body, prev_hash, entry_hash, key_id, signature FROM ledger "
+                "WHERE business_id = ? AND sequence > ? ORDER BY sequence LIMIT ?", (business_id, after, limit)
+            ) as cur:
+                return [dict(r) for r in await cur.fetchall()]
+        except aiosqlite.OperationalError:
+            return []
 
 
 async def verify_chain(business_id: int) -> dict:
