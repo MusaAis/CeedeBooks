@@ -157,3 +157,17 @@ No contract change and no ledger change. The first start adds five columns to `a
 7. Process one shadow or test invoice, then open its decision on the proof page: the record shows the rules verdict and the model's opinion (or "No model second opinion"), and all hash checks pass.
 
 To go back: stop the service and check out v1.2.9.2. The new columns are additive and the older code ignores them; format 3 records written meanwhile will not be checked by older proof-page code.
+
+## Upgrading to v1.2.9.4 (return to agent, re-run, optional deployer key, red team)
+
+No contract change and no database change. Admin site: an escalated invoice on a multi-business contract gets a "Return to agent" button (your wallet sends `reopenEscalation`), and an invoice in `error` gets "Re-run". The service no longer needs `DEPLOYER_PRIVATE_KEY`.
+
+1. Back up (from `~/ceedebooks`): `mkdir -p ~/backups && cp ceedebooks.db ~/backups/ceedebooks.db.pre-1.2.9.4`.
+2. Apply the patch and run the tests with the CI placeholder variables: `ARC_TESTNET_RPC_URL=http://localhost:8545 DEPLOYER_PRIVATE_KEY=0x01 GROQ_API_KEY=ci-placeholder BUDGET_ENFORCER_ADDRESS=0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB CIRCLE_API_KEY=ci-placeholder CIRCLE_ENTITY_SECRET=ci-placeholder PYTHONPATH=. python3 -m pytest agent/tests -q 2>&1 | tail -2`.
+3. Restart with the old `.env` first: `sudo systemctl restart ceedebooks-api && sleep 15 && sudo journalctl -u ceedebooks-api -n 30 --no-pager | tail -8`.
+4. Re-copy the admin site: `sudo cp admin/admin.js admin/wallet.js /var/www/ceedebooks-admin/`.
+5. Remove the deployer key from the server: open `.env` with `nano .env`, delete the whole `DEPLOYER_PRIVATE_KEY=...` line, save, then restart as in step 3. Check it started: `curl -s https://api.ceedebooks.xyz/businesses | head -c 300` prints your business, and `sudo journalctl -u ceedebooks-api -n 10 --no-pager` shows no "Missing required env var". Keep the key in your own shell or password manager if you still run `forge` or `cast` yourself. It holds no power over any contract since the approver rotation.
+6. Re-run an `error` invoice from the admin site's Invoices tab only if you want to test it; nothing is sent unless every check passes.
+7. The red team (optional, manual, on-chain, sends 2 transactions and an anchor from the agent wallet; read each prompt before typing yes): `cd ~/ceedebooks && set -a && . ./.env && set +a && PYTHONPATH=. python3 scripts/red_team.py --business ceedebooks`. A refusal prints "Refused, as required". If it prints that the contract accepted the payment, stop and tell me.
+
+To go back: stop the service and check out v1.2.9.3. There is nothing to undo in the database; a `RED_TEAM_REFUSED` row, if you made one, stays in the ledger.

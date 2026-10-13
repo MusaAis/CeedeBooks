@@ -550,7 +550,7 @@ class AdminVerifyIn(_Strict):
 
 
 AdminActionName = Literal[
-    "set_vendor", "set_category_limit", "set_paused", "approve_escalation", "reject_escalation", "accept_approver"
+    "set_vendor", "set_category_limit", "set_paused", "approve_escalation", "reject_escalation", "reopen_escalation", "accept_approver"
 ]
 
 
@@ -746,7 +746,8 @@ async def admin_escalation(invoice_id: int, who: auth.Principal = Depends(auth.r
         raise HTTPException(503, "Could not read the chain right now")
     if key is None:
         raise HTTPException(404, "No escalation event found in that transaction")
-    return {"invoice_key": key}
+    business = await models.get_business(who.business_id)
+    return {"invoice_key": key, "can_reopen": int(business["contract_version"]) >= 2}
 
 
 class VerdictIn(_Strict):
@@ -835,9 +836,13 @@ async def admin_record_action(body: AdminActionIn, who: auth.Principal = Depends
         raise HTTPException(422, "That transaction is not a successful call to the contract from your wallet")
 
     ref = None
-    if body.action in ("approve_escalation", "reject_escalation"):
+    reopening = body.action == "reopen_escalation"
+    if reopening and int(business["contract_version"]) < 2:
+        raise HTTPException(422, "This business's contract has no reopenEscalation (only the multi-business contract does)")
+    if body.action in ("approve_escalation", "reject_escalation", "reopen_escalation"):
         invoice = await models.get_invoice(who.business_id, body.invoice_id) if body.invoice_id is not None else None
-        wanted = "EscalationApproved" if body.action == "approve_escalation" else "EscalationRejected"
+        wanted = {"approve_escalation": "EscalationApproved", "reject_escalation": "EscalationRejected",
+                  "reopen_escalation": "EscalationReopened"}[body.action]
         if invoice is None or tx["escalation"] is None or tx["escalation"][0] != wanted \
                 or tx["escalation"][2] != (invoice["reasoning_hash"] or ""):
             raise HTTPException(422, "The transaction does not settle that invoice's escalation")
@@ -846,9 +851,55 @@ async def admin_record_action(body: AdminActionIn, who: auth.Principal = Depends
         await models.log_admin_action(who.business_id, who.admin_address, body.action, ref, body.tx_hash.lower(), tx["block"])
     except sqlite3.IntegrityError:
         raise HTTPException(409, "That transaction is already recorded")
+    if reopening:
+        # The owner returned it on-chain; the agent now decides afresh (new reasoning, new hash) through the normal pipeline.
+        if not await models.claim_invoice_status(who.business_id, invoice["id"], "escalated", "retrying"):
+            raise HTTPException(409, "That invoice is no longer escalated")
+        return {"ok": True, "block": tx["block"], **await _rerun_invoice(business, invoice)}
     if ref:
         await models.update_invoice_status(who.business_id, invoice["id"], "paid" if body.action == "approve_escalation" else "rejected")
     return {"ok": True, "block": tx["block"]}
+
+
+async def _rerun_invoice(business: dict, invoice: sqlite3.Row) -> dict:
+    """Runs a claimed invoice (status 'retrying') through the same pipeline as a new submission, from the stored row, so the
+    wallet paid, category and amount are the ones on file. A failure puts it back to 'error' where it can be re-run."""
+    vendor = await models.get_vendor(business["id"], invoice["vendor_id"])
+    po = await models.get_purchase_order_by_id(business["id"], invoice["po_id"]) if invoice["po_id"] else None
+    if vendor is None:
+        await models.update_invoice_status(business["id"], invoice["id"], "error")
+        return {"rerun": "error"}
+    parked = payables.Invoice(
+        business_id=business["id"], id=invoice["id"], invoice_number=invoice["invoice_number"], vendor_wallet=vendor["wallet_address"],
+        amount_usdc=float(invoice["amount_usdc"]), category=invoice["category"], doc_hash=invoice["doc_hash"],
+        po_number=po["po_number"] if po else None, mode=invoice["mode"], real_amount=invoice["real_amount"],
+        real_currency=invoice["real_currency"],
+    )
+    try:
+        runway = await treasury.runway_days(parked.amount_usdc, business)
+        decision = await payables.process_invoice(parked, runway, business)
+    except Exception:
+        log.exception("Re-run of invoice %s failed", invoice["id"])
+        await models.update_invoice_status(business["id"], invoice["id"], "error")
+        return {"rerun": "error"}
+    return {"rerun": "done", "decision": decision.value}
+
+
+@app.post("/admin/invoices/{invoice_id}/rerun")
+async def admin_rerun(invoice_id: int, who: auth.Principal = Depends(auth.require_admin)):
+    """Return an invoice that ended in 'error' to the agent. Nothing was paid for it (the pipeline checks the chain first), so
+    the agent decides again from the stored row. Own business only; one click at a time."""
+    business = await _writable(who)
+    invoice = await models.get_invoice(who.business_id, invoice_id)
+    if invoice is None:
+        raise HTTPException(404, "No invoice with that id")
+    if not await models.claim_invoice_status(who.business_id, invoice_id, "error", "retrying"):
+        raise HTTPException(409, "Only an invoice in error can be re-run")
+    await _admin_log(who, "rerun_invoice", f"invoice {invoice_id}")
+    result = await _rerun_invoice(business, invoice)
+    if result["rerun"] == "error":
+        raise HTTPException(502, "The re-run did not complete; the invoice is back in error and the failure was logged")
+    return {"ok": True, **result}
 
 
 # ---- vendor applications and the vendor portal (v1.2.7; wallet signatures, see backend/vendor_auth.py)

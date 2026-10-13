@@ -772,6 +772,17 @@ async def archived_count() -> int:
 
 # ---- shadow mode (v1.2.8.3): a real bill is read, decided and, once the owner approves, mirrored as a testnet payment
 
+async def claim_invoice_status(business_id: int, invoice_id: int, from_status: str, to_status: str) -> bool:
+    """from_status -> to_status in one statement, so two clicks can never both act on the same invoice."""
+    async with aiosqlite.connect(config.db_path) as db:
+        cur = await db.execute(
+            "UPDATE invoices SET status = ? WHERE id = ? AND business_id = ? AND status = ?",
+            (to_status, invoice_id, business_id, from_status),
+        )
+        await db.commit()
+        return cur.rowcount == 1
+
+
 async def claim_shadow_approval(business_id: int, invoice_id: int) -> bool:
     """awaiting_owner -> approving, atomically, so two clicks can never start two payments."""
     async with aiosqlite.connect(config.db_path) as db:

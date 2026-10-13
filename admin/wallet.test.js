@@ -10,6 +10,8 @@ assert.strictEqual(W.CALLS.setCategoryDailyLimit(2, 10000000n), "0x333b3ffa" + w
 assert.strictEqual(W.CALLS.setPaused(true), "0x16c38b3c" + w("1"));
 assert.strictEqual(W.CALLS.approveEscalation(K), "0xf0b70f2b" + "12".repeat(32));
 assert.strictEqual(W.CALLS.rejectEscalation(K), "0x7163a16e" + "12".repeat(32));
+assert.strictEqual(W.CALLS.reopenEscalation(K), "0xc5cf0d03" + "12".repeat(32));
+assert.throws(() => W.CALLS.reopenEscalation("0x12"));
 assert.strictEqual(W.CALLS.acceptApprover(), "0x1d4f222c");
 
 // Funding: a USDC token transfer to the business's contract (a plain wallet Send to a contract with no receive function reverts)

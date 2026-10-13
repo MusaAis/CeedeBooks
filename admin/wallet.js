@@ -23,6 +23,7 @@
     setPaused: "16c38b3c",            // setPaused(bool)
     approveEscalation: "f0b70f2b",    // approveEscalation(bytes32)
     rejectEscalation: "7163a16e",     // rejectEscalation(bytes32)
+    reopenEscalation: "c5cf0d03",     // reopenEscalation(bytes32), multi-business contract only
     acceptApprover: "1d4f222c",       // acceptApprover()
     erc20Transfer: "a9059cbb"         // transfer(address,uint256), on the USDC token
   };
@@ -55,6 +56,7 @@
     setPaused: function (paused) { return "0x" + SEL.setPaused + bool(paused); },
     approveEscalation: function (key) { return "0x" + SEL.approveEscalation + bytes32(key); },
     rejectEscalation: function (key) { return "0x" + SEL.rejectEscalation + bytes32(key); },
+    reopenEscalation: function (key) { return "0x" + SEL.reopenEscalation + bytes32(key); },
     acceptApprover: function () { return "0x" + SEL.acceptApprover; },
     usdcTransfer: function (to, units) {
       if (BigInt(units) <= 0n) throw new Error("Enter an amount above zero.");

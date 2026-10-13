@@ -292,3 +292,125 @@ def test_a_v2_business_snapshot_shows_the_weekly_limit(chains):
     biz = asyncio.run(make())
     snap = ORIGINAL_SNAPSHOT(biz)
     assert snap["chain_ok"] is True and snap["weekly_limit_usdc"] == 500.0 and snap["contract_version"] == 2
+
+
+# ---- v1.2.9.4: Return to agent (reopenEscalation), re-run of error rows, optional deployer key
+
+def _make_v2(version=2):
+    import aiosqlite
+
+    async def go():
+        async with aiosqlite.connect(config.db_path) as db:
+            await db.execute("UPDATE businesses SET contract_version = ? WHERE id = 1", (version,))
+            await db.commit()
+    asyncio.run(go())
+
+
+def _reopen_body(iid, tx="ee"):
+    return {"action": "reopen_escalation", "tx_hash": "0x" + tx * 32, "invoice_id": iid}
+
+
+def test_the_service_starts_without_a_deployer_key(monkeypatch):
+    from agent.config import Config
+    monkeypatch.delenv("DEPLOYER_PRIVATE_KEY", raising=False)
+    assert Config.load().deployer_private_key == ""
+
+
+def test_return_to_agent_is_refused_on_the_v1_contract(client, chain):
+    h = _bearer(client)
+    iid = _escalated_invoice()
+    _tx(chain, escalation=("EscalationReopened", "1" * 64, "e" * 64))
+    assert client.post("/admin/actions", json=_reopen_body(iid), headers=h).status_code == 422
+    assert asyncio.run(models.get_invoice(1, iid))["status"] == "escalated"
+
+
+def test_reopening_needs_the_reopen_event_for_that_invoice(client, chain):
+    _make_v2()
+    h = _bearer(client)
+    iid = _escalated_invoice()
+    for event in (("EscalationApproved", "1" * 64, "e" * 64), ("EscalationReopened", "1" * 64, "f" * 64), None):
+        _tx(chain, escalation=event)
+        assert client.post("/admin/actions", json=_reopen_body(iid), headers=h).status_code == 422
+    assert asyncio.run(models.get_invoice(1, iid))["status"] == "escalated"
+    assert chain.calls == []
+
+
+def test_a_reopened_invoice_goes_through_the_whole_pipeline_again(client, chain):
+    _make_v2()
+    h = _bearer(client)
+    iid = _escalated_invoice()  # no PO, so the three-way match fails and the agent escalates it again
+    _tx(chain, escalation=("EscalationReopened", "1" * 64, "e" * 64))
+    r = client.post("/admin/actions", json=_reopen_body(iid), headers=h)
+    assert r.status_code == 200 and r.json()["rerun"] == "done" and r.json()["decision"] == "escalate"
+    row = asyncio.run(models.get_invoice(1, iid))
+    assert row["status"] == "escalated" and row["reasoning_hash"] != "e" * 64  # a new decision, a new hash
+    assert [c[0] for c in chain.calls] == ["escalate"]
+    entry = asyncio.run(decision_log.get_decision(row["reasoning_hash"]))
+    assert entry["action"] == "INVOICE_ESCALATED"
+
+
+def test_a_failed_rerun_leaves_the_invoice_in_error_where_it_can_be_run_again(client, chain, monkeypatch):
+    _make_v2()
+    h = _bearer(client)
+    iid = _escalated_invoice()
+    chain.broken = True  # the chain cannot be read: fail closed
+    _tx_ok = {"sender": ADMIN.address.lower(), "to": config.budget_enforcer_address.lower(), "success": True, "block": 5,
+              "escalation": ("EscalationReopened", "1" * 64, "e" * 64)}
+
+    monkeypatch.setattr(type(chain), "inspect_admin_tx", lambda self, tx: _tx_ok)
+    r = client.post("/admin/actions", json=_reopen_body(iid), headers=h)
+    assert r.status_code == 200 and r.json()["rerun"] == "error"
+    assert asyncio.run(models.get_invoice(1, iid))["status"] == "error"
+    assert chain.calls == []  # nothing was sent
+
+
+def test_rerun_takes_only_an_invoice_in_error_of_the_admins_own_business(client, chain):
+    h = _bearer(client)
+    iid = _escalated_invoice()
+    assert client.post(f"/admin/invoices/{iid}/rerun", headers=h).status_code == 409  # escalated, not error
+    asyncio.run(models.update_invoice_status(1, iid, "error"))
+    r = client.post(f"/admin/invoices/{iid}/rerun", headers=h)
+    assert r.status_code == 200 and r.json()["decision"] == "escalate"
+    assert asyncio.run(models.get_invoice(1, iid))["status"] == "escalated"
+    assert client.post(f"/admin/invoices/{iid}/rerun", headers=h).status_code == 409  # one click at a time
+    assert any(a["action"] == "rerun_invoice" for a in asyncio.run(models.list_admin_actions(1)))
+
+
+def test_rerun_cannot_touch_another_businesss_invoice(client):
+    import aiosqlite
+
+    async def other():
+        async with aiosqlite.connect(config.db_path) as db:
+            cur = await db.execute(
+                "INSERT INTO businesses (name, slug, enforcer_address, contract_version, status, created_at) VALUES ('B', 'bee', ?, 2, 'active', 0)",
+                ("0x" + "b2" * 20,))
+            await db.commit()
+            return cur.lastrowid
+    bid = asyncio.run(other())
+    vid = asyncio.run(models.save_vendor(bid, "BV", "0x" + "d4" * 20))
+    iid = asyncio.run(models.save_invoice(bid, "INV-B", vid, None, 1.0, 0, "doc"))
+    asyncio.run(models.update_invoice_status(bid, iid, "error"))
+    assert client.post(f"/admin/invoices/{iid}/rerun", headers=_bearer(client)).status_code == 404
+    assert asyncio.run(models.get_invoice(bid, iid))["status"] == "error"
+
+
+def test_rerun_needs_an_admin_session(client):
+    assert client.post("/admin/invoices/1/rerun").status_code == 401
+
+
+def test_the_escalation_route_says_whether_the_contract_can_reopen(client, chain):
+    h = _bearer(client)
+    iid = _escalated_invoice()
+    chain.esc_key = "0x" + "12" * 32
+    import aiosqlite
+
+    async def mark():
+        async with aiosqlite.connect(config.db_path) as db:
+            await db.execute(
+                "INSERT INTO audit_log (action, subject, reasoning, model_used, timestamp, hash_input, reasoning_hash, chain_tx_hash) "
+                "VALUES ('INVOICE_ESCALATED', 'INV-X', 'r', 'rules', 0, '{}', ?, ?)", ("e" * 64, "0x" + "ab" * 32))
+            await db.commit()
+    asyncio.run(mark())
+    assert client.get(f"/admin/invoices/{iid}/escalation", headers=h).json()["can_reopen"] is False
+    _make_v2()
+    assert client.get(f"/admin/invoices/{iid}/escalation", headers=h).json()["can_reopen"] is True

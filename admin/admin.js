@@ -524,7 +524,22 @@
             }) }, [v[1]]));
           });
         }
+        if (i.status === "error") {
+          acts.push(h("button", { class: "btn ghost sm", onclick: guard(async function () {
+            if (!(await confirmAction("Return to the agent", [i.invoice_number + " from " + i.vendor_name, "The agent decides again from the stored invoice. Nothing is paid unless every check passes again."]))) return;
+            await api("/admin/invoices/" + i.id + "/rerun", { method: "POST" });
+            await show("invoices");
+          }) }, ["Re-run"]));
+        }
         if (i.status === "escalated") {
+          acts.push(h("button", { class: "btn ghost sm", onclick: guard(async function () {
+            var esc = await api("/admin/invoices/" + i.id + "/escalation");
+            if (!esc.can_reopen) throw new Error("This business's contract cannot return an escalation to the agent. Approve or reject it instead.");
+            var ok = await onchain("reopen_escalation", "Return to the agent",
+              [i.invoice_number + " from " + i.vendor_name, "The escalation is cleared on-chain and the agent decides again, with every limit and check.", "It may pay, hold or escalate again."],
+              W.CALLS.reopenEscalation(esc.invoice_key), i.id);
+            if (ok) await show("invoices");
+          }) }, ["Return to agent"]));
           ["approve", "reject"].forEach(function (verb) {
             acts.push(h("button", { class: "btn ghost sm", onclick: guard(async function () {
               var key = (await api("/admin/invoices/" + i.id + "/escalation")).invoice_key;

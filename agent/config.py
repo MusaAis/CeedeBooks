@@ -30,7 +30,7 @@ def _optional(name: str, default: str = "") -> str:
 class Config:
     # Arc Testnet
     arc_rpc_url: str
-    deployer_private_key: str
+    deployer_private_key: str  # optional since v1.2.9.4: the service signs nothing with it (Circle wallets sign every agent transaction)
     agent_address: str
     approver_address: str
     usdc_address: str
@@ -85,7 +85,7 @@ class Config:
     def load(cls) -> "Config":
         return cls(
             arc_rpc_url=_require("ARC_TESTNET_RPC_URL"),
-            deployer_private_key=_require("DEPLOYER_PRIVATE_KEY"),
+            deployer_private_key=_optional("DEPLOYER_PRIVATE_KEY"),
             agent_address=_optional("AGENT_ADDRESS"),
             approver_address=_optional("APPROVER_ADDRESS"),
             usdc_address=_optional("USDC_ADDRESS") or _ARC_TESTNET_USDC,
