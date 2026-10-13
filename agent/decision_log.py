@@ -26,7 +26,12 @@ CREATE TABLE IF NOT EXISTS audit_log (
     business_id INTEGER NOT NULL DEFAULT 1,
     hash_version INTEGER NOT NULL DEFAULT 1,
     contract_address TEXT,
-    contract_version INTEGER
+    contract_version INTEGER,
+    rules_action TEXT,
+    model_action TEXT,
+    agreed INTEGER,
+    model_confidence REAL,
+    contract_refused INTEGER
 );
 """
 
@@ -43,21 +48,27 @@ async def init_db() -> None:
             await db.execute("ALTER TABLE audit_log ADD COLUMN hash_version INTEGER NOT NULL DEFAULT 1")
             await db.execute("ALTER TABLE audit_log ADD COLUMN contract_address TEXT")
             await db.execute("ALTER TABLE audit_log ADD COLUMN contract_version INTEGER")
+        if "rules_action" not in columns:  # v1.2.9.3: model-vs-rules columns; NULL means not compared (never a success)
+            for col in ("rules_action TEXT", "model_action TEXT", "agreed INTEGER", "model_confidence REAL", "contract_refused INTEGER"):
+                await db.execute(f"ALTER TABLE audit_log ADD COLUMN {col}")
         await db.execute("CREATE INDEX IF NOT EXISTS ix_audit_business ON audit_log(business_id, id)")
         await ledger.ensure_schema(db)
         await db.commit()
 
 
 HASH_VERSION = 2
+HASH_VERSION_COMPARED = 3  # adds the rules-versus-model comparison; formats 1 and 2 still verify
 _VISIBLE_AND = "AND business_id NOT IN (SELECT id FROM businesses WHERE status = 'archived') "
 _VISIBLE_WHERE = "WHERE business_id NOT IN (SELECT id FROM businesses WHERE status = 'archived') "
 
 
 def compute_reasoning_hash(
-    action: str, subject: str, reasoning: str, amount: float, model_used: str, timestamp: float, business: Optional[dict] = None
+    action: str, subject: str, reasoning: str, amount: float, model_used: str, timestamp: float, business: Optional[dict] = None,
+    comparison: Optional[dict] = None,
 ) -> tuple[str, str]:
     """Hash format 1 (no business) is what every row before v1.2.8.1 used and still verifies. Format 2 also binds the
-    business and its contract, so the same invoice number in two businesses can never produce the same record."""
+    business and its contract, so the same invoice number in two businesses can never produce the same record.
+    Format 3 adds the rules-versus-model comparison."""
     payload = {
         "action": action,
         "subject": subject,
@@ -68,6 +79,8 @@ def compute_reasoning_hash(
     }
     if business is not None:
         payload.update(hash_version=HASH_VERSION, business_id=business["id"], enforcer_address=business["enforcer_address"].lower())
+        if comparison is not None:
+            payload.update(hash_version=HASH_VERSION_COMPARED, comparison=comparison)
     hash_input = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     reasoning_hash = hashlib.sha256(hash_input.encode()).hexdigest()
     return hash_input, reasoning_hash
@@ -82,14 +95,17 @@ async def log_decision(
     treasury_balance_after: Optional[float] = None,
     *,
     business: dict,
+    comparison: Optional[dict] = None,
 ) -> str:
     """Writes the audit row (hash format 2) for one business before anything touches its contract. The row and its signed
     ledger entry go in one transaction under the database write lock: both are stored or neither is, and concurrent writers
     queue behind each other, so the chain cannot fork. Without a usable ledger key this raises and nothing is logged."""
     timestamp = time.time()
     hash_input, reasoning_hash = compute_reasoning_hash(
-        action, subject, reasoning, amount, model_used, timestamp, business
+        action, subject, reasoning, amount, model_used, timestamp, business, comparison
     )
+    version = HASH_VERSION_COMPARED if comparison is not None else HASH_VERSION
+    cmp = comparison or {}
     contract_address = business["enforcer_address"].lower()
 
     async with aiosqlite.connect(config.db_path) as db:
@@ -101,10 +117,13 @@ async def log_decision(
             await db.execute(
                 """INSERT INTO audit_log
                    (action, subject, reasoning, amount_usdc, treasury_balance_after,
-                    model_used, timestamp, hash_input, reasoning_hash, business_id, hash_version, contract_address, contract_version)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    model_used, timestamp, hash_input, reasoning_hash, business_id, hash_version, contract_address, contract_version,
+                    rules_action, model_action, agreed, model_confidence)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (action, subject, reasoning, amount, treasury_balance_after, model_used, timestamp, hash_input, reasoning_hash,
-                 business["id"], HASH_VERSION, contract_address, business["contract_version"]),
+                 business["id"], version, contract_address, business["contract_version"],
+                 cmp.get("rules_action"), cmp.get("model_action"), None if cmp.get("agreed") is None else int(cmp["agreed"]),
+                 cmp.get("model_confidence")),
             )
             await ledger.append_decision(db, business["id"], {
                 "reasoning_hash": reasoning_hash, "action": action, "subject": subject, "amount_usdc": amount,
@@ -126,6 +145,56 @@ async def record_onchain_tx(reasoning_hash: str, tx_id: str, chain_tx_hash: Opti
             (tx_id, chain_tx_hash, reasoning_hash),
         )
         await db.commit()
+
+
+async def mark_contract_refused(reasoning_hash: str) -> None:
+    """The contract reverted the payment this decision led to. Set after the fact, so it is a column and not part of the hash."""
+    async with aiosqlite.connect(config.db_path) as db:
+        await db.execute("UPDATE audit_log SET contract_refused = 1 WHERE reasoning_hash = ?", (reasoning_hash,))
+        await db.commit()
+
+
+async def comparison_metrics(business_id: Optional[int] = None) -> dict:
+    """Rules-versus-model counts over decisions that carry a comparison (hash format 3). `compared` counts only decisions a
+    model answered; agreement is None when none were compared (rule 19). Live and shadow decisions are kept apart and split by
+    origin and by business. business_id=None is the public aggregate (archived businesses left out); a number scopes it."""
+    scope, args = ("AND a.business_id = ? ", (business_id,)) if business_id is not None else (
+        "AND a.business_id NOT IN (SELECT id FROM businesses WHERE status = 'archived') ", ())
+    sql = (
+        "SELECT a.business_id AS business_id, COALESCE(i.mode, 'live') AS mode, COALESCE(i.origin, 'agent') AS origin, "
+        "COUNT(*) AS total, SUM(a.model_action IS NOT NULL) AS compared, SUM(a.agreed = 1) AS agreed, "
+        "SUM(a.agreed = 0) AS disagreed, SUM(a.contract_refused = 1) AS contract_refused "
+        "FROM audit_log a LEFT JOIN invoices i ON i.business_id = a.business_id AND i.invoice_number = a.subject "
+        "WHERE a.hash_version = 3 " + scope + "GROUP BY a.business_id, mode, origin"
+    )
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(sql, args) as cur:
+            rows = [dict(r) for r in await cur.fetchall()]
+
+    def blank():
+        return {"total": 0, "compared": 0, "agreed": 0, "disagreed": 0, "contract_refused": 0}
+
+    def add(bucket, r):
+        for k in blank():
+            bucket[k] += int(r[k] or 0)
+
+    def finish(bucket):
+        bucket["agreement_rate"] = round(bucket["agreed"] / bucket["compared"], 4) if bucket["compared"] else None
+        return bucket
+
+    out = {m: {**blank(), "by_origin": {o: blank() for o in ("agent", "manual", "demo")}, "by_business": {}} for m in ("live", "shadow")}
+    for r in rows:
+        group = out[r["mode"] if r["mode"] in out else "live"]
+        add(group, r)
+        if r["origin"] in group["by_origin"]:
+            add(group["by_origin"][r["origin"]], r)
+        add(group["by_business"].setdefault(r["business_id"], blank()), r)
+    for group in out.values():
+        finish(group)
+        for b in list(group["by_origin"].values()) + list(group["by_business"].values()):
+            finish(b)
+    return out
 
 
 async def recent(limit: int = 20, business_id: Optional[int] = None) -> list:

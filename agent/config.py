@@ -70,6 +70,7 @@ class Config:
     db_path: str
     ledger_signing_key: str  # Ed25519 seed (hex) that signs ledger entries; not a wallet key, it moves no money
     ledger_anchor_auto: bool  # run the background anchoring job (off until the first anchor was confirmed by hand)
+    model_compare: bool  # ask the language model for a second opinion on each decision (recorded, never acted on)
 
     # API hardening
     max_body_bytes: int
@@ -112,6 +113,7 @@ class Config:
             db_path=_optional("CEEDEBOOKS_DB_PATH", "./ceedebooks.db"),
             ledger_signing_key=_optional("LEDGER_SIGNING_KEY"),
             ledger_anchor_auto=_optional("LEDGER_ANCHOR_AUTO").lower() in ("1", "true", "yes"),
+            model_compare=_optional("MODEL_COMPARE", "1").lower() in ("1", "true", "yes"),
             max_body_bytes=int(_optional("MAX_BODY_BYTES") or "16384"),
             rate_limit_per_min=int(_optional("RATE_LIMIT_PER_MIN") or "60"),
             failed_auth_per_min=int(_optional("FAILED_AUTH_PER_MIN") or "10"),

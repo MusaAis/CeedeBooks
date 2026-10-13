@@ -162,7 +162,8 @@ def test_a_shadow_decision_to_pay_is_parked_hashed_and_sends_nothing(client, cha
     assert "real bill 1200.50 NGN, mirrored as 0.5 USDC" in row["reasoning"]
     assert json.loads(row["hash_input"])["reasoning"] == row["reasoning"]  # the hash covers the real amount
     assert decision_log.compute_reasoning_hash(row["action"], row["subject"], row["reasoning"], row["amount_usdc"], row["model_used"],
-                                               row["timestamp"], asyncio.run(models.get_business(1)))[1] == row["reasoning_hash"]
+                                               row["timestamp"], asyncio.run(models.get_business(1)),
+                                               json.loads(row["hash_input"]).get("comparison"))[1] == row["reasoning_hash"]
 
 
 def test_a_parked_shadow_decision_is_not_counted_as_paid_held_or_escalated(client, chain):
@@ -387,7 +388,7 @@ def test_live_decisions_are_unchanged(client, chain):
     assert r.json()["decision"] == "pay"
     row = _audit("INVOICE_PAID")[0]
     assert row["reasoning"] == "Matched PO and receipt, treasury healthy, vendor registered" and "shadow" not in row["hash_input"].lower()
-    assert json.loads(row["hash_input"])["hash_version"] == 2
+    assert json.loads(row["hash_input"])["hash_version"] == 3
     s = client.get("/stats").json()
     assert s["paid"] == 1 and s["shadow"]["paid"] == 0
 

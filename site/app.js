@@ -136,6 +136,11 @@
     card.appendChild(el("div", "meta", rec.action.replace("INVOICE_", "") + " for " + rec.subject + ", " + usdc(rec.amount_usdc) + ", " +
       (rec.model_used === "manual" ? "manual entry, not an agent decision" : "decided by " + rec.model_used) + ", " + when(rec.timestamp)));
     card.appendChild(el("p", null, rec.reasoning));
+    if (rec.hash_version === 3 && rec.rules_action) {
+      card.appendChild(el("p", "note", rec.model_action
+        ? "Rules verdict: " + rec.rules_action + ". The model's second opinion: " + rec.model_action + " (" + (rec.agreed ? "agrees" : "differs") + "). The rules verdict is the one that acted."
+        : "Rules verdict: " + rec.rules_action + ". No model second opinion was recorded for this decision."));
+    }
     out.appendChild(card);
     await render(list, verdict, result);
   }

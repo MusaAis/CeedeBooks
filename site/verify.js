@@ -47,17 +47,29 @@
     if (!out.hashMatches) out.problems.push("SHA-256 of hash_input does not equal the hash");
     var parsed;
     try { parsed = JSON.parse(rec.hash_input); } catch (e) { out.problems.push("hash_input is not valid JSON"); return out; }
-    // Hash format 1 is the six fields. Format 2 (v1.2.8.1) also binds the business and its contract.
-    var v2 = parsed.hash_version === 2;
+    // Hash format 1 is the six fields. Format 2 (v1.2.8.1) also binds the business and its contract. Format 3 (v1.2.9.3) adds
+    // the rules-versus-model comparison.
+    var v3 = parsed.hash_version === 3, v2 = parsed.hash_version === 2 || v3;
     var keys = ["action", "amount_usdc", "model_used", "reasoning", "subject", "timestamp"];
-    if (v2) keys = keys.concat(["business_id", "enforcer_address", "hash_version"]).sort();
+    if (v2) keys = keys.concat(["business_id", "enforcer_address", "hash_version"]);
+    if (v3) keys.push("comparison");
+    keys.sort();
     var sameKeys = Object.keys(parsed).sort().join(",") === keys.join(",");
     if (v2) {
       sameKeys = sameKeys && parsed.business_id === rec.business_id &&
         String(parsed.enforcer_address).toLowerCase() === String(rec.contract_address || "").toLowerCase();
     }
     out.enforcer = v2 ? String(parsed.enforcer_address).toLowerCase() : CONFIG.enforcer.toLowerCase();
-    out.version = v2 ? 2 : 1;
+    out.version = v3 ? 3 : v2 ? 2 : 1;
+    if (v3) {
+      var c = parsed.comparison, ck = ["agreed", "model_action", "model_confidence", "model_name", "model_reasoning", "rules_action"];
+      var cmpOk = !!c && typeof c === "object" && Object.keys(c).sort().join(",") === ck.join(",") &&
+        c.rules_action === rec.rules_action && c.model_action === rec.model_action && c.model_confidence === rec.model_confidence &&
+        (c.agreed === null ? rec.agreed === null : Number(rec.agreed) === (c.agreed ? 1 : 0)) &&
+        (c.model_action === null) === (c.agreed === null);
+      out.comparison = cmpOk ? c : null;
+      sameKeys = sameKeys && cmpOk;
+    }
     var sameText = ["action", "subject", "reasoning", "model_used"].every(function (k) { return parsed[k] === rec[k]; });
     var sameNums = Number(parsed.amount_usdc) === Number(rec.amount_usdc) && Number(parsed.timestamp) === Number(rec.timestamp);
     out.fieldsMatch = sameKeys && sameText && sameNums;

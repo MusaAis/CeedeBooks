@@ -416,6 +416,19 @@ async def get_stats(business: Optional[Slug] = None):
             "shadow": await models.shadow_stats(scope), "businesses": await models.business_counts()}
 
 
+@app.get("/metrics/decisions")
+async def decision_metrics(business: Optional[Slug] = None):
+    """Rules verdict versus the model's second opinion, over decisions that recorded one. The rules verdict is the one that
+    acts. `compared` counts only decisions a model answered; `agreement_rate` is null when none were. Live and shadow are
+    kept apart. Without `business` this is the aggregate over visible businesses; with it, that one business."""
+    scope = await _public_scope(business)
+    metrics = await decision_log.comparison_metrics(scope)
+    slugs = {b["id"]: b["slug"] for b in await models.list_businesses()}
+    for group in metrics.values():
+        group["by_business"] = {slugs[i]: v for i, v in group["by_business"].items() if i in slugs}
+    return metrics
+
+
 @app.get("/.well-known/ledger-key")
 async def ledger_key():
     """The Ed25519 public key that signs every ledger entry. Public. The same server holds the private key, so this key alone
@@ -499,6 +512,7 @@ async def agent_manifest():
             "GET /decisions/{hash}": "public",
             "GET /decisions/{hash}/verify": "public",
             "GET /stats": "public",
+            "GET /metrics/decisions": "public; rules verdict versus the model's second opinion, live and shadow apart, by origin and business (?business=<slug>)",
             "GET /ledger/verify": "public; walks one business's hash chain and compares it with its newest on-chain anchor (?business=<slug>)",
             "GET /ledger/entries": "public; the signed entries after a sequence, as stored (?business=<slug>&after=<n>)",
             "GET /.well-known/ledger-key": "public; the key that signs ledger entries",

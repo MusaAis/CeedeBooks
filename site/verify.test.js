@@ -199,5 +199,20 @@ const zero = "0x" + "00".repeat(32);
     assert.strictEqual("0x" + be["agent()"], V.SELECTORS.agent);
   }
   assert.strictEqual(V.CONFIG.anchor, "0x008217BeC86462E76126F94e50eBe68fb4a41444");
+
+  // ---- hash format 3 (v1.2.9.3): rules versus model, produced by the real Python hashing code
+  const [r4, r5] = [{"action": "INVOICE_PAID", "subject": "INV-9", "reasoning": "Matched PO and receipt", "amount_usdc": 5.0, "model_used": "rules", "timestamp": 1759400002.5, "hash_input": "{\"action\":\"INVOICE_PAID\",\"amount_usdc\":5.0,\"business_id\":2,\"comparison\":{\"agreed\":false,\"model_action\":\"hold\",\"model_confidence\":0.75,\"model_name\":\"m-1\",\"model_reasoning\":\"Runway looks short.\",\"rules_action\":\"pay\"},\"enforcer_address\":\"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"hash_version\":3,\"model_used\":\"rules\",\"reasoning\":\"Matched PO and receipt\",\"subject\":\"INV-9\",\"timestamp\":1759400002.5}", "reasoning_hash": "e05c491f8b49b3030b4f1124438070713cd378da03b8b2234a0da15e17ded2d8", "business_id": 2, "hash_version": 3, "contract_address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "contract_version": 2, "rules_action": "pay", "model_action": "hold", "agreed": 0, "model_confidence": 0.75}, {"action": "INVOICE_PAID", "subject": "INV-9", "reasoning": "Matched PO and receipt", "amount_usdc": 5.0, "model_used": "rules", "timestamp": 1759400002.5, "hash_input": "{\"action\":\"INVOICE_PAID\",\"amount_usdc\":5.0,\"business_id\":2,\"comparison\":{\"agreed\":null,\"model_action\":null,\"model_confidence\":null,\"model_name\":null,\"model_reasoning\":null,\"rules_action\":\"pay\"},\"enforcer_address\":\"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"hash_version\":3,\"model_used\":\"rules\",\"reasoning\":\"Matched PO and receipt\",\"subject\":\"INV-9\",\"timestamp\":1759400002.5}", "reasoning_hash": "089d91d0a42382a525f1d9c73f3b1e2a9e0d1cff669b46c55e22ead3fd16b5e3", "business_id": 2, "hash_version": 3, "contract_address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "contract_version": 2, "rules_action": "pay", "model_action": null, "agreed": null, "model_confidence": null}];
+  const ok4 = await V.checkRecord(r4, r4.reasoning_hash);
+  assert.ok(ok4.hashMatches && ok4.fieldsMatch && ok4.version === 3 && ok4.comparison.model_action === "hold" && ok4.comparison.agreed === false, JSON.stringify(ok4));
+  const ok5 = await V.checkRecord(r5, r5.reasoning_hash);
+  assert.ok(ok5.hashMatches && ok5.fieldsMatch && ok5.comparison.model_action === null && ok5.comparison.agreed === null);   // no model: null, not agreement
+  assert.ok(!(await V.checkRecord({ ...r4, agreed: 1 }, r4.reasoning_hash)).fieldsMatch);                  // a flattering displayed column is caught
+  assert.ok(!(await V.checkRecord({ ...r4, model_action: "pay" }, r4.reasoning_hash)).fieldsMatch);
+  assert.ok(!(await V.checkRecord({ ...r4, model_confidence: 0.99 }, r4.reasoning_hash)).fieldsMatch);
+  assert.ok(!(await V.checkRecord({ ...r5, agreed: 1 }, r5.reasoning_hash)).fieldsMatch);
+  assert.ok(!(await V.checkRecord({ ...r4, rules_action: "hold" }, r4.reasoning_hash)).fieldsMatch);
+  assert.ok(!(await V.checkRecord({ ...r4, hash_input: r4.hash_input.replace('"comparison":', '"comparisonX":') }, r4.reasoning_hash)).hashMatches);
+  const h4 = JSON.parse(r4.hash_input); delete h4.comparison;
+  assert.ok(!(await V.checkRecord({ ...r4, hash_input: JSON.stringify(h4) }, r4.reasoning_hash)).hashMatches);
   console.log("JS_TESTS_OK");
 })().catch((e) => { console.error(e); process.exit(1); });

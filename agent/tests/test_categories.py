@@ -348,4 +348,4 @@ def test_decisions_in_a_new_category_still_chain_and_verify(client, chains):
     ok = client.get("/ledger/verify?business=acme").json()
     assert ok["ok"] is True and ok["problem_count"] == 0 and ok["entries"] >= 2  # genesis plus the decision
     row = _rows("SELECT hash_version FROM audit_log WHERE subject = 'INV-1'")[0]
-    assert row == (2,)
+    assert row == (3,)  # invoice decisions carry the model-vs-rules comparison (hash format 3)

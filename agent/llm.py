@@ -31,6 +31,16 @@ async def escalation_reasoning(context: str) -> str:
     return resp.choices[0].message.content
 
 
+async def complete(system: str, user: str, max_tokens: int = 400) -> str:
+    """One short, deterministic completion (used for the second opinion)."""
+    resp = await _client.chat.completions.create(
+        model=config.groq_llm_model,
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+        temperature=0, max_tokens=max_tokens,
+    )
+    return resp.choices[0].message.content or ""
+
+
 async def ping() -> bool:
     """Cheap reachability check for the Phase 1 checklist item — confirms the model
     string resolves and responds, not just that the API key is set."""

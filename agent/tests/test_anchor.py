@@ -288,9 +288,13 @@ def test_an_archived_business_still_serves_its_entries_and_its_anchor_check(clie
     assert client.get("/ledger/verify?business=ceedebooks").json()["anchor"]["status"] == "match"
 
 
-def test_the_anchor_job_is_off_unless_asked_for(client):
-    assert config.ledger_anchor_auto is False and not hasattr(main.app.state, "anchor_task")
-    assert config.ledger_anchor_address == "0x008217BeC86462E76126F94e50eBe68fb4a41444"
+def test_the_anchor_job_is_off_unless_asked_for(monkeypatch):
+    monkeypatch.setattr(config, "ledger_anchor_auto", False)         # the shell that runs the tests may have it set
+    main.app.state._state.pop("anchor_task", None)
+    with TestClient(main.app):
+        assert not hasattr(main.app.state, "anchor_task")
+    from agent import config as cfg
+    assert cfg._ARC_TESTNET_ANCHOR == "0x008217BeC86462E76126F94e50eBe68fb4a41444"
 
 
 def test_the_manifest_lists_the_new_ledger_routes(client):

@@ -143,3 +143,17 @@ No contract change, no hash change, no ledger change. The first start adds the `
 7. Only after every first anchor worked, add `LEDGER_ANCHOR_AUTO=1` to `.env` and restart the service. The job then anchors every 25 new entries or 6 hours, only when the head moved.
 
 To go back: stop the service and check out v1.2.9.1; the `ledger_anchors` table is additive. An anchor already on-chain stays there. If the ledger is ever restored from an older backup, `/ledger/verify` will fail with `anchored_entries_missing`, which is the check working.
+
+## Upgrading to v1.2.9.3 (model-versus-rules log)
+
+No contract change and no ledger change. The first start adds five columns to `audit_log` (older rows stay null). From then on each invoice decision is hashed in format 3 and records the model's second opinion beside the rules' verdict. The rules verdict is the only one that acts. The model call adds at most 3 seconds to an invoice; set `MODEL_COMPARE=0` in `.env` to turn it off.
+
+1. Back up (from `~/ceedebooks`): `mkdir -p ~/backups && cp ceedebooks.db ~/backups/ceedebooks.db.pre-1.2.9.3`.
+2. Apply the patch and run the tests with the CI placeholder variables: `ARC_TESTNET_RPC_URL=http://localhost:8545 DEPLOYER_PRIVATE_KEY=0x01 GROQ_API_KEY=ci-placeholder BUDGET_ENFORCER_ADDRESS=0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB CIRCLE_API_KEY=ci-placeholder CIRCLE_ENTITY_SECRET=ci-placeholder PYTHONPATH=. python3 -m pytest agent/tests -q 2>&1 | tail -2`.
+3. Restart: `sudo systemctl restart ceedebooks-api && sleep 15 && sudo journalctl -u ceedebooks-api -n 30 --no-pager | tail -8`.
+4. Re-copy the proof page: `sudo cp site/app.js site/verify.js /var/www/ceedebooks/`.
+5. Check: `curl -s https://api.ceedebooks.xyz/metrics/decisions | python3 -m json.tool | head -30` shows zero totals until a new invoice is processed; `curl -s "https://api.ceedebooks.xyz/ledger/verify?business=ceedebooks" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['ok'],d['fully_verified'])"` still prints `True True`.
+6. Ask the model once, with no invoice and nothing on-chain (it prints the opinion and the seconds it took; `None` means no usable answer inside 3 seconds): `cd ~/ceedebooks && set -a && . ./.env && set +a && PYTHONPATH=. python3 -c "import asyncio,time;from agent import second_opinion as s;t=time.time();print(asyncio.run(s.ask_model({'po_and_receipt_match':True,'match_note':'PO, receipt, and vendor wallet all match','runway_ok':True,'vendor_registered_onchain':True})), round(time.time()-t,2))"`.
+7. Process one shadow or test invoice, then open its decision on the proof page: the record shows the rules verdict and the model's opinion (or "No model second opinion"), and all hash checks pass.
+
+To go back: stop the service and check out v1.2.9.2. The new columns are additive and the older code ignores them; format 3 records written meanwhile will not be checked by older proof-page code.

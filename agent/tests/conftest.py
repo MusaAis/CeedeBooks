@@ -110,6 +110,16 @@ class Chains:
 
 
 @pytest.fixture(autouse=True)
+def no_model(monkeypatch):
+    """The language model is never called in tests; a test that wants an opinion patches second_opinion.ask_model itself."""
+    from agent import second_opinion
+
+    async def none(facts):
+        return None
+    monkeypatch.setattr(second_opinion, "ask_model", none)
+
+
+@pytest.fixture(autouse=True)
 def ledger_key(monkeypatch):
     """A throwaway Ed25519 seed for the decision ledger (a test value, not a secret)."""
     monkeypatch.setattr(config, "ledger_signing_key", "11" * 32)

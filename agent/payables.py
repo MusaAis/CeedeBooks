@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-from agent import contract, decision_log
+from agent import contract, decision_log, second_opinion
 from agent.config import config
 from agent.llm import escalation_reasoning
 from backend import models
@@ -85,6 +85,19 @@ async def decide(invoice: Invoice, treasury_runway_days: float, chain) -> tuple[
     return Decision.PAY, "Matched PO and receipt, treasury healthy, vendor registered"
 
 
+def _vendor_registered(chain, wallet: str) -> Optional[bool]:
+    """A fact for the model only; if the chain cannot be read here the fact is None and the decision itself is unaffected."""
+    try:
+        return bool(chain.is_vendor_approved(wallet))
+    except Exception:
+        return None
+
+
+async def _compare(rules_action: str, facts: dict) -> dict:
+    """The rules verdict beside the model's second opinion (a short timeout, never acted on). See agent/second_opinion.py."""
+    return second_opinion.comparison(rules_action, await second_opinion.ask_model(facts))
+
+
 def _chain_hash(tx_id: str):
     """On-chain tx hash for the public audit page; None if Circle has not reported it (never blocks a payment)."""
     try:
@@ -105,10 +118,11 @@ async def _anchor_refusal(chain, reasoning_hash_hex: str) -> None:
 
 async def _log_and_escalate(
     invoice: Invoice, reason: str, model_used: str, amount_units: int, doc_hash: bytes, invoice_number_b32: bytes,
-    chain, business: dict,
+    chain, business: dict, comparison: Optional[dict] = None,
 ) -> None:
     reasoning_hash_hex = await decision_log.log_decision(
-        "INVOICE_ESCALATED", invoice.invoice_number, reason + shadow_note(invoice), model_used=model_used, amount=invoice.amount_usdc, business=business
+        "INVOICE_ESCALATED", invoice.invoice_number, reason + shadow_note(invoice), model_used=model_used, amount=invoice.amount_usdc,
+        business=business, comparison=comparison,
     )
     tx_id = chain.escalate(
         invoice.vendor_wallet, amount_units, invoice_number_b32, doc_hash,
@@ -188,20 +202,25 @@ async def process_invoice(invoice: Invoice, treasury_runway_days: float, busines
         return Decision.PAY
 
     matched, match_reason = await three_way_match(invoice)
+    facts = {"po_and_receipt_match": matched, "match_note": match_reason, "runway_ok": treasury_runway_days >= 7}
     if not matched:
-        await _log_and_escalate(invoice, match_reason, "rules", amount_units, doc_hash, invoice_number_b32, chain, business)
+        comparison = await _compare("escalate", facts)
+        await _log_and_escalate(invoice, match_reason, "rules", amount_units, doc_hash, invoice_number_b32, chain, business, comparison)
         return Decision.ESCALATE
 
     decision, reason = await decide(invoice, treasury_runway_days, chain)
+    facts["vendor_registered_onchain"] = _vendor_registered(chain, invoice.vendor_wallet)
+    comparison = await _compare("pay" if decision == Decision.PAY else decision.value, facts)
 
     if decision == Decision.ESCALATE:
         narrative = await escalation_reasoning(f"Invoice {invoice.invoice_number}: {reason}")
-        await _log_and_escalate(invoice, narrative, config.groq_llm_model, amount_units, doc_hash, invoice_number_b32, chain, business)
+        await _log_and_escalate(invoice, narrative, config.groq_llm_model, amount_units, doc_hash, invoice_number_b32, chain, business, comparison)
         return decision
 
     if decision == Decision.HOLD:
         reasoning_hash_hex = await decision_log.log_decision(
-            "INVOICE_HELD", invoice.invoice_number, reason + shadow_note(invoice), model_used="rules", amount=invoice.amount_usdc, business=business
+            "INVOICE_HELD", invoice.invoice_number, reason + shadow_note(invoice), model_used="rules", amount=invoice.amount_usdc,
+            business=business, comparison=comparison,
         )
         await models.update_invoice_status(invoice.business_id, invoice.id, "held", reasoning_hash=reasoning_hash_hex)
         await _anchor_refusal(chain, reasoning_hash_hex)
@@ -212,32 +231,37 @@ async def process_invoice(invoice: Invoice, treasury_runway_days: float, busines
         # Off-chain only: nothing is committed, escalated or sent, and it is not counted as paid or refused.
         pending_hash = await decision_log.log_decision(
             "INVOICE_SHADOW_PENDING", invoice.invoice_number, reason + shadow_note(invoice) + " Waiting for the owner to approve.",
-            model_used="rules", amount=invoice.amount_usdc, business=business,
+            model_used="rules", amount=invoice.amount_usdc, business=business, comparison=comparison,
         )
         await models.update_invoice_status(invoice.business_id, invoice.id, "awaiting_owner", reasoning_hash=pending_hash)
         return Decision.AWAIT_OWNER
 
-    await _commit_then_pay(invoice, "INVOICE_PAID", reason, chain, business, amount_units, doc_hash, invoice_number_b32)
+    await _commit_then_pay(invoice, "INVOICE_PAID", reason, chain, business, amount_units, doc_hash, invoice_number_b32, comparison)
     return decision
 
 
 async def _commit_then_pay(
-    invoice: Invoice, action: str, reason: str, chain, business: dict, amount_units: int, doc_hash: bytes, invoice_number_b32: bytes
+    invoice: Invoice, action: str, reason: str, chain, business: dict, amount_units: int, doc_hash: bytes, invoice_number_b32: bytes,
+    comparison: Optional[dict] = None,
 ) -> str:
     """Hash first, then commit, wait, pay, wait. Returns the reasoning hash. The contract re-checks everything."""
     reasoning_hash_hex = await decision_log.log_decision(
-        action, invoice.invoice_number, reason, model_used="rules", amount=invoice.amount_usdc, business=business
+        action, invoice.invoice_number, reason, model_used="rules", amount=invoice.amount_usdc, business=business, comparison=comparison
     )
     reasoning_hash = bytes.fromhex(reasoning_hash_hex)
     commitment = chain.commitment_for(
         invoice.vendor_wallet, amount_units, invoice_number_b32, doc_hash, invoice.category, reasoning_hash
     )
-    commit_tx_id = chain.commit_decision(commitment)
-    contract.wait_for_transaction(commit_tx_id)
-    tx_id = chain.pay(
-        invoice.vendor_wallet, amount_units, invoice_number_b32, doc_hash, invoice.category, reasoning_hash
-    )
-    contract.wait_for_transaction(tx_id)
+    try:
+        commit_tx_id = chain.commit_decision(commitment)
+        contract.wait_for_transaction(commit_tx_id)
+        tx_id = chain.pay(
+            invoice.vendor_wallet, amount_units, invoice_number_b32, doc_hash, invoice.category, reasoning_hash
+        )
+        contract.wait_for_transaction(tx_id)
+    except RuntimeError:  # Circle reports a transaction for this decision failed or reverted on-chain
+        await decision_log.mark_contract_refused(reasoning_hash_hex)
+        raise
     await decision_log.record_onchain_tx(reasoning_hash_hex, tx_id, _chain_hash(tx_id))
     await models.update_invoice_status(invoice.business_id, invoice.id, "paid", reasoning_hash=reasoning_hash_hex, onchain_tx_id=tx_id)
     return reasoning_hash_hex
