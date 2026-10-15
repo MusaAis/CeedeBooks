@@ -13,6 +13,7 @@ load_dotenv()
 _ARC_TESTNET_USDC = "0x3600000000000000000000000000000000000000"
 _ARC_TESTNET_FACTORY = "0x97b9A3802bA6B258cBeF6070532a265656bb391C"  # BudgetFactory, v1.2.8
 _ARC_TESTNET_ANCHOR = "0x008217BeC86462E76126F94e50eBe68fb4a41444"  # LedgerAnchor, v1.2.8
+_ARC_TESTNET_GATEWAY_WALLET = "0x0077777d7EBA4688BDeF3E311b846F25870A19B9"  # Circle GatewayWallet on every testnet (Circle's contract-addresses page)
 
 
 def _require(name: str) -> str:
@@ -46,6 +47,7 @@ class Config:
     circle_treasury_wallet_id: str
     circle_treasury_wallet_address: str
     gateway_api_url: str
+    gateway_wallet_address: str  # Circle's GatewayWallet: USDC reaches a Gateway balance only through its deposit(), never a plain transfer
 
     # AI models
     groq_api_key: str
@@ -99,6 +101,7 @@ class Config:
             circle_treasury_wallet_id=_optional("CIRCLE_TREASURY_WALLET_ID"),
             circle_treasury_wallet_address=_optional("CIRCLE_TREASURY_WALLET_ADDRESS"),
             gateway_api_url=_optional("GATEWAY_API_URL", "https://gateway-api-testnet.circle.com"),
+            gateway_wallet_address=_optional("GATEWAY_WALLET_ADDRESS") or _ARC_TESTNET_GATEWAY_WALLET,
             groq_api_key=_require("GROQ_API_KEY"),
             groq_llm_model=_optional("GROQ_LLM_MODEL", "openai/gpt-oss-120b"),
             laya_enabled=bool(_optional("LAYA_FINETUNED_CHECKPOINT_PATH")),

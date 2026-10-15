@@ -46,7 +46,7 @@ _V2_ABI = _V1_ABI + [_fn("weeklyLimit", [], ["uint256"]), _fn("remainingThisWeek
 _ABI = {1: _V1_ABI, 2: _V2_ABI}
 
 _FACTORY_ABI = [_fn("isBusiness", ["address"], ["bool"]), _fn("businessCount", [], ["uint256"])]
-_USDC_ABI = [_fn("balanceOf", ["address"], ["uint256"])]
+_USDC_ABI = [_fn("balanceOf", ["address"], ["uint256"]), _fn("allowance", ["address", "address"], ["uint256"])]
 _usdc = _w3.eth.contract(address=Web3.to_checksum_address(config.usdc_address), abi=_USDC_ABI)
 
 
@@ -267,6 +267,35 @@ def anchor_ledger(wallet_id: str, head_hex: str, sequence: int) -> str:
     """anchor(head, sequence), sent from that business's own agent wallet. Returns the Circle transaction id."""
     return execute_from_wallet(wallet_id, Web3.to_checksum_address(config.ledger_anchor_address),
                                "anchor(bytes32,uint256)", ["0x" + head_hex, str(sequence)])
+
+
+# ---- Circle Gateway deposit (F2): two calls from the agent wallet, run only by scripts/gateway_deposit.py after a typed "yes"
+
+def usdc_balance_of(address: str) -> int:
+    """USDC balance (6 decimals) of any address. Raises if the chain cannot be read."""
+    return int(_usdc.functions.balanceOf(Web3.to_checksum_address(address)).call())
+
+
+def usdc_allowance(owner: str, spender: str) -> int:
+    return int(_usdc.functions.allowance(Web3.to_checksum_address(owner), Web3.to_checksum_address(spender)).call())
+
+
+def has_code(address: str) -> bool:
+    """True when a contract is deployed at the address."""
+    return len(_w3.eth.get_code(Web3.to_checksum_address(address))) > 0
+
+
+def approve_usdc(wallet_id: str, spender: str, units: int) -> str:
+    """USDC approve(spender, units) from one Circle wallet: the exact amount, never an unlimited allowance. Returns the Circle transaction id."""
+    return execute_from_wallet(wallet_id, Web3.to_checksum_address(config.usdc_address), "approve(address,uint256)",
+                               [Web3.to_checksum_address(spender), str(units)])
+
+
+def gateway_deposit(wallet_id: str, units: int) -> str:
+    """GatewayWallet.deposit(usdc, units) from one Circle wallet. A plain USDC transfer to that contract would lose the funds,
+    so this is the only path the code uses. Returns the Circle transaction id."""
+    return execute_from_wallet(wallet_id, Web3.to_checksum_address(config.gateway_wallet_address), "deposit(address,uint256)",
+                               [Web3.to_checksum_address(config.usdc_address), str(units)])
 
 
 _chains: dict = {}

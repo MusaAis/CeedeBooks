@@ -194,3 +194,18 @@ No contract or database change, and no new environment variable (`GATEWAY_API_UR
 5. Check the app: sign in to the admin site; the Overview shows a "Gateway balance (agent wallet)" card with a number, or "Unavailable" if the API could not be read. Hard-refresh the page if the card is missing (the browser may hold the old `admin.js`).
 
 To go back: stop the service and check out v1.2.9.5. Nothing in the database needs undoing.
+
+## Upgrading to v1.2.10.1 (Gateway deposit from the agent wallet)
+
+No contract or database change. One optional environment variable: `GATEWAY_WALLET_ADDRESS` defaults to Circle's GatewayWallet on every testnet, `0x0077777d7EBA4688BDeF3E311b846F25870A19B9` (Circle's contract-addresses page, `developers.circle.com/gateway/references/contract-addresses`), so leave it unset. The deposit is a script you run by hand; the API never deposits or spends.
+
+1. Back up: `mkdir -p ~/backups && cp ceedebooks.db ~/backups/ceedebooks.db.pre-1.2.10.1` (from `~/ceedebooks`).
+2. Extract the files, run `pytest agent/tests/` with the CI placeholder variables.
+3. Restart the service so it loads the new code: `sudo systemctl restart ceedebooks-api`, wait about 15 seconds, then check `curl -s https://api.ceedebooks.xyz/businesses | head -c 300`.
+4. Dry run (reads only: no audit row, nothing sent): `cd ~/ceedebooks && set -a && . ./.env && set +a && PYTHONPATH=. python3 scripts/gateway_deposit.py --business ceedebooks --amount 1 --dry-run`. It prints the agent wallet, the Gateway Wallet address, the USDC balance and the Gateway balance. Compare the Gateway Wallet address with Circle's page before going on.
+5. The deposit (manual, on-chain, up to 2 transactions from the agent wallet; read each prompt before typing yes): the same command without `--dry-run`. Step 1 writes the audit row, step 2 approves the exact amount to the Gateway Wallet (skipped if that allowance exists), step 3 calls `deposit`. The amount is capped at 5 USDC. Gateway credits a deposit after finality, so the balance can take a few minutes.
+6. Check: the admin Overview card "Gateway balance (agent wallet)" shows the deposit, and the transaction hash the script printed opens on the Arc explorer.
+
+A plain USDC transfer to the Gateway Wallet loses the funds; the script never does one. If step 3 fails after step 2, the Gateway Wallet keeps an allowance of the exact amount and no USDC has moved; running the script again skips step 2.
+
+To go back: stop the service and check out v1.2.10. A `GATEWAY_DEPOSIT` row, if you made one, stays in the ledger, and USDC deposited into Gateway stays in Gateway.

@@ -4,7 +4,7 @@
 ![CI](https://github.com/MusaAis/CeedeBooks/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Foundry tests](https://img.shields.io/badge/forge%20tests-69%2F69%20passing-brightgreen)
-![Python tests](https://img.shields.io/badge/pytest-404%2F404%20passing-brightgreen)
+![Python tests](https://img.shields.io/badge/pytest-444%2F444%20passing-brightgreen)
 ![Network](https://img.shields.io/badge/Arc-Testnet-informational)
 
 *"Ceede" means money in Pulaar/Fulfulde.*
@@ -13,7 +13,7 @@ An autonomous accounts-payable agent for African SMEs on Arc: it validates and p
 
 Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 – Oct 17, 2026.
 
-**Current: v1.2.10** (a read-only Circle Gateway balance for each business's agent wallet on the admin Overview, and a shorter Links section; the contracts are those of v1.2.9.4, and Phase E, audit hardening, is complete). The AP/AR engine runs on Arc Testnet behind a key-authenticated HTTPS API (`api.ceedebooks.xyz`), with a public proof page (`ceedebooks.xyz`), a wallet-signed admin site (`admin.ceedebooks.xyz`), a vendor portal (`portal.ceedebooks.xyz`) and a business registration page (`portal.ceedebooks.xyz/business.html`). Two businesses exist, both ours: the original one on the v1 `BudgetEnforcer`, and a test business created through `BudgetFactory` on Oct 8 to check onboarding end to end. No outside business or paying user yet: every payment so far is self-owned. Latest additions, newest first: Gateway balance read on the admin Overview (v1.2.10); live approver on `GET /businesses` (v1.2.9.5); return to agent, re-run and a red-team script (v1.2.9.4); the model's recorded second opinion beside the rules verdict (v1.2.9.3); on-chain anchoring of each ledger head (v1.2.9.2); owner-created categories and entered invoice amounts (v1.2.9.1); a signed hash-chained ledger (v1.2.9); shadow mode (v1.2.8.3); business onboarding (v1.2.8.2). See [Custody trade-off](#custody-trade-off), the [Roadmap](#roadmap) and the [Changelog](#changelog).
+**Current: v1.2.10.1** (a manual USDC deposit from the agent wallet into Circle Gateway, run once on testnet, beside the read-only Gateway balance on the admin Overview; the contracts are those of v1.2.9.4, and Phase E, audit hardening, is complete). The AP/AR engine runs on Arc Testnet behind a key-authenticated HTTPS API (`api.ceedebooks.xyz`), with a public proof page (`ceedebooks.xyz`), a wallet-signed admin site (`admin.ceedebooks.xyz`), a vendor portal (`portal.ceedebooks.xyz`) and a business registration page (`portal.ceedebooks.xyz/business.html`). Two businesses exist, both ours: the original one on the v1 `BudgetEnforcer`, and a test business created through `BudgetFactory` on Oct 8 to check onboarding end to end. No outside business or paying user yet: every payment so far is self-owned. Latest additions, newest first: Gateway deposit script (v1.2.10.1); Gateway balance read on the admin Overview (v1.2.10); live approver on `GET /businesses` (v1.2.9.5); return to agent, re-run and a red-team script (v1.2.9.4); the model's recorded second opinion beside the rules verdict (v1.2.9.3); on-chain anchoring of each ledger head (v1.2.9.2); owner-created categories and entered invoice amounts (v1.2.9.1); a signed hash-chained ledger (v1.2.9); shadow mode (v1.2.8.3); business onboarding (v1.2.8.2). See [Custody trade-off](#custody-trade-off), the [Roadmap](#roadmap) and the [Changelog](#changelog).
 
 ## Links
 
@@ -76,15 +76,16 @@ It isn't "an LLM with a wallet." The agent proposes; a smart contract, not a pro
 - **Owner-created categories (v1.2.9.1):** each business keeps its own category names; the owner adds one in the admin site's Limits tab (the server picks the next free id), then signs `setCategoryDailyLimit` from their own wallet. A category takes purchase orders and invoices only while its on-chain limit is above zero and readable, and another business's categories are never visible or usable. Names can be renamed; ids never change
 - **Entered invoice amounts (v1.2.9.1):** no form or API field defaults an amount. The admin and portal forms fill in the purchase-order amount so it is visible, and the submitter can change it; a difference of more than 0.01 USDC escalates
 - **Return to agent and re-run (v1.2.9.4):** on a multi-business (v2) contract the owner can send `reopenEscalation` from their own wallet; the server checks the `EscalationReopened` event carries that invoice's own reasoning hash, then runs the stored invoice through the same pipeline again (new reasoning, new hash, every limit and check). An invoice that ended in `error` can be re-run from the admin site; each takes one atomic claim, so two clicks cannot start two runs. The original v1 contract has no `reopenEscalation`, so there you can only approve or reject
-- **Red-team script (v1.2.9.4):** `scripts/red_team.py` makes the agent wallet try to pay a non-approved address and expects the contract to refuse; the refusal is kept as a `contract_refused` row and the ledger head is anchored. It asks for `yes` before every on-chain step and fails loudly if the contract accepts
+- **Red-team script (v1.2.9.4):** `scripts/red_team.py` makes the agent wallet try to pay a non-approved address and expects the contract to refuse; the refusal is kept as a `contract_refused` row and the ledger head is anchored. It asks for `yes` before every on-chain step and fails loudly if the contract accepts. It was run live on Oct 15 and the contract refused (see [Traction](#traction))
 - **Archive flag (v1.2.9):** the operator can archive a business: it becomes read-only, leaves the public lists and totals, and its ledger still verifies
-- **Gateway balance (v1.2.10):** the admin Overview shows the USDC balance Circle Gateway holds for the business's agent wallet on Arc (`POST /v1/balances`, no key needed). It is a read only: nothing is deposited, spent or decided from it, and if Gateway cannot be read the card says Unavailable, never zero
+- **Gateway balance (v1.2.10):** the admin Overview shows the USDC balance Circle Gateway holds for the business's agent wallet on Arc (`POST /v1/balances`, no key needed). The card is a read only: the service never deposits, spends or decides from it (a deposit is the manual script in the next item), and if Gateway cannot be read the card says Unavailable, never zero
+- **Gateway deposit (v1.2.10.1):** `scripts/gateway_deposit.py` deposits a small amount of USDC (at most 5 per run) from a business's agent wallet into Circle's Gateway Wallet, by hand. It writes the audit row first, then sends an exact-amount `approve`, then `deposit`, each after a typed `yes`, and it sends nothing if any chain read fails or looks wrong. It was run once on the original business on Oct 15 (3 USDC, see [Traction](#traction)). It only deposits: nothing is spent from the Gateway balance, and no decision uses it
 - **Invoice metrics on the proof page**: invoices processed, USDC paid and duplicates caught, split by origin (`agent`, `manual`, `demo`) so hand-run payments and demo runs never count as agent traffic
 
 **Planned** (see the [Roadmap](#roadmap) for order and status; nothing below is built)
 
 - **Oversight:** maker-checker approvals, pause with a stated reason, every figure in a narrative written by code
-- Circle Gateway deposit and gasless spending from the agent wallet (only the balance read is built)
+- Gasless spending from the Gateway balance (the balance read and a manual deposit are built)
 - Treasury: economics-gated yield sweep via a pooled USYC wrapper, continuous vendor screening, other-currency invoices
 - Agent-to-agent reference client for vendors (demo runs labelled `demo`)
 - Invoice intake from PDF or email (a person confirms every amount), a Telegram status bot, receivables
@@ -134,12 +135,20 @@ Everything below is checkable on-chain. Nothing here is estimated.
 | What | Evidence |
 |---|---|
 | Contract deployed and verified on Arc Testnet | [`BudgetEnforcer`](https://explorer.testnet.arc.io/address/0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB) |
-| Test suites | 69 Foundry (24 on the v1 contract, 45 on the multi-business contracts) + 380 Python tests + 6 Node runs (proof page, admin site, vendor portal), run by CI on every push |
+| Test suites | 69 Foundry (24 on the v1 contract, 45 on the multi-business contracts) + 444 Python tests + 6 Node runs (proof page, admin site, vendor portal), run by CI on every push |
 | First self-owned vendor bill paid through the contract | `ceedebooks.xyz` registration, 2.20 USDC, category 1 |
 | Multi-business contracts deployed and verified (v1.2.8) | [`BudgetFactory`](https://explorer.testnet.arc.io/address/0x97b9A3802bA6B258cBeF6070532a265656bb391C), [`LedgerAnchor`](https://explorer.testnet.arc.io/address/0x008217BeC86462E76126F94e50eBe68fb4a41444) |
 | First ledger anchor of the original business (sequence 9) | [`0x24045426...a36639fb`](https://explorer.testnet.arc.io/tx/0x24045426ab28d346ce6e48998dfef1964e5890d64ee04f385cae1011a36639fb); `GET /ledger/verify?business=ceedebooks` compares it with the chain |
+| Red team run live on the original business (Oct 15) | The agent wallet tried to pay a fresh, non-approved address for 1 unit and the contract refused it (at Circle's gas estimation, so no pay transaction reached the chain); the refusal was anchored in ledger sequence 16, [`0x2f75bf9f...0509af`](https://explorer.testnet.arc.io/tx/0x2f75bf9f9aa5702e68c5c031f58f79d56e1c0b68e22567c44d46c3ca4b0509af) (details below) |
+| Gateway deposit from the agent wallet (Oct 15, `manual`) | 3 USDC from the agent wallet into Circle's Gateway Wallet, [`0xa022b539...caba3f`](https://explorer.testnet.arc.io/tx/0xa022b539a506cfb58f1b2fe1f509a00cce6b5b3ccc23c4ebe40a410bebcaba3f); Circle's Gateway API then returned 3 USDC for that wallet (details below) |
 | Businesses | Two, both ours: the original and a test business made through the factory (see [Contracts](#contracts)) |
 | Outside businesses or paying users | None yet |
+
+**Red team, run live on Oct 15 (original business, v1 contract).** `scripts/red_team.py` ran from the server with a typed `yes` at each step. Target: `0x645165125d198C360f96D6a13807907159d83741`, a fresh address that is not an approved vendor, for 1 unit. Step 1 wrote the `RED_TEAM_REFUSED` audit row (`reasoning_hash` `d7ea640ae468f2e2dec1dc35ac05c7f1f2ca006b47b0f0cc00c001204fddb2a0`). Step 2, `commitDecision`, confirmed. Step 3, `pay`, was refused: `ESTIMATION_ERROR - execution reverted: Vendor not approved`. The refusal came from Circle's gas estimation, so no pay transaction reached the chain and there is no pay transaction hash to link; the revert reason is the contract's own check. Step 4 anchored the ledger head: sequence 16, head `7526aeb8f6b3c583460399253ca240dc049a4e4096a02596416f1d7f7383c16b`, transaction [`0x2f75bf9f9aa5702e68c5c031f58f79d56e1c0b68e22567c44d46c3ca4b0509af`](https://explorer.testnet.arc.io/tx/0x2f75bf9f9aa5702e68c5c031f58f79d56e1c0b68e22567c44d46c3ca4b0509af). Afterwards `GET /ledger/verify?business=ceedebooks` returned `ok` true, 17 entries, 16 decisions, no problems, anchor `match`, no entries after the anchor and `fully_verified` true. The row shows on the proof page as `manual entry, off-chain only`: the record itself is not an on-chain event, the anchored head that includes it is.
+
+**Gateway deposit, run live on Oct 15 (original business, `manual`).** `scripts/gateway_deposit.py --amount 3` ran from the server with a typed `yes` at each of its three steps. The agent wallet `0x32B59A6988DCA955c641D529Ee80484200DE37b0` held 39.925090 USDC. Step 1 wrote the `GATEWAY_DEPOSIT` audit row (`reasoning_hash` `537ee6b951883914c4772e982b667bae38f97eeb42c54f1ee8d35c36fac01902`), step 2 approved exactly 3 USDC to Circle's Gateway Wallet, step 3 called `deposit`: transaction [`0xa022b539a506cfb58f1b2fe1f509a00cce6b5b3ccc23c4ebe40a410bebcaba3f`](https://explorer.testnet.arc.io/tx/0xa022b539a506cfb58f1b2fe1f509a00cce6b5b3ccc23c4ebe40a410bebcaba3f). Circle's Gateway API then returned 3.000000 USDC for the wallet, and the admin Overview card shows 3 USDC. The approve transaction's hash was not printed. This is the agent wallet's own USDC and not the business pool, it is not a payment to a vendor, and it is not traction. The Gateway Wallet address (`0x0077777d7EBA4688BDeF3E311b846F25870A19B9`) is the one on Circle's contract-addresses page.
+
+**Outside recognition.** According to an email from XERJ's founder on Oct 15, CeedeBooks' v1.2.9.4 work (return to agent, re-run, red team) was selected for the XERJ Corpus Hub, an open index of code solutions that coding agents consult, under the repository's MIT licence with attribution to MusaAis/CeedeBooks. It is not a user, a customer or a payment, and it is not counted anywhere above.
 
 **Live numbers** (pool balance, paid, held and escalated counts, vendors, purchase orders) change with every payment, so the [proof page](https://ceedebooks.xyz) and `GET /stats` are the only source. The escalations on it are self-owned test invoices that the agent parked for review, as designed. Testnet USDC has no market value.
 
@@ -172,7 +181,7 @@ Every other business starts with none and creates its own in the admin site's Li
 - **Model output is an input, never a release condition.** Circle's own `arc-escrow` sample releases contractor funds on a bare JSON response from GPT-4o with no structural check behind it. CeedeBooks is built specifically not to repeat that pattern.
 - **Independent receipt witness.** A three-way match proves nothing if the agent can confirm its own receipts. It can't.
 - **Settlement is confirmed, not hoped for.** Circle's transaction API is asynchronous — accepting a request isn't the same as it succeeding on-chain. CeedeBooks waits for a terminal state before trusting any result, closing a real phantom-payment risk most demos never test for.
-- **Tested, not just described.** 69 Foundry tests (24 cover the v1 contract, 45 cover the multi-business contracts) plus 380 Python tests covering the decision pipeline, the isolation between businesses, onboarding, shadow mode, per-business categories, the signed ledger and its on-chain anchor, and the admin routes.
+- **Tested, not just described.** 69 Foundry tests (24 cover the v1 contract, 45 cover the multi-business contracts) plus 444 Python tests covering the decision pipeline, the isolation between businesses, onboarding, shadow mode, per-business categories, the signed ledger and its on-chain anchor, and the admin routes.
 
 ---
 
@@ -211,7 +220,7 @@ Every other business starts with none and creates its own in the admin site's Li
                                         └──────────────────────┘
 ```
 
-The engine, the audit log and the ledger are built; the Treasury Brain and Contractor Manager columns are planned (the only piece of the Treasury Brain that exists is the read-only Gateway balance on the admin Overview). There is one `BudgetEnforcer` per business: the original business runs on the v1 contract drawn above, and every other business gets a `BudgetEnforcerV2` from `BudgetFactory` (same shape, plus a weekly limit and return-to-agent). Each business has its own audit log, ledger chain and anchors.
+The engine, the audit log and the ledger are built; the Treasury Brain and Contractor Manager columns are planned (the only pieces of the Treasury Brain that exist are the read-only Gateway balance on the admin Overview and a manual script that deposits into Gateway). There is one `BudgetEnforcer` per business: the original business runs on the v1 contract drawn above, and every other business gets a `BudgetEnforcerV2` from `BudgetFactory` (same shape, plus a weekly limit and return-to-agent). Each business has its own audit log, ledger chain and anchors.
 
 ---
 
@@ -226,6 +235,7 @@ The engine, the audit log and the ledger are built; the Treasury Brain and Contr
 - **Two businesses, both ours.** The backend is multi-tenant and onboarding works on testnet: our own test business went through it (application, acceptance, hosted agent wallet, factory transaction, on-chain verification, funding). No outside business has used it. Isolation between businesses is enforced in code and tested against mocked businesses and, for the factory event, a real factory on a local node.
 - **Hosted agent wallets.** See [Custody trade-off](#custody-trade-off): for businesses we onboard, we run the agent wallet.
 - **Shadow mode is a mirror.** Its payments are testnet USDC and its real amounts are what the owner typed in; nothing checks them against a bank. The agreement rate is only as meaningful as its `n`, and an owner who approves everything produces 100%.
+- **Gateway deposits sit outside the contract.** USDC deposited into Circle Gateway comes from the agent wallet's own balance, not the pool, and `BudgetEnforcer`'s limits do not apply to it. The deposit script caps a run at 5 USDC, and the amount should stay small. Nothing spends from the Gateway balance yet.
 - **Key custody (checked in v1.2.9.4).** Every agent transaction is signed by a Circle developer-controlled wallet; no raw wallet key is held by the service. The only raw key it reads is `LEDGER_SIGNING_KEY` (Ed25519, signs ledger entries, moves no money). `DEPLOYER_PRIVATE_KEY` is not required and nothing signs with it; it has been removed from the live server's `.env`, and holds no power over any contract since the approver rotation (see [Contracts](#contracts)). The Circle entity secret and API key do sit in the server `.env`: whoever reads that file can act as every business's agent, within each contract's rules (see Custody trade-off).
 - **The model.** A language model is used in two places: it writes the narrative when the rules escalate an unregistered vendor, and it gives a second opinion that is recorded and hashed. Neither can release, block or change a payment, and the second opinion waits at most 3 seconds.
 - **Public reasoning.** `GET /decisions/{hash}` returns the full reasoning text, so no private data belongs in it.
@@ -239,7 +249,7 @@ For the businesses we onboard first, **we run your agent's wallet.** It can only
 What the agent wallet can and cannot do, all enforced by your contract and not by us:
 - It can pay a vendor your wallet has approved, up to your per-payment, daily, per-category and (on the multi-business contract) weekly limits, once per invoice, and only after a decision was committed in an earlier block. It can also escalate a payment for you to decide and log a refusal.
 - It cannot withdraw funds, add or approve vendors, change a limit, pause, or take over the contract. Those belong to your owner wallet, which we never hold. You can replace the agent wallet at any time.
-- It holds only the small amount of USDC you send it for network fees. Your money sits in your contract, not in the agent wallet.
+- It holds only the small amount of USDC you send it for network fees (plus anything the operator deposits into Circle Gateway with the manual script, at most 5 USDC per run, which the contract's limits do not cover). Your money sits in your contract, not in the agent wallet.
 
 What it costs you in trust: the agent wallets are controlled by CeedeBooks through one Circle account, so they are **a separate wallet per business, but the same operator**. If that account were compromised, an attacker could act as every business's agent at once, limited by each contract's rules. A self-held agent (you run the signer, we hold nothing) is a possible later option for technical users and is not built.
 
@@ -266,10 +276,10 @@ Each business's contract and agent wallet addresses are public on the proof page
 | E6. Owner-created categories, entered amounts | Per-business category names, owner signs each limit, usable only with an on-chain limit above zero; invoice amounts always entered, never defaulted | v1.2.9.1 | ✅ Built and tested with mocks |
 | E2. On-chain ledger anchor | Agent wallet anchors each business's head (25 entries or 6 hours), `/ledger/verify` compares it, browser "Verify the whole chain" | v1.2.9.2 | ✅ Built; the original business's first anchor was sent by hand and verifies. The automatic job is on and fires after 25 new entries or 6 hours after a new entry |
 | E3. Model-versus-rules log | Rules verdict acts; the model's second opinion is recorded in the hash (format 3); `/metrics/decisions` | v1.2.9.3 | ✅ Built and tested with mocks; the model call was checked live on the server |
-| E4. On-chain red team | Agent wallet tries a payment to a non-approved vendor, the contract's refusal is kept as a `contract_refused` row and anchored | v1.2.9.4 | ✅ Built and tested with mocks (the contract's refusal is also a Foundry test). Live run: none recorded here yet |
+| E4. On-chain red team | Agent wallet tries a payment to a non-approved vendor, the contract's refusal is kept as a `contract_refused` row and anchored | v1.2.9.4 | ✅ Built and tested with mocks (the contract's refusal is also a Foundry test). Run live on Oct 15 on the original business: the contract refused the payment (at Circle's gas estimation, so no pay transaction reached the chain) and the refusal was anchored; see [Traction](#traction) |
 | E5. Key custody, re-evaluate | Deployer key optional, "Return to agent" over `reopenEscalation`, re-run of `error` invoices | v1.2.9.4 | ✅ Built and tested with mocks; the deployer key is out of the live server `.env`. Return to agent needs a v2 contract (the original business's v1 contract has no `reopenEscalation`) |
 | O. Oversight | Maker-checker, pause with reason, figures written by code | v1.3.0 | ⏳ Planned |
-| F. Gateway | F1: read-only `POST /v1/balances` unified balance of the agent wallet on the admin Overview. F2 (not built): deposit and gasless spending | v1.2.10 | ✅ F1 built and tested with mocks, checked on the live server; F2 planned |
+| F. Gateway | F1: read-only `POST /v1/balances` unified balance of the agent wallet on the admin Overview. F2: `scripts/gateway_deposit.py`, a manual deposit from the agent wallet (gasless spending not built) | v1.2.10, v1.2.10.1 | ✅ F1 built, tested with mocks and checked on the live server; F2 built, tested with mocks and run live once (3 USDC deposited on Oct 15) |
 | P. Proof and evidence | Outcomes numbers (decisions made vs escalated, human agreement rate, duplicates caught), "try it in 5 minutes" demo path, rollout records | | ⏳ Planned |
 | G. Treasury brain | Economics-gated sweep, vendor screening, `CeedeBooksYield.sol` pooled USYC wrapper, EURC, CCTP | v1.3.x | ⏳ Planned |
 | N. Agent-to-agent | Reference vendor client; traction counts an outside agent only | v1.3.x | ⏳ Planned |
@@ -287,13 +297,13 @@ Each business's contract and agent wallet addresses are public on the proof page
 |---|---|---|
 | Agent Wallet | ✅ live | Developer-controlled wallet, Arc Testnet; signs every agent contract call (commit, pay, escalate, anchor) |
 | USDC | ✅ live | Native ERC-20 at `0x3600000000000000000000000000000000000000` |
-| Gateway | ✅ live, read-only | `POST /v1/balances` for the agent wallet on domain 26, shown on the admin Overview. No deposit or spend path yet |
+| Gateway | ✅ live: balance read and a manual deposit | `POST /v1/balances` for the agent wallet on domain 26, shown on the admin Overview; `scripts/gateway_deposit.py` approves and deposits USDC into Circle's Gateway Wallet (run once, 3 USDC). No spend path yet |
 | USYC | Planned (Phase G) | Via own pooled wrapper (Arc's Teller has a $100k / allowlist gate) |
 | CCTP | Stretch | Domain 26, `minFinalityThreshold: 2000`, V2 7-param `depositForBurn` only |
 | EURC | Stretch | European vendor payments |
 | ~~Paymaster~~ | Dropped | Not used |
 
-Honest count: 3 live (Agent Wallet, USDC, and Gateway for a balance read only), 3 planned (USYC, CCTP, EURC).
+Honest count: 3 live (Agent Wallet, USDC, and Gateway for a balance read and a manual deposit, with no spend), 3 planned (USYC, CCTP, EURC).
 
 ---
 
@@ -366,7 +376,7 @@ Run with a **single worker**: `uvicorn backend.main:app` (the rate limiter is pe
 | `POST /apply/challenge`, `POST /apply` | public | Apply to become a vendor. A one-time challenge is signed with the payee wallet (EIP-191 `personal_sign`, nothing sent on-chain); the signature must recover to the wallet being applied for. A sign-in signature cannot be replayed here. Applications are private, 1 pending per wallet, 3 pending per IP, 5 per hour per IP |
 | `POST /vendor/auth/challenge`, `POST /vendor/auth/verify`, `POST /vendor/auth/logout` | public / vendor | Vendor wallet sign-in. Only a wallet on file as a vendor gets a session (15 minutes idle, 2 hours at most, one live session per vendor); the challenge answers the same for every address. Send the token as `Authorization: Bearer ...`. A session is a vendor principal: it can use the vendor routes above, never `/vendors`, `/receipts`, `/purchase-orders` or `/admin/*` |
 | `GET /vendor/me` | vendor | The vendor's own record, on-chain approval, purchase orders (with receipt and invoiced flags) and invoices. Nobody else's |
-| `GET /admin/applications`, `POST /admin/applications/{id}/accept`, `.../reject` | admin session | Review applications. Accepting only creates the vendor record: it still cannot be paid until the admin approves its wallet on-chain |
+| `GET /admin/applications`, `POST /admin/applications/{id}/accept`, `POST /admin/applications/{id}/reject` | admin session | Review applications. Accepting only creates the vendor record: it still cannot be paid until the admin approves its wallet on-chain |
 | `GET /.well-known/agent.json` | public | Machine-readable manifest: the vendor flow step by step, endpoints with their roles, and the guarantees, so another agent can discover how to invoice CeedeBooks |
 | `GET /decisions/{hash}` | public | The stored audit record, including the full reasoning text |
 | `GET /decisions/{hash}/verify` | public | Recomputes the SHA-256 of the stored `hash_input`, and (`onchain`) checks that the same hash is in a BudgetEnforcer event of the recorded transaction |
@@ -375,7 +385,7 @@ Run with a **single worker**: `uvicorn backend.main:app` (the rate limiter is pe
 | `POST /business/status/challenge`, `POST /business/status` | public (signed) | An owner reads only the applications made with their own wallet, and for an accepted one the agent wallet and the factory to call |
 | `POST /business/register` | public | `{application_id, tx_hash}` after the owner created the contract. Goes live only if the chain shows our factory made it, the applicant's wallet is its approver and the issued agent wallet is its agent |
 | `GET /businesses` | public | Active businesses with contract and agent wallet addresses, so anyone can check them on the explorer |
-| `GET /operator/business-applications`, `POST .../{id}/accept`, `POST .../{id}/reject`, `POST /operator/businesses/{id}/external` | operator session | The home business's admin only. Accepting creates the hosted agent wallet. `external` (an outside party) is set only here and never for the home business |
+| `GET /operator/business-applications`, `POST /operator/business-applications/{id}/accept`, `POST /operator/business-applications/{id}/reject`, `POST /operator/businesses/{id}/external` | operator session | The home business's admin only. Accepting creates the hosted agent wallet. `external` (an outside party) is set only here and never for the home business |
 | `POST /invoices` with `mode: "shadow"` | buyer or admin session | A real bill mirrored as a testnet payment: needs `real_amount` and `real_currency`, cannot carry an `origin` label, and a vendor cannot submit one. If the rules say pay it is parked as `awaiting_owner` (answer `decision: "await_owner"`) |
 | `POST /admin/invoices/{id}/shadow-approve`, `POST /admin/invoices/{id}/shadow-reject` | admin session | Approve pays through the normal commit-then-pay and records agree (a failed payment leaves it waiting and records nothing); reject pays nothing and records disagree. Only the business's own shadow invoices |
 | `POST /admin/decisions/{hash}/verdict` | admin session | `{"verdict": "agree" or "disagree"}` on a held or escalated shadow decision of the admin's own business. One verdict per decision; a second returns 409 |
@@ -412,7 +422,7 @@ ceedebooks/
 │   ├── anchor.py           # on-chain anchoring of each ledger head (v1.2.9.2)
 │   ├── gateway.py          # read-only Circle Gateway balance of an agent wallet (v1.2.10)
 │   ├── decision_log.py     # canonical-JSON SHA-256 audit log, hash-before-action
-│   ├── contract.py         # reads + Circle-signed writes, wait_for_transaction
+│   ├── contract.py         # reads + Circle-signed writes (incl. the Gateway approve and deposit), wait_for_transaction
 │   ├── payables.py         # three-way match, rules baseline, commit-then-pay, retry guard
 │   ├── treasury.py         # server-side runway from the pool balance and trailing spend
 │   ├── wallet_setup.py     # one-off Circle developer-controlled wallet creation (original business)
@@ -432,6 +442,7 @@ ceedebooks/
 │       ├── test_ledger.py
 │       ├── test_anchor.py
 │       ├── test_gateway.py
+│       ├── test_gateway_deposit.py
 │       ├── test_model_compare.py
 │       ├── test_relabel.py
 │       └── test_red_team.py
@@ -447,6 +458,7 @@ ceedebooks/
 │   ├── ledger_key.py       # create the ledger signing key without printing it
 │   ├── anchor_ledger.py    # status, and the confirmed first anchor per business
 │   ├── relabel_origin.py   # list, then (after confirmation) relabel test invoices agent -> demo
+│   ├── gateway_deposit.py  # asks for yes at each step: USDC approve and deposit into Circle's Gateway Wallet (max 5 USDC)
 │   ├── red_team.py         # asks for yes at each step: a payment the contract must refuse, then an anchor
 │   └── pay_domain.py       # one-off: manual commit-then-pay of the ceedebooks.xyz domain bill
 ├── admin/                  # admin site (admin.ceedebooks.xyz)
@@ -526,13 +538,14 @@ The pytest run needs only these placeholders: the chain and Circle's calls are f
 
 **69 Foundry tests** (24 for the v1 contract, 35 for `BudgetEnforcerV2`, 6 for `BudgetFactory`, 4 for `LedgerAnchor`), one per revert path or acceptance scenario: unregistered and revoked vendor, over per-tx / daily / category limits, unset category (fail-closed), same invoice resubmitted as a different file, missing / reused / mismatched commit, crash-and-retry, simulated prompt injection (contract refuses even if the agent were fooled), the escalate → approve / reject flow, escalated invoices blocked from direct payment, pause, withdraw, agent rotation, two-step approver rotation, and the `reasoningHash` round-trip via the `PaymentMade` event.
 
-**404 Python tests** in `agent/tests/`. No test sends a transaction or touches a network. They cover:
+**444 Python tests** in `agent/tests/`. No test sends a transaction or touches a network. They cover:
 - The decision pipeline: three-way match, rules baseline (pay, hold, escalate), retry safety, the 0.01 USDC rounding allowance, and the invoice pre-flight dry run, which writes nothing and reveals no balances.
 - Access control: API keys and roles, vendor wallet sessions, admin wallet sign-in, and every denied path.
 - Multiple businesses: isolation (a key, session or id of one business never reaches another), hash formats 1 to 3, onboarding and its on-chain checks, per-business categories, and shadow mode.
 - The ledger and audit trail: the signed chain (edited, deleted, reordered or forked entries, a wrong key), the on-chain anchor, the public verify endpoints, the archive flag and the relabel tool.
 - The model: the rules verdict always acts, a disagreeing or slow model changes nothing, no answer is null and never agreement, and model text with invented figures is withheld.
 - The Gateway read: the request body matches Circle's documented shape, other domains and depositors are not counted, and every failure (status, shape, number, timeout, bad address) is null, never zero.
+- The Gateway deposit script: amount bounds and the 5 USDC cap, the two calls' signatures, the order (audit row, approve, deposit), an exact-amount approval, a declined step sends nothing, and an unreadable chain, a wrong agent, a missing contract or too small a balance sends nothing. Each check was broken on purpose to confirm a test fails.
 - Return to agent and re-run (only v2, only the matching event, one click at a time, another business's invoice is untouchable) and the red-team script (a refusal is recorded, an acceptance is a loud failure, a declined step sends nothing).
 
 **Node suites** run the browser code without a browser: the proof page's hash recomputation and whole-chain check against a real Ed25519-signed chain, with contract selectors compared to the compiled contracts (`site/verify.test.js`); the admin app's call encoding and rendering (`admin/*.test.js`, the admin one also run as a second business); and the vendor portal and business registration page (`portal/*.test.js`).
@@ -584,6 +597,15 @@ Deployment transactions: [LedgerAnchor `0x45c031cd...9f9f4d`](https://explorer.t
 
 ## Changelog
 
+**v1.2.10.1: Phase F2, Gateway deposit from the agent wallet (built, tested with mocks, run live once)**
+- New `scripts/gateway_deposit.py --business <slug> --amount <USDC>` (and `--dry-run`, which reads and prints only). It checks the agent wallet is the contract's `agent()`, that contracts exist at the Gateway Wallet and USDC addresses, and that the wallet holds the amount plus 0.1 USDC for gas; any unreadable or wrong read stops it with nothing sent. The amount must be above zero, at most 6 decimals and at most 5 USDC
+- Three steps, each after a typed `yes`: the audit row (action `GATEWAY_DEPOSIT`, `manual`, written and ledger-chained before any on-chain call), `approve(GatewayWallet, amount)` for the exact amount (skipped if that allowance exists, and checked again afterwards), then `GatewayWallet.deposit(USDC, amount)`. It never sends a plain transfer, which Circle's docs warn loses the funds. Afterwards it reads the Gateway balance and says plainly when it has not moved yet (Gateway credits a deposit after finality)
+- The audit row keeps no `chain_tx_hash`, because the proof page's Verify looks for a payment event and a deposit has none; the transaction hash is printed and listed under Traction. The row is not counted in `/stats`
+- `agent/contract.py`: `usdc_balance_of`, `usdc_allowance`, `has_code`, `approve_usdc`, `gateway_deposit`. `agent/config.py`: `GATEWAY_WALLET_ADDRESS`, defaulting to Circle's testnet GatewayWallet `0x0077777d7EBA4688BDeF3E311b846F25870A19B9` (Circle's contract-addresses page; the quickstart gives the same address)
+- Run live on Oct 15 on the original business: 3 USDC deposited, and Circle's Gateway API read 3 USDC back for the agent wallet (see Traction). Deposit only: no gasless spend is built and no decision uses the Gateway balance
+- README read top to bottom and rewritten to match the code: the Traction and "Why" sections still said 380 Python tests while the badge said 404 (now 444 everywhere); the red-team result is in the roadmap, Traction and the v1.2.9.4 entry; the selection for the XERJ Corpus Hub is listed as outside recognition, not traction; every route is spelled out in the API table, the tree equals `git ls-files`, the Gateway rows and the Circle tools count describe a deposit and no spend
+- No contract change and no database change. 40 new Python tests (444 in total); the 69 Foundry tests are unchanged. Not in this release: a gasless spend from the Gateway balance, or any use of that balance in a decision
+
 **v1.2.10: Circle Gateway balance (Phase F1), shorter Links section**
 - New `agent/gateway.py` reads the USDC balance Circle Gateway holds for an agent wallet on Arc (domain 26) with `POST /v1/balances` and the documented body. It sends no key, times out after 8 seconds, caches a good answer for 15 seconds, counts only the row for our domain and depositor, and returns null on any failure (status, shape, bad number, timeout, bad address); a good answer with no row for the domain is a zero.
 - `GET /admin/overview` returns `gateway: {domain, depositor, balance_usdc}`, and the admin Overview shows a "Gateway balance (agent wallet)" card, or "Unavailable". Read only: nothing is deposited or spent, and no payment decision uses it.
@@ -592,7 +614,7 @@ Deployment transactions: [LedgerAnchor `0x45c031cd...9f9f4d`](https://explorer.t
 
 **v1.2.9.5: live approver on the public business list, README and deploy notes**
 - `GET /businesses` read the approver from a column copied when the business was created, so the original business still showed the old deployer wallet after the Oct 4 hand-over. It now reads `approver()` from each contract (own 15-second cache, separate from the sign-in cache, so an unauthenticated route never feeds sign-in) and returns null if the chain cannot be read. The stored copy is refreshed on a successful read; nothing authorises from it. Documented bug 9 is fixed.
-- No contract change. 2 new Python tests run the real route against fake chains (380 in total); both fail on the old code
+- No contract change. 2 new Python tests run the real route against fake chains (380 in total); both fail on the old code.
 - README read top to bottom and rewritten to match the code. The Planned list holds only what is not built; the architecture diagram and the text under it show the ledger and the anchor; the project tree equals `git ls-files`; every route in `backend/main.py` is in the API table, including `POST /admin/invoices/{id}/rerun` and `can_reopen`; the Tests section has the commands and short, accurate descriptions
 - The model's role is described as it is: a narrative only when the rules escalate an unregistered vendor, plus a recorded second opinion on each decision that never acts
 - Contracts section: the test business's contract and both agent wallets are listed, the approver of the original contract is the wallet from the Oct 4 rotation, and the Links table has its full set of rows again
@@ -607,6 +629,7 @@ Deployment transactions: [LedgerAnchor `0x45c031cd...9f9f4d`](https://explorer.t
 - E4: `scripts/red_team.py` writes an audit row, commits and tries `pay` to a fresh non-approved address for 1 unit, expecting a revert, marks the row `contract_refused`, then anchors the ledger head. It asks for "yes" before every on-chain step and stops loudly if the contract does not refuse. It needs the agent wallet and your confirmation at each step
 - No contract change (the 69 Foundry tests are unchanged). 9 new Python tests in `test_admin.py` and 3 in `test_red_team.py` (378 in total); the wallet call encoding has a new check
 - Not in this release: a v1-contract equivalent of Return to agent (the contract has none)
+- Run live on Oct 15, after this release was pushed: the red team ran on the original business and the contract refused the payment (`Vendor not approved`, at Circle's gas estimation, so no pay transaction reached the chain); the refusal row was anchored in sequence 16 and `/ledger/verify` returned `fully_verified` true. Details and links are under Traction
 
 **v1.2.9.3: Phase E3, model-versus-rules log (built and tested with mocks)**
 - `agent/second_opinion.py`: for each invoice decision the rules verdict acts as before; the model is asked for `{action, reasoning, confidence}` on facts computed by code, with a 3-second limit, before the hash is written. Both verdicts go into the hashed record as hash format 3 (`comparison`); formats 1 and 2 are untouched and still hash to their known values, and the proof page checks all three
@@ -781,6 +804,7 @@ Deployment transactions: [LedgerAnchor `0x45c031cd...9f9f4d`](https://explorer.t
 | 8 | Circle wallets | A payment looked successful but reverted on-chain | Circle's `contractExecution` API returns a transaction ID on *acceptance*, not on-chain confirmation — calling `pay()` right after `commitDecision()` can fire before the commit is actually mined | Poll `get_transaction` to a terminal state (`COMPLETE`/`FAILED`/`CANCELLED`) before trusting any result |
 | 9 | `GET /businesses` | The original business lists an approver that is the old deployer key, not the current on-chain approver | The row stored the `APPROVER_ADDRESS` value seen when the business was first recorded and never refreshed it. The admin site and every approver check read `approver()` from the contract, so nothing is gated on the stored value | Fixed in v1.2.9.5: `GET /businesses` now reads `approver()` from each contract (own 15-second cache, null if unreadable) and refreshes the stored copy on a successful read |
 | 10 | Gateway | `POST /v1/balances` is rejected with a 400 | The body is `{"token": "USDC", "sources": [{"domain": 26, "depositor": <address>}]}`, not a list of addresses | Use that shape; a missing row for the domain after a good answer is a real zero |
+| 11 | Gateway | USDC sent to the Gateway Wallet is not credited to a Gateway balance | Circle's docs say a balance is created only by calling the Gateway Wallet's `deposit(token, value)` after an `approve`, and warn that a plain ERC-20 transfer to the contract loses the funds | `scripts/gateway_deposit.py` approves the exact amount then calls `deposit`; a test fails if a plain transfer is ever built there |
 
 ---
 
