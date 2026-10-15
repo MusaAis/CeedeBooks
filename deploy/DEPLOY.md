@@ -173,6 +173,24 @@ No contract change and no database change. Admin site: an escalated invoice on a
 
 To go back: stop the service and check out v1.2.9.3. There is nothing to undo in the database; a `RED_TEAM_REFUSED` row, if you made one, stays in the ledger.
 
-## Upgrading to v1.2.9.4.1 (documentation only)
+## Upgrading to v1.2.9.5 (live approver on the public list, documentation)
 
-No code, contract, database or environment change: there is nothing to restart or copy. Pull or extract the files and commit them.
+No contract, database or environment change. `GET /businesses` now reads each contract's `approver()`, so restart the service.
+
+1. Back up: `mkdir -p ~/backups && cp ceedebooks.db ~/backups/ceedebooks.db.pre-1.2.9.5` (from `~/ceedebooks`).
+2. Extract the files, run `pytest agent/tests/` with the CI placeholder variables, then `sudo systemctl restart ceedebooks-api` and wait about 15 seconds.
+3. Check: `curl -s https://api.ceedebooks.xyz/businesses | grep -o '"approver":"[^"]*"'` shows the current on-chain approver for each business.
+
+To go back: stop the service and check out v1.2.9.4. Nothing in the database needs undoing.
+
+## Upgrading to v1.2.10 (Gateway balance on the admin Overview)
+
+No contract or database change, and no new environment variable (`GATEWAY_API_URL` already defaults to Circle's testnet API). The service reads Circle Gateway's balance for each business's agent wallet; nothing is deposited or spent.
+
+1. Back up: `mkdir -p ~/backups && cp ceedebooks.db ~/backups/ceedebooks.db.pre-1.2.10` (from `~/ceedebooks`).
+2. Extract the files, run `pytest agent/tests/` with the CI placeholder variables, then `sudo systemctl restart ceedebooks-api` and wait about 15 seconds.
+3. Re-copy the admin site: `sudo cp admin/index.html admin/admin.css admin/wallet.js admin/admin.js /var/www/ceedebooks-admin/`.
+4. Check the Gateway API itself (no key): `curl -s -X POST https://gateway-api-testnet.circle.com/v1/balances -H 'Content-Type: application/json' -d '{"token":"USDC","sources":[{"domain":26,"depositor":"<agent wallet address>"}]}'` answers 200 with a `balances` list.
+5. Check the app: sign in to the admin site; the Overview shows a "Gateway balance (agent wallet)" card with a number, or "Unavailable" if the API could not be read. Hard-refresh the page if the card is missing (the browser may hold the old `admin.js`).
+
+To go back: stop the service and check out v1.2.9.5. Nothing in the database needs undoing.

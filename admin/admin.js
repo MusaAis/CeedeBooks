@@ -322,7 +322,8 @@
           card("Daily limit", usdc(c.daily_limit_usdc)), card("Per-payment limit", usdc(c.per_tx_limit_usdc)),
           card("Escalations waiting", inv.escalated || 0), card("Paid invoices", inv.paid || 0),
           card("Vendors", o.vendors), card("Purchase orders", o.purchase_orders),
-          card("Applications waiting", o.pending_applications || 0)]));
+          card("Applications waiting", o.pending_applications || 0),
+          card("Gateway balance (agent wallet)", o.gateway && o.gateway.balance_usdc != null ? usdc(o.gateway.balance_usdc) : "Unavailable")]));
         wrap.appendChild(fundPanel());
         wrap.appendChild(copyPanel(o.business));
         wrap.appendChild(h("h3", null, ["Spending categories"]));

@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agent import categories as category_rules
-from agent import anchor, contract, decision_log, ledger, payables, treasury
+from agent import anchor, contract, decision_log, gateway, ledger, payables, treasury
 from agent.config import config
 from backend import admin_auth, auth, models, vendor_auth
 
@@ -640,11 +640,12 @@ def _chain_snapshot(business: dict, categories: list = ()) -> dict:
 async def admin_overview(who: auth.Principal = Depends(auth.require_admin)):
     business = await models.get_business(who.business_id)
     cats = await models.list_categories(who.business_id)
-    snap, counts, vendors, pos, pending = await asyncio.gather(
+    snap, counts, vendors, pos, pending, gw = await asyncio.gather(
         asyncio.to_thread(_chain_snapshot, business, cats), models.invoice_counts(who.business_id), models.list_vendors(who.business_id),
         models.list_purchase_orders(who.business_id), models.count_pending_applications(who.business_id),
+        gateway.get_balance(business.get("agent_address") or ""),
     )
-    return {"chain": snap, "invoices": counts, "vendors": len(vendors), "purchase_orders": len(pos),
+    return {"chain": snap, "gateway": {"domain": gateway.ARC_DOMAIN, "depositor": business.get("agent_address") or None, "balance_usdc": gw}, "invoices": counts, "vendors": len(vendors), "purchase_orders": len(pos),
             "pending_applications": pending, "operator": who.business_id == models.HOME_BUSINESS_ID,
             "business": {"name": business["name"], "slug": business["slug"]}}
 

@@ -4,7 +4,7 @@
 ![CI](https://github.com/MusaAis/CeedeBooks/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Foundry tests](https://img.shields.io/badge/forge%20tests-69%2F69%20passing-brightgreen)
-![Python tests](https://img.shields.io/badge/pytest-380%2F380%20passing-brightgreen)
+![Python tests](https://img.shields.io/badge/pytest-404%2F404%20passing-brightgreen)
 ![Network](https://img.shields.io/badge/Arc-Testnet-informational)
 
 *"Ceede" means money in Pulaar/Fulfulde.*
@@ -13,7 +13,7 @@ An autonomous accounts-payable agent for African SMEs on Arc: it validates and p
 
 Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 – Oct 17, 2026.
 
-**Current: v1.2.9.5** (the public business list shows the contract's current approver, plus a README and deploy-notes rewrite; the contracts are those of v1.2.9.4, and Phase E, audit hardening, is complete). The AP/AR engine runs on Arc Testnet behind a key-authenticated HTTPS API (`api.ceedebooks.xyz`), with a public proof page (`ceedebooks.xyz`), a wallet-signed admin site (`admin.ceedebooks.xyz`), a vendor portal (`portal.ceedebooks.xyz`) and a business registration page (`portal.ceedebooks.xyz/business.html`). Two businesses exist, both ours: the original one on the v1 `BudgetEnforcer`, and a test business created through `BudgetFactory` on Oct 8 to check onboarding end to end. No outside business or paying user yet: every payment so far is self-owned. Latest additions, newest first: live approver on `GET /businesses` (v1.2.9.5); return to agent, re-run and a red-team script (v1.2.9.4); the model's recorded second opinion beside the rules verdict (v1.2.9.3); on-chain anchoring of each ledger head (v1.2.9.2); owner-created categories and entered invoice amounts (v1.2.9.1); a signed hash-chained ledger (v1.2.9); shadow mode (v1.2.8.3); business onboarding (v1.2.8.2). See [Custody trade-off](#custody-trade-off), the [Roadmap](#roadmap) and the [Changelog](#changelog).
+**Current: v1.2.10** (a read-only Circle Gateway balance for each business's agent wallet on the admin Overview, and a shorter Links section; the contracts are those of v1.2.9.4, and Phase E, audit hardening, is complete). The AP/AR engine runs on Arc Testnet behind a key-authenticated HTTPS API (`api.ceedebooks.xyz`), with a public proof page (`ceedebooks.xyz`), a wallet-signed admin site (`admin.ceedebooks.xyz`), a vendor portal (`portal.ceedebooks.xyz`) and a business registration page (`portal.ceedebooks.xyz/business.html`). Two businesses exist, both ours: the original one on the v1 `BudgetEnforcer`, and a test business created through `BudgetFactory` on Oct 8 to check onboarding end to end. No outside business or paying user yet: every payment so far is self-owned. Latest additions, newest first: Gateway balance read on the admin Overview (v1.2.10); live approver on `GET /businesses` (v1.2.9.5); return to agent, re-run and a red-team script (v1.2.9.4); the model's recorded second opinion beside the rules verdict (v1.2.9.3); on-chain anchoring of each ledger head (v1.2.9.2); owner-created categories and entered invoice amounts (v1.2.9.1); a signed hash-chained ledger (v1.2.9); shadow mode (v1.2.8.3); business onboarding (v1.2.8.2). See [Custody trade-off](#custody-trade-off), the [Roadmap](#roadmap) and the [Changelog](#changelog).
 
 ## Links
 
@@ -22,23 +22,8 @@ Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 �
 | Proof page (public audit, decision checker, "Verify the whole chain") | [ceedebooks.xyz](https://ceedebooks.xyz) |
 | API (key-authenticated; public audit routes need no key) | [api.ceedebooks.xyz](https://api.ceedebooks.xyz) |
 | Admin site (wallet sign-in; only a business's on-chain approver gets in) | [admin.ceedebooks.xyz](https://admin.ceedebooks.xyz) |
-| Agent description for other agents | [/.well-known/agent.json](https://api.ceedebooks.xyz/.well-known/agent.json) |
-| Ledger public key | [/.well-known/ledger-key](https://api.ceedebooks.xyz/.well-known/ledger-key) |
-| Businesses and their contract addresses | [/businesses](https://api.ceedebooks.xyz/businesses) |
-| Model-versus-rules metrics | [/metrics/decisions](https://api.ceedebooks.xyz/metrics/decisions) |
-| Ledger check, original business | [/ledger/verify?business=ceedebooks](https://api.ceedebooks.xyz/ledger/verify?business=ceedebooks) |
 | Vendor portal (vendors sign in with their wallet) | [portal.ceedebooks.xyz](https://portal.ceedebooks.xyz) |
 | Business registration | [portal.ceedebooks.xyz/business.html](https://portal.ceedebooks.xyz/business.html) |
-| Source code | [github.com/MusaAis/CeedeBooks](https://github.com/MusaAis/CeedeBooks) |
-| CI runs | [Actions](https://github.com/MusaAis/CeedeBooks/actions) |
-| Releases | [Releases](https://github.com/MusaAis/CeedeBooks/releases) |
-| BudgetEnforcer (original business) | [explorer](https://explorer.testnet.arc.io/address/0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB) |
-| BudgetFactory | [explorer](https://explorer.testnet.arc.io/address/0x97b9A3802bA6B258cBeF6070532a265656bb391C) |
-| LedgerAnchor | [explorer](https://explorer.testnet.arc.io/address/0x008217BeC86462E76126F94e50eBe68fb4a41444) |
-| Arc Testnet explorer | [explorer.testnet.arc.io](https://explorer.testnet.arc.io) |
-| Test USDC faucet | [faucet.circle.com](https://faucet.circle.com) |
-| Sister project | [MusaAis/AgoraFX](https://github.com/MusaAis/AgoraFX) |
-| Builder | [@Musa_Ais on X](https://x.com/Musa_Ais) · [GitHub](https://github.com/MusaAis) |
 
 ## 60-second tour for reviewers
 
@@ -93,12 +78,13 @@ It isn't "an LLM with a wallet." The agent proposes; a smart contract, not a pro
 - **Return to agent and re-run (v1.2.9.4):** on a multi-business (v2) contract the owner can send `reopenEscalation` from their own wallet; the server checks the `EscalationReopened` event carries that invoice's own reasoning hash, then runs the stored invoice through the same pipeline again (new reasoning, new hash, every limit and check). An invoice that ended in `error` can be re-run from the admin site; each takes one atomic claim, so two clicks cannot start two runs. The original v1 contract has no `reopenEscalation`, so there you can only approve or reject
 - **Red-team script (v1.2.9.4):** `scripts/red_team.py` makes the agent wallet try to pay a non-approved address and expects the contract to refuse; the refusal is kept as a `contract_refused` row and the ledger head is anchored. It asks for `yes` before every on-chain step and fails loudly if the contract accepts
 - **Archive flag (v1.2.9):** the operator can archive a business: it becomes read-only, leaves the public lists and totals, and its ledger still verifies
+- **Gateway balance (v1.2.10):** the admin Overview shows the USDC balance Circle Gateway holds for the business's agent wallet on Arc (`POST /v1/balances`, no key needed). It is a read only: nothing is deposited, spent or decided from it, and if Gateway cannot be read the card says Unavailable, never zero
 - **Invoice metrics on the proof page**: invoices processed, USDC paid and duplicates caught, split by origin (`agent`, `manual`, `demo`) so hand-run payments and demo runs never count as agent traffic
 
 **Planned** (see the [Roadmap](#roadmap) for order and status; nothing below is built)
 
 - **Oversight:** maker-checker approvals, pause with a stated reason, every figure in a narrative written by code
-- Circle Gateway unified balance
+- Circle Gateway deposit and gasless spending from the agent wallet (only the balance read is built)
 - Treasury: economics-gated yield sweep via a pooled USYC wrapper, continuous vendor screening, other-currency invoices
 - Agent-to-agent reference client for vendors (demo runs labelled `demo`)
 - Invoice intake from PDF or email (a person confirms every amount), a Telegram status bot, receivables
@@ -225,7 +211,7 @@ Every other business starts with none and creates its own in the admin site's Li
                                         └──────────────────────┘
 ```
 
-The engine, the audit log and the ledger are built; the Treasury Brain and Contractor Manager columns are planned. There is one `BudgetEnforcer` per business: the original business runs on the v1 contract drawn above, and every other business gets a `BudgetEnforcerV2` from `BudgetFactory` (same shape, plus a weekly limit and return-to-agent). Each business has its own audit log, ledger chain and anchors.
+The engine, the audit log and the ledger are built; the Treasury Brain and Contractor Manager columns are planned (the only piece of the Treasury Brain that exists is the read-only Gateway balance on the admin Overview). There is one `BudgetEnforcer` per business: the original business runs on the v1 contract drawn above, and every other business gets a `BudgetEnforcerV2` from `BudgetFactory` (same shape, plus a weekly limit and return-to-agent). Each business has its own audit log, ledger chain and anchors.
 
 ---
 
@@ -282,8 +268,8 @@ Each business's contract and agent wallet addresses are public on the proof page
 | E3. Model-versus-rules log | Rules verdict acts; the model's second opinion is recorded in the hash (format 3); `/metrics/decisions` | v1.2.9.3 | ✅ Built and tested with mocks; the model call was checked live on the server |
 | E4. On-chain red team | Agent wallet tries a payment to a non-approved vendor, the contract's refusal is kept as a `contract_refused` row and anchored | v1.2.9.4 | ✅ Built and tested with mocks (the contract's refusal is also a Foundry test). Live run: none recorded here yet |
 | E5. Key custody, re-evaluate | Deployer key optional, "Return to agent" over `reopenEscalation`, re-run of `error` invoices | v1.2.9.4 | ✅ Built and tested with mocks; the deployer key is out of the live server `.env`. Return to agent needs a v2 contract (the original business's v1 contract has no `reopenEscalation`) |
-| O. Oversight | Maker-checker, pause with reason, figures written by code | v1.2.10 | ⏳ Planned |
-| F. Gateway | `POST /v1/balances` unified balance on the dashboard | v1.3.0 | ⏳ Planned |
+| O. Oversight | Maker-checker, pause with reason, figures written by code | v1.3.0 | ⏳ Planned |
+| F. Gateway | F1: read-only `POST /v1/balances` unified balance of the agent wallet on the admin Overview. F2 (not built): deposit and gasless spending | v1.2.10 | ✅ F1 built and tested with mocks, checked on the live server; F2 planned |
 | P. Proof and evidence | Outcomes numbers (decisions made vs escalated, human agreement rate, duplicates caught), "try it in 5 minutes" demo path, rollout records | | ⏳ Planned |
 | G. Treasury brain | Economics-gated sweep, vendor screening, `CeedeBooksYield.sol` pooled USYC wrapper, EURC, CCTP | v1.3.x | ⏳ Planned |
 | N. Agent-to-agent | Reference vendor client; traction counts an outside agent only | v1.3.x | ⏳ Planned |
@@ -301,13 +287,13 @@ Each business's contract and agent wallet addresses are public on the proof page
 |---|---|---|
 | Agent Wallet | ✅ live | Developer-controlled wallet, Arc Testnet; signs every agent contract call (commit, pay, escalate, anchor) |
 | USDC | ✅ live | Native ERC-20 at `0x3600000000000000000000000000000000000000` |
-| Gateway | Planned (Phase F, v1.3.0) | `POST /v1/balances` |
+| Gateway | ✅ live, read-only | `POST /v1/balances` for the agent wallet on domain 26, shown on the admin Overview. No deposit or spend path yet |
 | USYC | Planned (Phase G) | Via own pooled wrapper (Arc's Teller has a $100k / allowlist gate) |
 | CCTP | Stretch | Domain 26, `minFinalityThreshold: 2000`, V2 7-param `depositForBurn` only |
 | EURC | Stretch | European vendor payments |
 | ~~Paymaster~~ | Dropped | Not used |
 
-Honest count: 2 live (Agent Wallet, USDC), 4 planned (Gateway, USYC, CCTP, EURC).
+Honest count: 3 live (Agent Wallet, USDC, and Gateway for a balance read only), 3 planned (USYC, CCTP, EURC).
 
 ---
 
@@ -373,7 +359,7 @@ Run with a **single worker**: `uvicorn backend.main:app` (the rate limiter is pe
 | `GET /invoices/{id}` | buyer; a vendor for its own invoices | Status and `reasoning_hash`. Another vendor's invoice returns 404 |
 | `POST /invoices/preflight` | buyer, or a vendor for its own `vendor_id` | Dry run of `POST /invoices`: returns `would_pay`, `would_hold`, `would_escalate`, `would_be_refused_by_contract` or `already_paid`, with every check and the reasons. Writes nothing (no invoice row, no audit row, no chain transaction) and returns only booleans, never balances or limits |
 | `GET /admin/auth/state`, `POST /admin/auth/challenge`, `POST /admin/auth/verify`, `POST /admin/auth/logout` | public / admin session | Wallet sign-in for the admin site: a one-time challenge is signed with the wallet and accepted only if it recovers to the contract's current `approver()`. Challenge requests are rate-limited; failures count toward the failed-auth throttle |
-| `GET /admin/overview`, `/admin/vendors`, `/admin/purchase-orders`, `/admin/invoices`, `/admin/actions` | admin session | Admin dashboard data. A buyer API key is refused (403); no session is a 401 |
+| `GET /admin/overview`, `/admin/vendors`, `/admin/purchase-orders`, `/admin/invoices`, `/admin/actions` | admin session | Admin dashboard data (the overview includes the agent wallet's Gateway balance, or null if unreadable). A buyer API key is refused (403); no session is a 401 |
 | `GET /admin/invoices/{id}/escalation` | admin session | The on-chain key of an escalated invoice of the admin's own business, and `can_reopen` (true only on a multi-business contract) |
 | `POST /admin/actions` | admin session | Records an on-chain admin transaction after the wallet sent it (`set_vendor`, `set_category_limit`, `set_paused`, `approve_escalation`, `reject_escalation`, `reopen_escalation`, `accept_approver`). The server checks the chain itself (to the contract, from the admin, successful); settling or reopening an escalation also needs the on-chain event to carry that invoice's own reasoning hash. `reopen_escalation` works only on a v2 contract and then runs the stored invoice through the pipeline again (new reasoning, new hash, every limit and check) |
 | `POST /admin/invoices/{id}/rerun` | admin session | Returns an invoice in `error` to the agent: own business only, one run at a time (claim `error` to `retrying`), logged as `rerun_invoice`. A failed run goes back to `error` (502). Nothing is paid twice: the pipeline checks the chain first |
@@ -424,6 +410,7 @@ ceedebooks/
 │   ├── second_opinion.py   # the model's recorded second opinion beside the rules verdict (v1.2.9.3)
 │   ├── ledger.py           # signed hash-chained ledger per business (v1.2.9)
 │   ├── anchor.py           # on-chain anchoring of each ledger head (v1.2.9.2)
+│   ├── gateway.py          # read-only Circle Gateway balance of an agent wallet (v1.2.10)
 │   ├── decision_log.py     # canonical-JSON SHA-256 audit log, hash-before-action
 │   ├── contract.py         # reads + Circle-signed writes, wait_for_transaction
 │   ├── payables.py         # three-way match, rules baseline, commit-then-pay, retry guard
@@ -444,6 +431,7 @@ ceedebooks/
 │       ├── test_categories.py
 │       ├── test_ledger.py
 │       ├── test_anchor.py
+│       ├── test_gateway.py
 │       ├── test_model_compare.py
 │       ├── test_relabel.py
 │       └── test_red_team.py
@@ -538,12 +526,13 @@ The pytest run needs only these placeholders: the chain and Circle's calls are f
 
 **69 Foundry tests** (24 for the v1 contract, 35 for `BudgetEnforcerV2`, 6 for `BudgetFactory`, 4 for `LedgerAnchor`), one per revert path or acceptance scenario: unregistered and revoked vendor, over per-tx / daily / category limits, unset category (fail-closed), same invoice resubmitted as a different file, missing / reused / mismatched commit, crash-and-retry, simulated prompt injection (contract refuses even if the agent were fooled), the escalate → approve / reject flow, escalated invoices blocked from direct payment, pause, withdraw, agent rotation, two-step approver rotation, and the `reasoningHash` round-trip via the `PaymentMade` event.
 
-**380 Python tests** in `agent/tests/`. No test sends a transaction or touches a network. They cover:
+**404 Python tests** in `agent/tests/`. No test sends a transaction or touches a network. They cover:
 - The decision pipeline: three-way match, rules baseline (pay, hold, escalate), retry safety, the 0.01 USDC rounding allowance, and the invoice pre-flight dry run, which writes nothing and reveals no balances.
 - Access control: API keys and roles, vendor wallet sessions, admin wallet sign-in, and every denied path.
 - Multiple businesses: isolation (a key, session or id of one business never reaches another), hash formats 1 to 3, onboarding and its on-chain checks, per-business categories, and shadow mode.
 - The ledger and audit trail: the signed chain (edited, deleted, reordered or forked entries, a wrong key), the on-chain anchor, the public verify endpoints, the archive flag and the relabel tool.
 - The model: the rules verdict always acts, a disagreeing or slow model changes nothing, no answer is null and never agreement, and model text with invented figures is withheld.
+- The Gateway read: the request body matches Circle's documented shape, other domains and depositors are not counted, and every failure (status, shape, number, timeout, bad address) is null, never zero.
 - Return to agent and re-run (only v2, only the matching event, one click at a time, another business's invoice is untouchable) and the red-team script (a refusal is recorded, an acceptance is a loud failure, a declined step sends nothing).
 
 **Node suites** run the browser code without a browser: the proof page's hash recomputation and whole-chain check against a real Ed25519-signed chain, with contract selectors compared to the compiled contracts (`site/verify.test.js`); the admin app's call encoding and rendering (`admin/*.test.js`, the admin one also run as a second business); and the vendor portal and business registration page (`portal/*.test.js`).
@@ -594,6 +583,12 @@ Deployment transactions: [LedgerAnchor `0x45c031cd...9f9f4d`](https://explorer.t
 ---
 
 ## Changelog
+
+**v1.2.10: Circle Gateway balance (Phase F1), shorter Links section**
+- New `agent/gateway.py` reads the USDC balance Circle Gateway holds for an agent wallet on Arc (domain 26) with `POST /v1/balances` and the documented body. It sends no key, times out after 8 seconds, caches a good answer for 15 seconds, counts only the row for our domain and depositor, and returns null on any failure (status, shape, bad number, timeout, bad address); a good answer with no row for the domain is a zero.
+- `GET /admin/overview` returns `gateway: {domain, depositor, balance_usdc}`, and the admin Overview shows a "Gateway balance (agent wallet)" card, or "Unavailable". Read only: nothing is deposited or spent, and no payment decision uses it.
+- README Links section cut to the product's own addresses; contract addresses and explorer links stay in the Contracts section.
+- No contract change. 24 new Python tests (404 in total); no test calls the network, a default stub answers 503.
 
 **v1.2.9.5: live approver on the public business list, README and deploy notes**
 - `GET /businesses` read the approver from a column copied when the business was created, so the original business still showed the old deployer wallet after the Oct 4 hand-over. It now reads `approver()` from each contract (own 15-second cache, separate from the sign-in cache, so an unauthenticated route never feeds sign-in) and returns null if the chain cannot be read. The stored copy is refreshed on a successful read; nothing authorises from it. Documented bug 9 is fixed.
@@ -785,6 +780,7 @@ Deployment transactions: [LedgerAnchor `0x45c031cd...9f9f4d`](https://explorer.t
 | 7 | CCTP on Arc | Silent revert with no error data | Arc only supports the V2 7-parameter `depositForBurn` | Confirm the V2 selector explicitly |
 | 8 | Circle wallets | A payment looked successful but reverted on-chain | Circle's `contractExecution` API returns a transaction ID on *acceptance*, not on-chain confirmation — calling `pay()` right after `commitDecision()` can fire before the commit is actually mined | Poll `get_transaction` to a terminal state (`COMPLETE`/`FAILED`/`CANCELLED`) before trusting any result |
 | 9 | `GET /businesses` | The original business lists an approver that is the old deployer key, not the current on-chain approver | The row stored the `APPROVER_ADDRESS` value seen when the business was first recorded and never refreshed it. The admin site and every approver check read `approver()` from the contract, so nothing is gated on the stored value | Fixed in v1.2.9.5: `GET /businesses` now reads `approver()` from each contract (own 15-second cache, null if unreadable) and refreshes the stored copy on a successful read |
+| 10 | Gateway | `POST /v1/balances` is rejected with a 400 | The body is `{"token": "USDC", "sources": [{"domain": 26, "depositor": <address>}]}`, not a list of addresses | Use that shape; a missing row for the domain after a good answer is a real zero |
 
 ---
 

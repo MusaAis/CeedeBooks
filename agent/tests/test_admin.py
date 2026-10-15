@@ -414,3 +414,26 @@ def test_the_escalation_route_says_whether_the_contract_can_reopen(client, chain
     assert client.get(f"/admin/invoices/{iid}/escalation", headers=h).json()["can_reopen"] is False
     _make_v2()
     assert client.get(f"/admin/invoices/{iid}/escalation", headers=h).json()["can_reopen"] is True
+
+
+# ---- Gateway balance on the overview (v1.2.10)
+
+def test_overview_shows_the_agent_wallet_gateway_balance(client):
+    import httpx
+    from agent import gateway
+    import sqlite3
+    from agent.config import config
+    agent_address = "0x32B59A6988DCA955c641D529Ee80484200DE37b0"
+    con = sqlite3.connect(config.db_path)
+    con.execute("UPDATE businesses SET agent_address = ? WHERE id = 1", (agent_address,))
+    con.commit()
+    con.close()
+    gateway._transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"token": "USDC", "balances": [
+        {"domain": 26, "depositor": agent_address, "balance": "4.250000"}]}))
+    body = client.get("/admin/overview", headers=_bearer(client)).json()
+    assert body["gateway"] == {"domain": 26, "depositor": agent_address, "balance_usdc": 4.25}
+
+
+def test_overview_still_works_when_gateway_cannot_be_read(client):
+    body = client.get("/admin/overview", headers=_bearer(client)).json()  # the default stub answers 503
+    assert body["chain"]["chain_ok"] is True and body["gateway"]["balance_usdc"] is None

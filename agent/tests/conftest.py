@@ -1,7 +1,9 @@
 """Shared test doubles. The chain is never real: `contract.chain_for` is patched to hand out a FakeChain per business."""
 import pytest
 
-from agent import contract
+import httpx
+
+from agent import contract, gateway
 from agent.config import config
 
 
@@ -187,3 +189,13 @@ def anchors(monkeypatch, chains):
 def chain(chains):
     """The home business's contract (business 1, the v1 enforcer from the environment)."""
     return chains.get(config.budget_enforcer_address, 1)
+
+
+@pytest.fixture(autouse=True)
+def _no_gateway_network():
+    """No test reaches the real Gateway API: by default it answers 503, which the code must treat as unreadable."""
+    gateway.reset()
+    gateway._transport = httpx.MockTransport(lambda request: httpx.Response(503))
+    yield
+    gateway._transport = None
+    gateway.reset()
