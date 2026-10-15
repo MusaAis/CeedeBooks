@@ -1210,8 +1210,17 @@ async def business_register(body: RegisterBusinessIn, request: Request):
 
 @app.get("/businesses")
 async def public_businesses():
-    """Active businesses with their contract and agent wallet addresses, so anyone can check them on the explorer."""
-    return {"businesses": await models.list_public_businesses(), "counts": {**await models.business_counts(), "archived": await models.archived_count()}, "custody": CUSTODY_NOTICE}
+    """Active businesses with their contract and agent wallet addresses, so anyone can check them on the explorer.
+    The approver is read from each contract now, never from the stored column: a rotated key must not show as the owner.
+    If it cannot be read it is null (fail closed), never the old value."""
+    listed = await models.list_public_businesses()
+    live = await asyncio.gather(*(admin_auth.public_approver(
+        {"id": b["id"], "enforcer_address": b["contract"], "contract_version": b["contract_version"]}) for b in listed))
+    for b, approver in zip(listed, live):
+        b["approver"] = approver
+        if approver:
+            await models.refresh_approver(b["id"], approver)
+    return {"businesses": listed, "counts": {**await models.business_counts(), "archived": await models.archived_count()}, "custody": CUSTODY_NOTICE}
 
 
 # ---- operator (the home business's wallet-signed admin)

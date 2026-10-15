@@ -40,12 +40,14 @@ _NONCE_RE = re.compile(r"^[0-9a-f]{32}$")
 _challenges: dict = {}  # nonce -> {address, business_id, message, expires}
 _sessions: dict = {}    # sha256(token) -> {address, business_id, issued, seen}
 _approver_cache: dict = {}  # business id -> (approver, read at)
+_public_approver_cache: dict = {}  # same, for the public listing only: it never feeds sign-in
 
 
 def reset() -> None:
     _challenges.clear()
     _sessions.clear()
     _approver_cache.clear()
+    _public_approver_cache.clear()
 
 
 def domain() -> str:
@@ -64,6 +66,22 @@ async def current_approver(business: dict) -> Optional[str]:
         log.exception("Could not read approver() for business %s", business["id"])
         return None
     _approver_cache[business["id"]] = (value, now)
+    return value
+
+
+async def public_approver(business: dict) -> Optional[str]:
+    """Current on-chain approver for the public listing, or None if unreadable. Own short cache so a busy public page
+    cannot hammer the RPC, and so the sign-in cache above is never filled from an unauthenticated route."""
+    now = time.time()
+    cached = _public_approver_cache.get(business["id"])
+    if cached and now - cached[1] < APPROVER_CACHE:
+        return cached[0]
+    try:
+        value = (await asyncio.to_thread(contract.chain_for(business).approver)).lower()
+    except Exception:
+        log.exception("Could not read approver() for business %s", business["id"])
+        return None
+    _public_approver_cache[business["id"]] = (value, now)
     return value
 
 

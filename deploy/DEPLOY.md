@@ -3,24 +3,25 @@
 Requirements: Ubuntu server, repo at `~/ceedebooks` with `.env` filled in (never committed), nginx, certbot (`python3-certbot-nginx`), ports 80 and 443 open (on Oracle Cloud: the VCN security list and the instance firewall).
 
 1. **DNS** (Namecheap, Advanced DNS): `A` record, host `api`, value = the server's public IPv4, TTL automatic.
-2. **Service:** `sudo cp deploy/ceedebooks-api.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now ceedebooks-api`
-3. **Proxy:** `sudo cp deploy/nginx-api.conf /etc/nginx/sites-available/ceedebooks-api && sudo ln -s /etc/nginx/sites-available/ceedebooks-api /etc/nginx/sites-enabled/ && sudo nginx -t && sudo systemctl reload nginx`
-4. **HTTPS:** `sudo certbot --nginx -d api.ceedebooks.xyz` (certbot adds the 443 block, the redirect and auto-renewal).
-5. **Check from outside the server:**
+2. **Ledger key (first start):** the API refuses to start without a ledger signing key. Create it once, without showing it: `python3 scripts/ledger_key.py new --env .env`.
+3. **Service:** `sudo cp deploy/ceedebooks-api.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now ceedebooks-api`
+4. **Proxy:** `sudo cp deploy/nginx-api.conf /etc/nginx/sites-available/ceedebooks-api && sudo ln -s /etc/nginx/sites-available/ceedebooks-api /etc/nginx/sites-enabled/ && sudo nginx -t && sudo systemctl reload nginx`
+5. **HTTPS:** `sudo certbot --nginx -d api.ceedebooks.xyz` (certbot adds the 443 block, the redirect and auto-renewal).
+6. **Check from outside the server:**
    - `curl -i https://api.ceedebooks.xyz/decisions/<hash>/verify` returns 200 JSON
    - `curl -i -X POST https://api.ceedebooks.xyz/vendors` returns 401 (no key)
-6. **API keys:** `python3 scripts/create_api_key.py create --role vendor --vendor-id N --label <name>`. Never hand out the buyer key.
+7. **API keys:** `python3 scripts/create_api_key.py create --role vendor --vendor-id N --label <name>`. Never hand out the buyer key.
 
 Notes: `TRUST_PROXY=1` is set in the unit so rate limits apply per real client (nginx overwrites `X-Forwarded-For`). The SQLite file (`ceedebooks.db` in the repo folder unless `CEEDEBOOKS_DB_PATH` is set) holds the audit log and keys: back it up and keep it out of git.
 
 ## Public proof page at ceedebooks.xyz
 
 1. DNS: the `@` `A` record points at the server (already set).
-2. Files: `sudo mkdir -p /var/www/ceedebooks && sudo cp site/index.html site/styles.css site/app.js site/verify.js /var/www/ceedebooks/` (re-run after any change to `site/`).
+2. Files: `sudo mkdir -p /var/www/ceedebooks && sudo cp site/index.html site/styles.css site/app.js site/verify.js site/logo.png site/favicon.png site/apple-touch-icon.png /var/www/ceedebooks/` (re-run after any change to `site/`).
 3. nginx: `sudo cp deploy/nginx-site.conf /etc/nginx/sites-available/ceedebooks-site && sudo ln -s /etc/nginx/sites-available/ceedebooks-site /etc/nginx/sites-enabled/ && sudo nginx -t && sudo systemctl reload nginx`
 4. HTTPS: `sudo certbot --nginx -d ceedebooks.xyz`
 5. The page calls `api.ceedebooks.xyz` (allowed by the API's CORS default) and public Arc RPC endpoints (allowed by the page's Content-Security-Policy; the page also loads two Google Fonts families, allowed in the same policy). If you add another RPC to `site/verify.js`, add it to `connect-src` in the nginx file too.
-6. After the API restarts on v1.3.0 the audit table gains a `chain_tx_hash` column automatically. Backfill the domain payment once:
+6. After the API first restarts on v1.2.4 the audit table gains a `chain_tx_hash` column automatically. Backfill the domain payment once:
    `python3 -c "import sqlite3,os; c=sqlite3.connect(os.environ.get('CEEDEBOOKS_DB_PATH','./ceedebooks.db')); c.execute(\"UPDATE audit_log SET chain_tx_hash='0x8c176242a84235a884d5790edf4a9aed403d87619359373e11f2e27141ce5d0d' WHERE reasoning_hash='46f65d7786a368e6e0814c938b8af9a7f6bed20bb1196478ac0a32708fa6f14a'\"); c.commit(); print(c.total_changes)"`
    It should print `1`.
 
@@ -29,7 +30,7 @@ Notes: `TRUST_PROXY=1` is set in the unit so rate limits apply per real client (
 Sign-in is a wallet signature from whoever `approver()` returns on the contract. There are no passwords or API keys to hand out.
 
 1. DNS: add an `A` record, host `admin`, value = the server's public IPv4.
-2. Files: `sudo mkdir -p /var/www/ceedebooks-admin && sudo cp admin/index.html admin/admin.css admin/wallet.js admin/admin.js /var/www/ceedebooks-admin/` (re-run after any change to `admin/`).
+2. Files: `sudo mkdir -p /var/www/ceedebooks-admin && sudo cp admin/index.html admin/admin.css admin/wallet.js admin/admin.js admin/logo.png admin/favicon.png admin/apple-touch-icon.png /var/www/ceedebooks-admin/` (re-run after any change to `admin/`).
 3. nginx: `sudo cp deploy/nginx-admin.conf /etc/nginx/sites-available/ceedebooks-admin && sudo ln -s /etc/nginx/sites-available/ceedebooks-admin /etc/nginx/sites-enabled/ && sudo nginx -t && sudo systemctl reload nginx`
 4. HTTPS: `sudo certbot --nginx -d admin.ceedebooks.xyz`
 5. Restart the API once so CORS includes the admin origin (it is the default; set `ADMIN_ORIGIN` only to change it): `sudo systemctl restart ceedebooks-api`.
@@ -168,6 +169,10 @@ No contract change and no database change. Admin site: an escalated invoice on a
 4. Re-copy the admin site: `sudo cp admin/admin.js admin/wallet.js /var/www/ceedebooks-admin/`.
 5. Remove the deployer key from the server: open `.env` with `nano .env`, delete the whole `DEPLOYER_PRIVATE_KEY=...` line, save, then restart as in step 3. Check it started: `curl -s https://api.ceedebooks.xyz/businesses | head -c 300` prints your business, and `sudo journalctl -u ceedebooks-api -n 10 --no-pager` shows no "Missing required env var". Keep the key in your own shell or password manager if you still run `forge` or `cast` yourself. It holds no power over any contract since the approver rotation.
 6. Re-run an `error` invoice from the admin site's Invoices tab only if you want to test it; nothing is sent unless every check passes.
-7. The red team (optional, manual, on-chain, sends 2 transactions and an anchor from the agent wallet; read each prompt before typing yes): `cd ~/ceedebooks && set -a && . ./.env && set +a && PYTHONPATH=. python3 scripts/red_team.py --business ceedebooks`. A refusal prints "Refused, as required". If it prints that the contract accepted the payment, stop and tell me.
+7. The red team (optional, manual, on-chain, sends 2 transactions and an anchor from the agent wallet; read each prompt before typing yes): `cd ~/ceedebooks && set -a && . ./.env && set +a && PYTHONPATH=. python3 scripts/red_team.py --business ceedebooks`. A refusal prints "Refused, as required". If it prints that the contract accepted the payment, stop there and do not continue; that is a failure of the contract's checks.
 
 To go back: stop the service and check out v1.2.9.3. There is nothing to undo in the database; a `RED_TEAM_REFUSED` row, if you made one, stays in the ledger.
+
+## Upgrading to v1.2.9.4.1 (documentation only)
+
+No code, contract, database or environment change: there is nothing to restart or copy. Pull or extract the files and commit them.

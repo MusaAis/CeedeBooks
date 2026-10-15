@@ -759,6 +759,13 @@ async def list_public_businesses() -> list:
         "created_tx_hash, created_at FROM businesses WHERE status = 'active' ORDER BY id")
 
 
+async def refresh_approver(business_id: int, approver: str) -> None:
+    """Keep the stored approver equal to what the contract says (it changes on a hand-over). Display only; nothing authorises from it."""
+    async with aiosqlite.connect(config.db_path) as db:
+        await db.execute("UPDATE businesses SET approver_address = ? WHERE id = ? AND approver_address != ?", (approver, business_id, approver))
+        await db.commit()
+
+
 async def business_counts() -> dict:
     row = await _one("SELECT COUNT(*) AS total, COALESCE(SUM(external), 0) AS external FROM businesses WHERE status = 'active'", ())
     return {"total": int(row["total"]), "external": int(row["external"])}

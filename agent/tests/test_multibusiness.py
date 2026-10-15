@@ -589,3 +589,26 @@ def test_archived_is_hidden_from_the_public_pages_and_totals(client, two):
     assert client.get("/stats").json()["paid"] == 2 and client.get("/stats").json()["submissions"]["invoices_processed"] == 2
     assert client.get("/businesses/acme/traction").status_code == 200
     assert client.get("/businesses").json()["counts"]["archived"] == 0
+
+
+# ---- public /businesses shows the contract's current approver (v1.2.9.5)
+
+def test_public_businesses_shows_the_live_approver_not_the_stored_one(client, two, chains):
+    new, old = "0x" + "ae" * 20, "0x" + "56" * 20
+    asyncio.run(models.refresh_approver(1, old))  # the stored value is stale, like the home business after the hand-over
+    chains.for_business(asyncio.run(models.get_business(1))).approver_addr = new
+    chains.for_business(asyncio.run(models.get_business(two["b2"]))).approver_addr = "0x" + "bb" * 20
+    admin_auth.reset()
+    listed = {b["id"]: b for b in client.get("/businesses").json()["businesses"]}
+    assert listed[1]["approver"] == new and listed[two["b2"]]["approver"] == "0x" + "bb" * 20
+    assert asyncio.run(models.get_business(1))["approver_address"] == new  # the stored copy is refreshed too
+
+
+def test_public_businesses_approver_is_null_when_the_chain_cannot_be_read(client, two, chains):
+    asyncio.run(models.refresh_approver(1, "0x" + "56" * 20))
+    chains.for_business(asyncio.run(models.get_business(1))).broken = True
+    admin_auth.reset()
+    listed = {b["id"]: b for b in client.get("/businesses").json()["businesses"]}
+    assert listed[1]["approver"] is None  # fail closed: never the old key
+    assert asyncio.run(models.get_business(1))["approver_address"] == "0x" + "56" * 20  # nothing overwritten on a failed read
+    assert listed[two["b2"]]["approver"]  # one unreadable contract does not hide the others
