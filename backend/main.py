@@ -189,6 +189,16 @@ async def startup() -> None:
 
 # ---- setup (buyer only)
 
+def _submitter(who: "auth.Principal") -> str:
+    """Who made this submission, for maker-checker: the wallet of a signed-in admin, else the API key's id."""
+    return who.admin_address.lower() if who.admin_address else f"key:{who.key_id}"
+
+
+def _made_by(invoice, who: "auth.Principal") -> bool:
+    """True when this admin wallet submitted the invoice. An invoice with no recorded submitter (made before v1.3.0) is not."""
+    return bool(who.admin_address) and (invoice["submitted_by"] or "") == who.admin_address.lower()
+
+
 async def _admin_log(who: auth.Principal, action: str, ref: str) -> None:
     """Record what a wallet-signed admin did off-chain. API-key callers are not logged here."""
     if who.admin_address:
@@ -319,7 +329,7 @@ async def submit_invoice(body: InvoiceIn, who: auth.Principal = Depends(auth.req
     try:
         invoice_id = await models.save_invoice(
             who.business_id, body.invoice_number, body.vendor_id, po["id"] if po else None, amount, body.category, body.doc_hash,
-            body.origin or "agent", body.mode, _plain_decimal(body.real_amount), body.real_currency,
+            body.origin or "agent", body.mode, _plain_decimal(body.real_amount), body.real_currency, _submitter(who),
         )
     except sqlite3.IntegrityError:
         await models.log_rejected_submission(who.business_id, "duplicate_invoice", body.origin or "agent")
@@ -558,6 +568,8 @@ class AdminActionIn(_Strict):
     action: AdminActionName
     tx_hash: str = Field(pattern=_TX_RE)
     invoice_id: Optional[int] = None
+    paused: Optional[bool] = None  # set_paused only: the state the transaction set
+    reason: Optional[str] = Field(default=None, max_length=200)  # set_paused only: why (shown on the banner and in the ledger)
 
 
 @app.get("/admin/auth/state")
@@ -723,7 +735,13 @@ async def admin_rename_category(body: CategoryNameIn, category_id: int = Path(ge
 
 @app.get("/admin/invoices")
 async def admin_invoices(who: auth.Principal = Depends(auth.require_admin)):
-    return {"invoices": await models.list_invoices(who.business_id)}
+    out = []
+    for row in await models.list_invoices(who.business_id):
+        r = dict(row)
+        r["submitted_by_you"] = _made_by(r, who)
+        del r["submitted_by"]  # never shown: an API key id or a wallet; the page only needs to know if it is you
+        out.append(r)
+    return {"invoices": out}
 
 
 @app.get("/admin/actions")
@@ -732,11 +750,15 @@ async def admin_actions(who: auth.Principal = Depends(auth.require_admin)):
 
 
 @app.get("/admin/invoices/{invoice_id}/escalation")
-async def admin_escalation(invoice_id: int, who: auth.Principal = Depends(auth.require_admin)):
-    """The on-chain key the wallet needs to approve or reject this escalated invoice."""
+async def admin_escalation(invoice_id: int, purpose: Optional[Literal["approve", "reject", "reopen"]] = None,
+                           who: auth.Principal = Depends(auth.require_admin)):
+    """The on-chain key the wallet needs to approve, reject or return this escalated invoice. Maker-checker: with
+    purpose=approve the key is refused for an invoice this wallet submitted. Reject and return stay open (they release nothing)."""
     invoice = await models.get_invoice(who.business_id, invoice_id)
     if invoice is None or invoice["status"] != "escalated" or not invoice["reasoning_hash"]:
         raise HTTPException(404, "No escalation waiting for this invoice")
+    if purpose == "approve" and _made_by(invoice, who):
+        raise HTTPException(403, MAKER_CHECKER_MESSAGE)
     decision = await decision_log.get_decision(invoice["reasoning_hash"])
     if decision is None or not decision["chain_tx_hash"]:
         raise HTTPException(404, "This escalation has no recorded on-chain transaction (it predates v1.2.4)")
@@ -748,7 +770,11 @@ async def admin_escalation(invoice_id: int, who: auth.Principal = Depends(auth.r
     if key is None:
         raise HTTPException(404, "No escalation event found in that transaction")
     business = await models.get_business(who.business_id)
-    return {"invoice_key": key, "can_reopen": int(business["contract_version"]) >= 2}
+    return {"invoice_key": key, "can_reopen": int(business["contract_version"]) >= 2, "submitted_by_you": _made_by(invoice, who)}
+
+
+MAKER_CHECKER_MESSAGE = ("You submitted this invoice from your own wallet, so you cannot release it. Reject it, or return it to the agent; "
+                         "an invoice submitted through the vendor portal or an API key can be released by you")
 
 
 class VerdictIn(_Strict):
@@ -773,6 +799,13 @@ async def admin_shadow_approve(invoice_id: int, who: auth.Principal = Depends(au
     if invoice["status"] != "awaiting_owner" or not pending_hash:
         raise HTTPException(409, "This invoice is not waiting for your approval")
     vendor = await models.get_vendor(who.business_id, invoice["vendor_id"])
+    try:
+        paused = await asyncio.to_thread(contract.chain_for(business).is_paused)
+    except Exception:
+        log.exception("pause state unreadable before a shadow payment")
+        raise HTTPException(503, "Could not read the chain right now; nothing was paid")
+    if paused:  # your decision stands; it is not turned into a hold, and you can approve again after payments resume
+        raise HTTPException(409, "Payments are paused. This invoice stays waiting for your approval until you resume them")
     if vendor is None or not await models.claim_shadow_approval(who.business_id, invoice_id):
         raise HTTPException(409, "This invoice is not waiting for your approval")
     parked = payables.Invoice(
@@ -782,6 +815,9 @@ async def admin_shadow_approve(invoice_id: int, who: auth.Principal = Depends(au
     )
     try:
         paid_hash = await payables.pay_approved_shadow(parked, pending_hash, business)
+    except payables.PaymentsPaused:
+        await models.release_shadow_approval(who.business_id, invoice_id)
+        raise HTTPException(409, "Payments are paused. This invoice stays waiting for your approval until you resume them")
     except Exception:
         log.exception("Shadow payment for invoice %s failed", invoice_id)
         await models.release_shadow_approval(who.business_id, invoice_id)
@@ -837,6 +873,19 @@ async def admin_record_action(body: AdminActionIn, who: auth.Principal = Depends
         raise HTTPException(422, "That transaction is not a successful call to the contract from your wallet")
 
     ref = None
+    pausing = body.action == "set_paused"
+    if pausing:
+        reason = " ".join((body.reason or "").split())
+        if body.paused is None or len(reason) < 3 or any(ord(c) < 32 for c in (body.reason or "")):
+            raise HTTPException(422, "Pausing or resuming needs the state and a reason of at least 3 characters")
+        try:
+            on_chain = await asyncio.to_thread(contract.chain_for(business).is_paused)
+        except Exception:
+            log.exception("pause state unreadable while recording")
+            raise HTTPException(503, "Could not read the chain right now")
+        if bool(on_chain) != body.paused:
+            raise HTTPException(422, "The contract is not in the state this record claims")
+        ref = ("paused: " if body.paused else "resumed: ") + reason
     reopening = body.action == "reopen_escalation"
     if reopening and int(business["contract_version"]) < 2:
         raise HTTPException(422, "This business's contract has no reopenEscalation (only the multi-business contract does)")
@@ -852,14 +901,55 @@ async def admin_record_action(body: AdminActionIn, who: auth.Principal = Depends
         await models.log_admin_action(who.business_id, who.admin_address, body.action, ref, body.tx_hash.lower(), tx["block"])
     except sqlite3.IntegrityError:
         raise HTTPException(409, "That transaction is already recorded")
+    if pausing:
+        admin_auth.forget_pause(who.business_id)
+        return {"ok": True, "block": tx["block"], **await _record_pause(business, who, body.paused, reason, body.tx_hash.lower())}
     if reopening:
         # The owner returned it on-chain; the agent now decides afresh (new reasoning, new hash) through the normal pipeline.
         if not await models.claim_invoice_status(who.business_id, invoice["id"], "escalated", "retrying"):
             raise HTTPException(409, "That invoice is no longer escalated")
         return {"ok": True, "block": tx["block"], **await _rerun_invoice(business, invoice)}
     if ref:
-        await models.update_invoice_status(who.business_id, invoice["id"], "paid" if body.action == "approve_escalation" else "rejected")
+        # Claim first: only one settlement can move the row out of 'escalated'.
+        if not await models.claim_invoice_status(who.business_id, invoice["id"], "escalated",
+                                                 "paid" if body.action == "approve_escalation" else "rejected"):
+            raise HTTPException(409, "That invoice is no longer escalated")
+        if body.action == "approve_escalation" and _made_by(invoice, who):
+            # The contract has no maker-checker, so a wallet that builds the call by hand can get past the site. It is
+            # recorded as it happened and flagged, never hidden.
+            await models.log_admin_action(who.business_id, who.admin_address, "maker_checker_bypass", ref)
+            return {"ok": True, "block": tx["block"], "warning": MAKER_CHECKER_MESSAGE}
     return {"ok": True, "block": tx["block"]}
+
+
+async def _record_pause(business: dict, who: "auth.Principal", paused: bool, reason: str, tx_hash: str) -> dict:
+    """Ledger entry (with the transaction hash) and the banner record for a pause or resume. An emergency stop never waits
+    on the ledger: if the entry cannot be written the pause still stands and the answer says so."""
+    reasoning_hash = None
+    try:
+        reasoning_hash = await decision_log.log_decision(
+            "ADMIN_PAUSED" if paused else "ADMIN_RESUMED", f"business {business['slug']}",
+            f"Payments {'paused' if paused else 'resumed'} by {who.admin_address}. Reason given: {reason}. Transaction {tx_hash}.",
+            model_used="manual", business=business,
+        )
+    except Exception:
+        log.exception("Could not write the ledger entry for a pause change")
+    await models.save_pause_event(business["id"], paused, reason, who.admin_address, tx_hash, reasoning_hash)
+    return {"paused": paused, "ledgered": reasoning_hash is not None}
+
+
+@app.get("/pause-status")
+async def pause_status(business: Optional[Slug] = None):
+    """Public, read-only: are payments paused, and why. paused is null when the chain cannot be read (never a guess).
+    The reason is shown publicly, so the admin site says so before it is typed."""
+    biz = await _business_by_slug(business, active_only=False)
+    paused = await admin_auth.public_paused(biz)
+    out = {"business": biz["slug"], "paused": paused, "reason": None, "by": None, "since": None}
+    if paused:
+        event = await models.last_pause_event(biz["id"])
+        if event is not None and event["paused"]:
+            out.update(reason=event["reason"], by=event["admin_address"], since=event["created_at"])
+    return out
 
 
 async def _rerun_invoice(business: dict, invoice: sqlite3.Row) -> dict:
@@ -894,8 +984,19 @@ async def admin_rerun(invoice_id: int, who: auth.Principal = Depends(auth.requir
     invoice = await models.get_invoice(who.business_id, invoice_id)
     if invoice is None:
         raise HTTPException(404, "No invoice with that id")
-    if not await models.claim_invoice_status(who.business_id, invoice_id, "error", "retrying"):
-        raise HTTPException(409, "Only an invoice in error can be re-run")
+    if invoice["status"] == "held" and invoice["held_because"] == "paused":
+        try:
+            if await asyncio.to_thread(contract.chain_for(business).is_paused):
+                raise HTTPException(409, "Payments are still paused; resume them first")
+        except HTTPException:
+            raise
+        except Exception:
+            log.exception("pause state unreadable before a re-run")
+            raise HTTPException(503, "Could not read the chain right now")
+        if not await models.claim_paused_hold(who.business_id, invoice_id):
+            raise HTTPException(409, "That invoice is no longer held")
+    elif not await models.claim_invoice_status(who.business_id, invoice_id, "error", "retrying"):
+        raise HTTPException(409, "Only an invoice in error, or held because payments were paused, can be re-run")
     await _admin_log(who, "rerun_invoice", f"invoice {invoice_id}")
     result = await _rerun_invoice(business, invoice)
     if result["rerun"] == "error":

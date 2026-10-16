@@ -134,18 +134,33 @@
     return hash;
   }
   // The server re-checks the transaction on-chain; its node can lag the wallet's, so retry briefly.
-  async function record(action, hash, invoiceId) {
+  async function record(action, hash, invoiceId, extra) {
+    var body = { action: action, tx_hash: hash, invoice_id: invoiceId };
+    Object.keys(extra || {}).forEach(function (k) { body[k] = extra[k]; });
     for (var i = 0; i < 6; i++) {
-      try { return await api("/admin/actions", { method: "POST", body: { action: action, tx_hash: hash, invoice_id: invoiceId } }); }
+      try { return await api("/admin/actions", { method: "POST", body: body }); }
       catch (e) { if (!/not confirmed/.test(e.message) || i === 5) throw e; await sleep(2000); }
     }
   }
-  async function onchain(action, confirmTitle, lines, data, invoiceId) {
+  async function onchain(action, confirmTitle, lines, data, invoiceId, extra) {
     if (!(await confirmAction(confirmTitle, lines))) return false;
     var hash = await sendTx(data);
-    await record(action, hash, invoiceId);
-    say("Done. Recorded in the activity log.", "ok", hash);
+    var r = await record(action, hash, invoiceId, extra);
+    say(r && r.warning ? r.warning : "Done. Recorded in the activity log.", r && r.warning ? "err" : "ok", hash);
     return true;
+  }
+
+  // The pause banner: shown on every page while payments are paused. Empty (and hidden) otherwise; an unreadable state says so.
+  async function refreshBanner() {
+    var el = document.getElementById("pause-banner");
+    if (!el) return;
+    var text = "";
+    try {
+      var r = await fetch(C.api + "/pause-status" + (BIZ ? "?business=" + encodeURIComponent(BIZ) : "")).then(function (x) { return x.ok ? x.json() : null; });
+      if (r && r.paused === true) text = "Payments are PAUSED" + (r.reason ? ": " + r.reason : " (no reason was recorded)") + (r.by ? " (by " + W.short(r.by) + ")" : "") + ". The agent cannot pay anyone.";
+      else if (r && r.paused === null) text = "The payment state could not be read just now.";
+    } catch (e) { /* leave the banner empty */ }
+    el.textContent = text;
   }
 
   // ---------- gate: the only thing visible before the admin signs in
@@ -235,6 +250,7 @@
       h("div", { class: "top-in" }, [brand(), h("span", { class: "who" }, [(S.overview.chain && S.overview.chain.business ? S.overview.chain.business + " · " : "") + W.short(S.account)]),
         h("button", { class: "btn ghost sm", onclick: guard(logout) }, ["Sign out"])]),
       tabs]));
+    root.appendChild(h("div", { id: "pause-banner", class: "banner", role: "status" }, []));
     root.appendChild(main);
     await show(S.tab);
   }
@@ -253,6 +269,7 @@
     var node = await VIEWS[tab]();
     view.textContent = "";
     view.appendChild(node);
+    await refreshBanner();
   }
 
   function table(head, rows) {
@@ -525,7 +542,7 @@
             }) }, [v[1]]));
           });
         }
-        if (i.status === "error") {
+        if (i.status === "error" || (i.status === "held" && i.held_because === "paused")) {
           acts.push(h("button", { class: "btn ghost sm", onclick: guard(async function () {
             if (!(await confirmAction("Return to the agent", [i.invoice_number + " from " + i.vendor_name, "The agent decides again from the stored invoice. Nothing is paid unless every check passes again."]))) return;
             await api("/admin/invoices/" + i.id + "/rerun", { method: "POST" });
@@ -534,7 +551,7 @@
         }
         if (i.status === "escalated") {
           acts.push(h("button", { class: "btn ghost sm", onclick: guard(async function () {
-            var esc = await api("/admin/invoices/" + i.id + "/escalation");
+            var esc = await api("/admin/invoices/" + i.id + "/escalation?purpose=reopen");
             if (!esc.can_reopen) throw new Error("This business's contract cannot return an escalation to the agent. Approve or reject it instead.");
             var ok = await onchain("reopen_escalation", "Return to the agent",
               [i.invoice_number + " from " + i.vendor_name, "The escalation is cleared on-chain and the agent decides again, with every limit and check.", "It may pay, hold or escalate again."],
@@ -542,8 +559,13 @@
             if (ok) await show("invoices");
           }) }, ["Return to agent"]));
           ["approve", "reject"].forEach(function (verb) {
+            if (verb === "approve" && i.submitted_by_you) {  // maker-checker: the server refuses the key too
+              acts.push(h("button", { class: "btn ghost sm", disabled: "disabled", title: "You submitted this invoice from your own wallet, so you cannot release it. Reject it or return it to the agent." }, ["Approve and pay"]));
+              acts.push(chip("you submitted this", "warn"));
+              return;
+            }
             acts.push(h("button", { class: "btn ghost sm", onclick: guard(async function () {
-              var key = (await api("/admin/invoices/" + i.id + "/escalation")).invoice_key;
+              var key = (await api("/admin/invoices/" + i.id + "/escalation?purpose=" + verb)).invoice_key;
               var ok = await onchain(verb + "_escalation", verb === "approve" ? "Approve and pay" : "Reject payment",
                 [i.invoice_number + " from " + i.vendor_name, usdc(i.amount_usdc), verb === "approve" ? "USDC leaves the pool to the vendor." : "The invoice will not be paid."],
                 verb === "approve" ? W.CALLS.approveEscalation(key) : W.CALLS.rejectEscalation(key), i.id);
@@ -552,7 +574,7 @@
           });
         }
         var kind = shadowRow ? chip("shadow", "warn") : "";
-        var status = [chip(labels[i.status] || i.status, kinds[i.status] || "warn")];
+        var status = [chip(i.status === "held" && i.held_because === "paused" ? "held: payments paused" : (labels[i.status] || i.status), kinds[i.status] || "warn")];
         if (i.verdict) status.push(chip(i.verdict === "agree" ? "you agreed" : "you disagreed", i.verdict === "agree" ? "ok" : "bad"));
         return [i.invoice_number, i.vendor_name, usdc(i.amount_usdc), shadowRow ? i.real_amount + " " + i.real_currency : "", h("span", null, [kind].concat(status)),
           h("span", { class: "mono" }, [i.reasoning_hash ? W.short(i.reasoning_hash) : ""]), h("div", { class: "actions" }, acts)];
@@ -599,13 +621,18 @@
           if (await onchain("set_category_limit", "Set category limit", ["Category: " + chosen.name + " (id " + chosen.id + ")", "New daily limit: " + amt.value.trim() + " USDC"],
             W.CALLS.setCategoryDailyLimit(chosen.id, units))) await show("limits");
         }) }, ["Set limit"])])]) : h("p", { class: "note" }, ["Add a category first, then set its limit here."]);
+      var why = h("input", { maxlength: "200", autocomplete: "off", placeholder: "Why (for example: vendor wallet under review)" });
       var pause = h("div", { class: "panel" }, [
         h("p", null, [c.paused ? "Payments are PAUSED. The agent cannot pay anyone." : "Payments are active."]),
-        h("button", { class: "btn sm" + (c.paused ? "" : " warn"), onclick: guard(async function () {
-          var next = !c.paused;
-          if (await onchain("set_paused", next ? "Pause all payments" : "Resume payments",
-            [next ? "The agent cannot pay anyone until you resume." : "The agent can pay again within the limits."], W.CALLS.setPaused(next))) await show("limits");
-        }) }, [c.paused ? "Resume payments" : "Pause all payments"])]);
+        h("div", { class: "row" }, [field(c.paused ? "Reason for resuming" : "Reason for pausing", why),
+          h("button", { class: "btn sm" + (c.paused ? "" : " warn"), onclick: guard(async function () {
+            var next = !c.paused, reason = String(why.value || "").replace(/\s+/g, " ").trim();
+            if (reason.length < 3) throw new Error("Write a reason of at least 3 characters first.");
+            if (await onchain("set_paused", next ? "Pause all payments" : "Resume payments",
+              [next ? "The agent cannot pay anyone until you resume." : "The agent can pay again within the limits.", "Reason: " + reason,
+               "The reason is shown publicly on the banner and in the ledger with the transaction."], W.CALLS.setPaused(next), undefined, { paused: next, reason: reason })) await show("limits");
+          }) }, [c.paused ? "Resume payments" : "Pause all payments"])]),
+        h("p", { class: "note" }, ["The reason is public: it appears on the banner and in the ledger, so put no private data in it. Pausing never blocks your own approve or reject decisions on an escalation."])]);
       var kids = [h("h2", null, ["Limits and safety"]), h("h3", null, ["Spending categories"]), list, h("h3", null, ["Add a category"]), add];
       if (rename) kids.push(h("h3", null, ["Rename a category"]), rename);
       kids.push(h("h3", null, ["Set a category limit"]), form, h("h3", null, ["Emergency stop"]), pause);

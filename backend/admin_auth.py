@@ -41,6 +41,7 @@ _challenges: dict = {}  # nonce -> {address, business_id, message, expires}
 _sessions: dict = {}    # sha256(token) -> {address, business_id, issued, seen}
 _approver_cache: dict = {}  # business id -> (approver, read at)
 _public_approver_cache: dict = {}  # same, for the public listing only: it never feeds sign-in
+_pause_cache: dict = {}  # business id -> (paused, read at); public banner only, never a payment decision
 
 
 def reset() -> None:
@@ -48,6 +49,7 @@ def reset() -> None:
     _sessions.clear()
     _approver_cache.clear()
     _public_approver_cache.clear()
+    _pause_cache.clear()
 
 
 def domain() -> str:
@@ -83,6 +85,26 @@ async def public_approver(business: dict) -> Optional[str]:
         return None
     _public_approver_cache[business["id"]] = (value, now)
     return value
+
+
+async def public_paused(business: dict) -> Optional[bool]:
+    """Whether the contract is paused right now, for the banner; None if unreadable. Payments never use this cache: the
+    payment step reads the chain itself right before it commits."""
+    now = time.time()
+    cached = _pause_cache.get(business["id"])
+    if cached and now - cached[1] < APPROVER_CACHE:
+        return cached[0]
+    try:
+        value = bool(await asyncio.to_thread(contract.chain_for(business).is_paused))
+    except Exception:
+        log.exception("Could not read paused() for business %s", business["id"])
+        return None
+    _pause_cache[business["id"]] = (value, now)
+    return value
+
+
+def forget_pause(business_id: int) -> None:
+    _pause_cache.pop(business_id, None)
 
 
 def _purge(now: float) -> None:

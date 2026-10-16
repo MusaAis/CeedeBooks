@@ -140,3 +140,5 @@ input::placeholder{color:#8a93b5}
 .status.err{background:var(--coral);color:#fff}.status.ok{background:var(--green);color:#fff}
 
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+
+.banner{background:var(--coral);color:#fff;font-weight:600;padding:.7rem 1rem;text-align:center}.banner:empty{display:none}

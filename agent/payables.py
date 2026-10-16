@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-from agent import contract, decision_log, second_opinion
+from agent import contract, decision_log, figures, second_opinion
 from agent.config import config
 from agent.llm import escalation_reasoning
 from backend import models
@@ -19,6 +19,10 @@ AMOUNT_TOLERANCE_USDC = 0.01
 def amount_matches(po_amount: float, invoice_amount: float) -> bool:
     """Compares in whole micro-USDC so binary floats cannot turn an exact 0.01 difference into a mismatch."""
     return abs(round(po_amount * 1_000_000) - round(invoice_amount * 1_000_000)) <= round(AMOUNT_TOLERANCE_USDC * 1_000_000)
+
+
+class PaymentsPaused(Exception):
+    """The owner paused payments. Raised before anything is hashed or sent; a person's own decision is never routed through it."""
 
 
 class Decision(str, Enum):
@@ -93,6 +97,15 @@ def _vendor_registered(chain, wallet: str) -> Optional[bool]:
         return None
 
 
+async def _narrative(invoice: Invoice, reason: str) -> str:
+    """The model's words with code-written figures (rule 18). A reply with a digit of its own is replaced by the
+    code-written reason, so no model-made number is ever stored or hashed."""
+    figs = figures.render_figures(amount_usdc=invoice.amount_usdc)
+    raw = await escalation_reasoning(f"Invoice {invoice.invoice_number}: {reason}. {figures.placeholder_help(figs)}")
+    text = figures.fill(raw, figs)
+    return text if text is not None else f"{reason}. {figures.WITHHELD}"
+
+
 async def _compare(rules_action: str, facts: dict) -> dict:
     """The rules verdict beside the model's second opinion (a short timeout, never acted on). See agent/second_opinion.py."""
     return second_opinion.comparison(rules_action, await second_opinion.ask_model(facts))
@@ -149,6 +162,7 @@ async def preflight(invoice: Invoice, treasury_runway_days: float, business: dic
     receipt = await models.get_receipt(invoice.business_id, po["id"]) if po is not None else None
     vendor_registered = chain.is_vendor_approved(invoice.vendor_wallet)
     overall_left, category_left = chain.remaining_today(invoice.category)
+    paused = chain.is_paused()
 
     checks = {
         "not_already_paid": not already_paid,
@@ -159,6 +173,7 @@ async def preflight(invoice: Invoice, treasury_runway_days: float, business: dic
         "vendor_registered_onchain": vendor_registered,
         "runway_ok": treasury_runway_days >= 7,
         "within_daily_limits": amount_units <= overall_left and amount_units <= category_left,
+        "payments_active": not paused,
     }
 
     reasons = []
@@ -180,6 +195,8 @@ async def preflight(invoice: Invoice, treasury_runway_days: float, business: dic
         return {"outcome": "would_escalate", "reasons": ["Vendor is not registered on-chain yet"], "checks": checks}
     if not checks["runway_ok"]:
         return {"outcome": "would_hold", "reasons": ["Treasury runway is under the 7-day minimum"], "checks": checks}
+    if paused:
+        return {"outcome": "would_hold", "reasons": ["Payments are paused by the owner"], "checks": checks}
     if not checks["within_daily_limits"]:
         return {
             "outcome": "would_be_refused_by_contract",
@@ -213,7 +230,7 @@ async def process_invoice(invoice: Invoice, treasury_runway_days: float, busines
     comparison = await _compare("pay" if decision == Decision.PAY else decision.value, facts)
 
     if decision == Decision.ESCALATE:
-        narrative = await escalation_reasoning(f"Invoice {invoice.invoice_number}: {reason}")
+        narrative = await _narrative(invoice, reason)
         await _log_and_escalate(invoice, narrative, config.groq_llm_model, amount_units, doc_hash, invoice_number_b32, chain, business, comparison)
         return decision
 
@@ -236,7 +253,16 @@ async def process_invoice(invoice: Invoice, treasury_runway_days: float, busines
         await models.update_invoice_status(invoice.business_id, invoice.id, "awaiting_owner", reasoning_hash=pending_hash)
         return Decision.AWAIT_OWNER
 
-    await _commit_then_pay(invoice, "INVOICE_PAID", reason, chain, business, amount_units, doc_hash, invoice_number_b32, comparison)
+    try:
+        await _commit_then_pay(invoice, "INVOICE_PAID", reason, chain, business, amount_units, doc_hash, invoice_number_b32, comparison)
+    except PaymentsPaused:
+        # Not anchored on-chain: the contract is paused and the ledger already proves the hold.
+        held_hash = await decision_log.log_decision(
+            "INVOICE_HELD", invoice.invoice_number, "Payments are paused by the owner; held until they resume." + shadow_note(invoice),
+            model_used="rules", amount=invoice.amount_usdc, business=business, comparison=comparison,
+        )
+        await models.update_invoice_status(invoice.business_id, invoice.id, "held", reasoning_hash=held_hash, held_because="paused")
+        return Decision.HOLD
     return decision
 
 
@@ -244,7 +270,10 @@ async def _commit_then_pay(
     invoice: Invoice, action: str, reason: str, chain, business: dict, amount_units: int, doc_hash: bytes, invoice_number_b32: bytes,
     comparison: Optional[dict] = None,
 ) -> str:
-    """Hash first, then commit, wait, pay, wait. Returns the reasoning hash. The contract re-checks everything."""
+    """Hash first, then commit, wait, pay, wait. Returns the reasoning hash. The contract re-checks everything.
+    Pause state is read right before anything is hashed; an unreadable state raises and nothing is paid (rule 17)."""
+    if chain.is_paused():
+        raise PaymentsPaused()
     reasoning_hash_hex = await decision_log.log_decision(
         action, invoice.invoice_number, reason, model_used="rules", amount=invoice.amount_usdc, business=business, comparison=comparison
     )

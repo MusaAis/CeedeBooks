@@ -57,3 +57,5 @@ dialog::backdrop{background:rgba(13,22,51,.6)}dialog h3{margin:0 0 .5rem}dialog 
 }
 .brand{display:flex;align-items:center;gap:.55rem}.brand .logo{width:28px;height:28px;display:block;flex:none}
 .steps{list-style:none;padding:0;margin:.5rem 0}.steps li{padding:.3rem 0;overflow-wrap:anywhere}
+
+.banner{background:var(--coral);color:#fff;font-weight:600;padding:.7rem 1rem;text-align:center}.banner:empty{display:none}

@@ -26,7 +26,7 @@ global.document = { getElementById: (id) => (id === "root" ? root : id === "dlg"
 const ADMIN = "0x" + "aa".repeat(20), OTHER = "0x" + "bb".repeat(20);
 const BIZ = process.env.BIZ || null, ACME_CONTRACT = "0x" + "c9".repeat(20);
 if (BIZ) global.location = { search: "?business=" + BIZ };
-let operator = true, stateUrls = [], challengeBodies = [];
+let operator = true, stateUrls = [], challengeBodies = [], pauseState = { paused: false, reason: null, by: null }, escalationUrls = [];
 let account = ADMIN, state = { approver: ADMIN, pending_approver: "0x" + "00".repeat(20), contract: ACME_CONTRACT }, calls = [], posts = [], expireSession = false;
 const provider = { request: async ({ method, params }) => {
   calls.push({ method, params });
@@ -46,6 +46,7 @@ global.fetch = async (url, opt = {}) => {
   if (path === "/businesses/ceedebooks/traction") return ok({ live: { paid: 2, held: 1, escalated: 0, volume_usdc: 1.5 },
     shadow: { paid: 3, held: 1, escalated: 1, awaiting_owner: 2, rejected: 0, mirrored_usdc: 1.5, real_totals: { NGN: "4500.50", KES: "99" }, agreement: { agree: 3, disagree: 1, n: 4, rate: 0.75 } },
     latest_paid: [{ invoice: "SH-1", mode: "shadow", tx_url: "https://explorer.testnet.arc.io/tx/0xabc" }, { invoice: "LV-1", mode: "live", tx_url: null }] });
+  if (path === "/pause-status") return ok(pauseState);
   if (path === "/admin/auth/state") { stateUrls.push(full); return ok(state); }
   if (path === "/admin/auth/challenge") { challengeBodies.push(JSON.parse(opt.body)); return ok({ nonce: "n".repeat(32), message: "sign me" }); }
   if (path === "/admin/auth/verify") { assert.strictEqual(JSON.parse(opt.body).signature.length, 132); return ok({ token: "tok", address: ADMIN }); }
@@ -67,11 +68,16 @@ global.fetch = async (url, opt = {}) => {
       { id: 4, name: "Software", daily_limit_usdc: null, remaining_usdc: null, usable: null }] });
     if (path === "/admin/categories" && method === "POST") { posts.push({ category_added: JSON.parse(opt.body) }); return ok({ id: 5, name: JSON.parse(opt.body).name }); }
     if (/^\/admin\/categories\/\d+$/.test(path) && method === "PATCH") { posts.push({ category_renamed: path, body: JSON.parse(opt.body) }); return ok({ ok: true }); }
+    if (/^\/admin\/invoices\/\d+\/escalation$/.test(path)) { escalationUrls.push(full); return ok({ invoice_key: "0x" + "9a".repeat(32), can_reopen: true, submitted_by_you: false }); }
+    if (/^\/admin\/invoices\/\d+\/rerun$/.test(path) && method === "POST") { posts.push({ rerun: path }); return ok({ ok: true }); }
     if (path === "/purchase-orders" && method === "POST") { posts.push({ po: JSON.parse(opt.body) }); return ok({ id: 9 }); }
     if (path === "/admin/vendors") return ok({ vendors: [{ id: 1, name: "Ops", wallet_address: "0x" + "d7".repeat(20), approved_onchain: false }] });
     if (path === "/admin/invoices") return ok({ invoices: [
       { id: 11, invoice_number: "SH-1", vendor_name: "Lagos Hosting", amount_usdc: 0.5, status: "awaiting_owner", mode: "shadow", real_amount: "1200.50", real_currency: "NGN", reasoning_hash: "a1".repeat(32), verdict: null },
       { id: 12, invoice_number: "SH-2", vendor_name: "Lagos Hosting", amount_usdc: 0.5, status: "held", mode: "shadow", real_amount: "99", real_currency: "KES", reasoning_hash: "b2".repeat(32), verdict: null },
+      { id: 14, invoice_number: "ESC-MINE", vendor_name: "Ops", amount_usdc: 3, status: "escalated", mode: "live", real_amount: null, real_currency: null, reasoning_hash: "d4".repeat(32), verdict: null, submitted_by_you: true },
+      { id: 15, invoice_number: "ESC-KEY", vendor_name: "Ops", amount_usdc: 4, status: "escalated", mode: "live", real_amount: null, real_currency: null, reasoning_hash: "e5".repeat(32), verdict: null, submitted_by_you: false },
+      { id: 16, invoice_number: "HELD-P", vendor_name: "Ops", amount_usdc: 1, status: "held", held_because: "paused", mode: "live", real_amount: null, real_currency: null, reasoning_hash: "f6".repeat(32), verdict: null },
       { id: 13, invoice_number: "LV-1", vendor_name: "Ops", amount_usdc: 2, status: "paid", mode: "live", real_amount: null, real_currency: null, reasoning_hash: "c3".repeat(32), verdict: null }] });
     if (path === "/admin/purchase-orders") return ok({ purchase_orders: [{ id: 5, po_number: "PO-5", vendor_id: 1, vendor_name: "Lagos Hosting", amount_usdc: 0.5, category: 1, received: 1 }] });
     if (path === "/invoices" && method === "POST") { posts.push({ invoice: JSON.parse(opt.body) }); return ok({ invoice_id: 20, decision: "await_owner" }); }
@@ -240,6 +246,44 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
   assert.strictEqual(fund.from, ADMIN);
   assert.strictEqual(fund.data, W.CALLS.usdcTransfer(ACME_CONTRACT, 12500000n), "it transfers to the contract of the business signed in to");
   assert.strictEqual(fund.value, undefined, "no native value is attached");
+
+  // maker-checker: an invoice this wallet submitted has a disabled Approve, a chip, and never asks the server for a release key
+  await invTab[0].listeners.click(); await tick();
+  let approves = []; walk(root, (x) => { if (x.tag === "button" && x.textContent === "Approve and pay") approves.push(x); });
+  const mine = approves.filter((b) => b.attrs.disabled === "disabled");
+  assert.strictEqual(mine.length, 1, "exactly one Approve is disabled: the invoice you submitted");
+  assert.ok(/you submitted this/.test(root.textContent) && /cannot release it/.test(mine[0].attrs.title));
+  escalationUrls.length = 0; calls.length = 0;
+  const keyApprove = approves.filter((b) => b.attrs.disabled !== "disabled").pop();       // ESC-KEY (the shadow row's button comes first)
+  await keyApprove.listeners.click(); await tick(200);
+  assert.deepStrictEqual(escalationUrls, ["/admin/invoices/15/escalation?purpose=approve"], "the release key is asked for with purpose=approve for the other invoice only");
+  assert.ok(/held: payments paused/.test(root.textContent), "a pause hold is labelled with its cause");
+  posts.length = 0;
+  await findBtn(root, "Re-run").listeners.click(); await tick(60);
+  assert.deepStrictEqual(posts.filter((p) => p.rerun).map((p) => p.rerun), ["/admin/invoices/16/rerun"], "a paused hold can be returned to the agent");
+
+  // pause needs a reason first, sends it with the state, and the banner follows the public pause status
+  await findBtn(root, "Limits and safety").listeners.click(); await tick();
+  const txBeforePause = calls.filter((c) => c.method === "eth_sendTransaction").length;
+  posts.length = 0;
+  await findBtn(root, "Pause all payments").listeners.click(); await tick(100);
+  assert.strictEqual(calls.filter((c) => c.method === "eth_sendTransaction").length, txBeforePause, "no transaction without a reason");
+  assert.ok(/reason of at least 3/.test(document.body.textContent));
+  walk(root, (x) => { if (x.tag === "input" && /^Why/.test(x.attrs.placeholder || "")) x.value = "vendor wallet under review"; });
+  await findBtn(root, "Pause all payments").listeners.click(); await tick(200);
+  const pauseTx = calls.filter((c) => c.method === "eth_sendTransaction").pop().params[0];
+  assert.strictEqual(pauseTx.data, W.CALLS.setPaused(true));
+  assert.deepStrictEqual(posts.pop(), { action: "set_paused", tx_hash: "0x" + "cd".repeat(32), paused: true, reason: "vendor wallet under review" });
+  assert.ok(/The reason is public/.test(root.textContent));
+  pauseState = { paused: true, reason: "vendor wallet under review", by: ADMIN };
+  await findBtn(root, "Overview").listeners.click(); await tick();
+  assert.ok(/Payments are PAUSED: vendor wallet under review/.test(byId("pause-banner").textContent), "the banner shows the reason");
+  pauseState = { paused: null, reason: null, by: null };
+  await findBtn(root, "Vendors").listeners.click(); await tick();
+  assert.ok(/could not be read/.test(byId("pause-banner").textContent), "an unreadable state is said, not hidden");
+  pauseState = { paused: false, reason: null, by: null };
+  await findBtn(root, "Overview").listeners.click(); await tick();
+  assert.strictEqual(byId("pause-banner").textContent, "", "no banner while payments are active");
 
   // a session the server ends sends the admin back to the gate
   expireSession = true;

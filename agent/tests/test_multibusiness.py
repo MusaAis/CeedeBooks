@@ -405,7 +405,9 @@ def test_a_transaction_to_another_businesss_contract_is_not_recorded(client, two
     r = client.post("/admin/actions", json={"action": "set_paused", "tx_hash": "0x" + "ab" * 32}, headers=t2)
     assert r.status_code == 422  # it went to business 1's contract
     chains.get(ACME_ADDRESS, 2).admin_tx["to"] = ACME_ADDRESS
-    assert client.post("/admin/actions", json={"action": "set_paused", "tx_hash": "0x" + "ab" * 32}, headers=t2).status_code == 200
+    chains.get(ACME_ADDRESS, 2).paused = True
+    ok = {"action": "set_paused", "tx_hash": "0x" + "ab" * 32, "paused": True, "reason": "testing the record"}
+    assert client.post("/admin/actions", json=ok, headers=t2).status_code == 200
 
 
 def test_rotating_one_businesss_approver_ends_only_that_session(client, two, chains):

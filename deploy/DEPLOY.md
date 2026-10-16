@@ -209,3 +209,15 @@ No contract or database change. One optional environment variable: `GATEWAY_WALL
 A plain USDC transfer to the Gateway Wallet loses the funds; the script never does one. If step 3 fails after step 2, the Gateway Wallet keeps an allowance of the exact amount and no USDC has moved; running the script again skips step 2.
 
 To go back: stop the service and check out v1.2.10. A `GATEWAY_DEPOSIT` row, if you made one, stays in the ledger, and USDC deposited into Gateway stays in Gateway.
+
+## Upgrading to v1.3.0 (oversight: maker-checker, pause with a reason, figures written by code)
+
+No contract change and no new environment variable. The database gains two invoice columns (`submitted_by`, `held_because`) and a `pause_log` table on the first start; nothing is rewritten and older invoices keep a null submitter (they are not blocked by maker-checker).
+
+1. Back up: `mkdir -p ~/backups && cp ceedebooks.db ~/backups/ceedebooks.db.pre-1.3.0` (from `~/ceedebooks`).
+2. Extract the files, run `pytest agent/tests/` with the CI placeholder variables (491 tests), then `sudo systemctl restart ceedebooks-api` and wait about 15 seconds.
+3. Re-copy the admin site and the vendor portal: `sudo cp admin/index.html admin/admin.css admin/wallet.js admin/admin.js /var/www/ceedebooks-admin/` and `sudo cp portal/index.html portal/business.html portal/portal.css portal/lib.js portal/portal.js portal/business.js /var/www/ceedebooks-portal/`. Hard-refresh both pages (the browser may hold the old scripts).
+4. Check the API: `curl -s https://api.ceedebooks.xyz/businesses | head -c 300` answers, and `curl -s https://api.ceedebooks.xyz/pause-status` answers `{"business":"ceedebooks","paused":false,...}` (`paused` is null if the chain could not be read).
+5. Optional live check of the pause banner (two on-chain transactions from the approver wallet, so read each wallet prompt): in the admin site's Limits tab type a reason, press Pause all payments and sign; the red banner with the reason shows on every admin page and on the vendor portal, and `/pause-status` shows `paused: true` with the reason. Then press Resume payments with a reason and sign; the banner disappears. `GET /ledger/verify?business=ceedebooks` must still say `ok: true`. The reason is public, so put no private data in it.
+
+To go back: stop the service and check out v1.2.10.1. The new columns and table are ignored by the old code. `ADMIN_PAUSED` and `ADMIN_RESUMED` ledger entries, if you made any, stay in the chain and still verify.

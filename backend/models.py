@@ -93,7 +93,20 @@ CREATE TABLE IF NOT EXISTS invoices (
     mode TEXT NOT NULL DEFAULT 'live',
     real_amount TEXT,
     real_currency TEXT,
+    submitted_by TEXT,
+    held_because TEXT,
     UNIQUE (business_id, invoice_number)
+);
+
+CREATE TABLE IF NOT EXISTS pause_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    paused INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    admin_address TEXT NOT NULL,
+    tx_hash TEXT NOT NULL,
+    reasoning_hash TEXT,
+    created_at REAL NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS decision_verdicts (
@@ -161,6 +174,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_bizapp_pending_wallet ON business_applicati
 CREATE UNIQUE INDEX IF NOT EXISTS ux_bizapp_open_slug ON business_applications(slug) WHERE status IN ('pending', 'accepting', 'accepted');
 CREATE UNIQUE INDEX IF NOT EXISTS ux_business_contract ON businesses(enforcer_address) WHERE enforcer_address != '';
 CREATE UNIQUE INDEX IF NOT EXISTS ux_category_name ON categories(business_id, lower(name));
+CREATE INDEX IF NOT EXISTS ix_pause_log_business ON pause_log(business_id, id);
 CREATE INDEX IF NOT EXISTS ix_invoices_business ON invoices(business_id, id);
 CREATE INDEX IF NOT EXISTS ix_vendors_business ON vendors(business_id, id);
 """
@@ -208,7 +222,8 @@ async def _migrate(db) -> None:
         await db.execute("DROP TABLE invoices")
         await db.execute("ALTER TABLE invoices_new RENAME TO invoices")
     await db.execute("DROP INDEX IF EXISTS ux_application_pending_wallet")  # was unique per wallet, now per business
-    for column, ddl in (("mode", "TEXT NOT NULL DEFAULT 'live'"), ("real_amount", "TEXT"), ("real_currency", "TEXT")):  # v1.2.8.3
+    for column, ddl in (("mode", "TEXT NOT NULL DEFAULT 'live'"), ("real_amount", "TEXT"), ("real_currency", "TEXT"),  # v1.2.8.3
+                        ("submitted_by", "TEXT"), ("held_because", "TEXT")):  # v1.3.0
         if column not in await _columns(db, "invoices"):
             await db.execute(f"ALTER TABLE invoices ADD COLUMN {column} {ddl}")
 
@@ -363,6 +378,7 @@ async def _insert(sql: str, args: tuple) -> int:
 async def save_invoice(
     business_id: int, invoice_number: str, vendor_id: int, po_id: Optional[int], amount_usdc: float, category: int,
     doc_hash: str, origin: str = "agent", mode: str = "live", real_amount: Optional[str] = None, real_currency: Optional[str] = None,
+    submitted_by: Optional[str] = None,
 ) -> int:
     """Raises sqlite3.IntegrityError if this business already has that invoice number. A shadow invoice must carry the real
     amount and currency; a live one must not."""
@@ -370,20 +386,24 @@ async def save_invoice(
         raise ValueError("shadow invoices need a real amount and currency; live invoices must not have them")
     return await _insert(
         "INSERT INTO invoices (business_id, invoice_number, vendor_id, po_id, amount_usdc, category, doc_hash, origin, mode, real_amount, "
-        "real_currency, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (business_id, invoice_number, vendor_id, po_id, amount_usdc, category, doc_hash, origin, mode, real_amount, real_currency, time.time()),
+        "real_currency, submitted_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (business_id, invoice_number, vendor_id, po_id, amount_usdc, category, doc_hash, origin, mode, real_amount, real_currency,
+         submitted_by, time.time()),
     )
 
 
 async def update_invoice_status(
-    business_id: int, invoice_id: int, status: str, reasoning_hash: Optional[str] = None, onchain_tx_id: Optional[str] = None
+    business_id: int, invoice_id: int, status: str, reasoning_hash: Optional[str] = None, onchain_tx_id: Optional[str] = None,
+    held_because: Optional[str] = None,
 ) -> None:
+    """held_because marks a hold with its one cause ('paused'); any other status clears it."""
     async with aiosqlite.connect(config.db_path) as db:
         await db.execute(
             """UPDATE invoices
-               SET status = ?, reasoning_hash = COALESCE(?, reasoning_hash), onchain_tx_id = COALESCE(?, onchain_tx_id)
+               SET status = ?, reasoning_hash = COALESCE(?, reasoning_hash), onchain_tx_id = COALESCE(?, onchain_tx_id),
+                   held_because = ?
                WHERE id = ? AND business_id = ?""",
-            (status, reasoning_hash, onchain_tx_id, invoice_id, business_id),
+            (status, reasoning_hash, onchain_tx_id, held_because if status == "held" else None, invoice_id, business_id),
         )
         await db.commit()
 
@@ -477,7 +497,7 @@ async def list_purchase_orders(business_id: int, limit: int = 100) -> list:
 async def list_invoices(business_id: int, limit: int = 50) -> list:
     return await _all(
         """SELECT i.id, i.invoice_number, i.vendor_id, v.name AS vendor_name, i.amount_usdc, i.category,
-                  i.status, i.reasoning_hash, i.created_at, i.mode, i.real_amount, i.real_currency, d.verdict
+                  i.status, i.reasoning_hash, i.created_at, i.mode, i.real_amount, i.real_currency, i.submitted_by, i.held_because, d.verdict
            FROM invoices i JOIN vendors v ON v.id = i.vendor_id AND v.business_id = i.business_id
            LEFT JOIN decision_verdicts d ON d.invoice_id = i.id AND d.business_id = i.business_id
            WHERE i.business_id = ? ORDER BY i.id DESC LIMIT ?""",
@@ -788,6 +808,29 @@ async def claim_invoice_status(business_id: int, invoice_id: int, from_status: s
         )
         await db.commit()
         return cur.rowcount == 1
+
+
+async def claim_paused_hold(business_id: int, invoice_id: int) -> bool:
+    """held (because payments were paused) -> retrying, atomically. A hold for any other reason is never claimed here."""
+    async with aiosqlite.connect(config.db_path) as db:
+        cur = await db.execute(
+            "UPDATE invoices SET status = 'retrying', held_because = NULL WHERE id = ? AND business_id = ? AND status = 'held' "
+            "AND held_because = 'paused'", (invoice_id, business_id),
+        )
+        await db.commit()
+        return cur.rowcount == 1
+
+
+async def save_pause_event(business_id: int, paused: bool, reason: str, admin_address: str, tx_hash: str,
+                           reasoning_hash: Optional[str]) -> int:
+    return await _insert(
+        "INSERT INTO pause_log (business_id, paused, reason, admin_address, tx_hash, reasoning_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (business_id, int(paused), reason, admin_address.lower(), tx_hash.lower(), reasoning_hash, time.time()),
+    )
+
+
+async def last_pause_event(business_id: int) -> Optional[aiosqlite.Row]:
+    return await _one("SELECT * FROM pause_log WHERE business_id = ? ORDER BY id DESC LIMIT 1", (business_id,))
 
 
 async def claim_shadow_approval(business_id: int, invoice_id: int) -> bool:

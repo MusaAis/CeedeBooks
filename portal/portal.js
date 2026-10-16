@@ -98,6 +98,22 @@
     root.appendChild(footer());
   }
 
+  // The pause banner: shown on every page while the business's payments are paused. Empty (and hidden) otherwise.
+  async function refreshBanner() {
+    var el = document.getElementById("pause-banner");
+    if (!el) {
+      el = h("div", { id: "pause-banner", class: "banner", role: "status" }, []);
+      if (document.body.insertBefore && root.parentNode) document.body.insertBefore(el, root); else document.body.appendChild(el);
+    }
+    var text = "";
+    try {
+      var r = await fetch(C.api + "/pause-status" + (BIZ ? "?business=" + encodeURIComponent(BIZ) : "")).then(function (x) { return x.ok ? x.json() : null; });
+      if (r && r.paused === true) text = "Payments are paused" + (r.reason ? ": " + r.reason : "") + ". Invoices are held until the business resumes them.";
+      else if (r && r.paused === null) text = "The payment state could not be read just now.";
+    } catch (e) { /* leave the banner empty */ }
+    el.textContent = text;
+  }
+
   // ---------- gate: the hero explains, the receipt acts
   function mountGate(title, step, bodyKids) {
     var copy = h("div", { class: "hc" }, [
@@ -283,5 +299,5 @@
         out])]);
   }
 
-  discover().then(function (found) { S.providers = found; gateIdle(); });
+  discover().then(function (found) { S.providers = found; gateIdle(); refreshBanner(); });
 })();
