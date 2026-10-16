@@ -13,7 +13,7 @@ An autonomous accounts-payable agent for African SMEs on Arc: it validates and p
 
 Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 – Oct 17, 2026.
 
-**Current: v1.3.0** (Phase O, oversight: maker-checker on escalation releases, pause with a stated reason and a banner, and narrative figures written by code; the contracts are those of v1.2.9.4, and Phase E, audit hardening, is complete). The AP/AR engine runs on Arc Testnet behind a key-authenticated HTTPS API (`api.ceedebooks.xyz`), with a public proof page (`ceedebooks.xyz`), a wallet-signed admin site (`admin.ceedebooks.xyz`), a vendor portal (`portal.ceedebooks.xyz`) and a business registration page (`portal.ceedebooks.xyz/business.html`). Two businesses exist, both ours: the original one on the v1 `BudgetEnforcer`, and a test business created through `BudgetFactory` on Oct 8 to check onboarding end to end. No outside business or paying user yet: every payment so far is self-owned. Latest additions, newest first: oversight controls (v1.3.0); Gateway deposit script (v1.2.10.1); Gateway balance read on the admin Overview (v1.2.10); live approver on `GET /businesses` (v1.2.9.5); return to agent, re-run and a red-team script (v1.2.9.4); the model's recorded second opinion beside the rules verdict (v1.2.9.3); on-chain anchoring of each ledger head (v1.2.9.2); owner-created categories and entered invoice amounts (v1.2.9.1); a signed hash-chained ledger (v1.2.9); shadow mode (v1.2.8.3); business onboarding (v1.2.8.2). See [Custody trade-off](#custody-trade-off), the [Roadmap](#roadmap) and the [Changelog](#changelog).
+**Current: v1.3.0.1** (docs only: the Sep 27 starting point and the changes since; code as v1.3.0, Phase O, oversight: maker-checker on escalation releases, pause with a stated reason and a banner, and narrative figures written by code; the contracts are those of v1.2.9.4, and Phase E, audit hardening, is complete). The AP/AR engine runs on Arc Testnet behind a key-authenticated HTTPS API (`api.ceedebooks.xyz`), with a public proof page (`ceedebooks.xyz`), a wallet-signed admin site (`admin.ceedebooks.xyz`), a vendor portal (`portal.ceedebooks.xyz`) and a business registration page (`portal.ceedebooks.xyz/business.html`). Two businesses exist, both ours: the original one on the v1 `BudgetEnforcer`, and a test business created through `BudgetFactory` on Oct 8 to check onboarding end to end. No outside business or paying user yet: every payment so far is self-owned. Latest additions, newest first: the Sep 27 comparison (v1.3.0.1, docs); oversight controls (v1.3.0); Gateway deposit script (v1.2.10.1); Gateway balance read on the admin Overview (v1.2.10); live approver on `GET /businesses` (v1.2.9.5); return to agent, re-run and a red-team script (v1.2.9.4); the model's recorded second opinion beside the rules verdict (v1.2.9.3); on-chain anchoring of each ledger head (v1.2.9.2); owner-created categories and entered invoice amounts (v1.2.9.1); a signed hash-chained ledger (v1.2.9); shadow mode (v1.2.8.3); business onboarding (v1.2.8.2). See [Custody trade-off](#custody-trade-off), the [Roadmap](#roadmap) and the [Changelog](#changelog).
 
 ## Links
 
@@ -36,6 +36,23 @@ Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 �
 3. **Read the contract:** [`contracts/BudgetEnforcer.sol`](contracts/BudgetEnforcer.sol) and its 24 tests in [`test/`](test/BudgetEnforcer.t.sol); the multi-business contracts are deployed: factory [`0x97b9A3802bA6B258cBeF6070532a265656bb391C`](https://explorer.testnet.arc.io/address/0x97b9A3802bA6B258cBeF6070532a265656bb391C), anchor [`0x008217BeC86462E76126F94e50eBe68fb4a41444`](https://explorer.testnet.arc.io/address/0x008217BeC86462E76126F94e50eBe68fb4a41444).
 4. **Run the tests:** `forge test -vv` and `pytest agent/tests/` (setup below).
 5. **See how an agent would use it:** [`/.well-known/agent.json`](https://api.ceedebooks.xyz/.well-known/agent.json).
+
+---
+
+## Since Sep 27
+
+The hackathon is judged on what changed from its start, so here is the starting point and the end, both taken from the git history (`git log`), not from memory.
+
+| | Sep 27, 2026 | Now (v1.3.0) |
+|---|---|---|
+| Repository | One commit, `dcf1f2a` "Initial commit", containing only the MIT `LICENSE` | 35 commits and 25 tagged releases, `v1.2.0` to `v1.3.0` |
+| Code and contracts | None | `BudgetEnforcer` (Sep 29), then the multi-business contracts (`BudgetEnforcerV2`, `BudgetFactory`, `LedgerAnchor`, Oct 4); the Python engine, API, proof page, admin site and vendor portal described above |
+| Tests | None | 69 Foundry, 491 Python, 6 Node runs |
+| Live system | None | An API, a public proof page, a wallet-signed admin site and a vendor portal on Arc Testnet |
+| Users | None | None outside the project: no outside business or paying user. The business that uses it is our own |
+| Real payments | None | One real vendor bill of ours (the domain, 2.20 USDC, paid by card and reimbursed through the contract, labelled `manual`); everything else is self-owned test or shadow activity, shown apart on the proof page |
+
+The first build commit after the initial one is `15d1b0f` (Sep 29): `BudgetEnforcer` deployed and verified, with 24 Foundry tests. Nothing in this repository predates Sep 27. The live counts (decisions, payments, businesses) change constantly, so the [proof page](https://ceedebooks.xyz) is the only source for them.
 
 ---
 
@@ -603,6 +620,9 @@ Deployment transactions: [LedgerAnchor `0x45c031cd...9f9f4d`](https://explorer.t
 ---
 
 ## Changelog
+
+**v1.3.0.1: the Sep 27 starting point (docs only, no code change)**
+- New "Since Sep 27" section: the starting point and the end, checked against `git log` (one commit, `LICENSE` only, on Sep 27; the first build commit is Sep 29). It says plainly that there is no outside business or paying user. The Current line is updated
 
 **v1.3.0: Phase O, oversight controls (built and tested)**
 - Maker-checker: new `invoices.submitted_by` (the admin's wallet, or `key:<id>` for an API key; null for older invoices). `GET /admin/invoices/{id}/escalation?purpose=approve` answers 403 for an invoice the signed-in wallet submitted, and the admin site shows a disabled Approve button with the reason; reject and return stay open. Approve and reject now claim the invoice row (`escalated` to `paid` or `rejected`), so a second settlement answers 409. The contract has no maker-checker, so an approval made by hand on-chain is recorded as it happened, logged as `maker_checker_bypass` and answered with a warning
