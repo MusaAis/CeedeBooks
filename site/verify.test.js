@@ -110,6 +110,33 @@ const zero = "0x" + "00".repeat(32);
   assert.strictEqual(none.agreement, "No verdicts yet");
   assert.strictEqual(none.kind, "Not yet confirmed as outside");
 
+  // ---- outcomes block: own and outside stay apart, the rate carries its n, a missing figure says so, manual and demo are shown apart
+  const blk = (o) => Object.assign({ processed: 0, paid_by_agent: 0, released_by_person: 0, held: 0, decided_alone: 0,
+    escalated: { waiting: 0, released: 0, rejected: 0, total: 0 }, person_agreement: { confirmed_agent: 0, overrode_agent: 0, n: 0, rate: null },
+    duplicates_caught: 0, volume_usdc: 0, seconds_to_payment: { median: null, n: 0, without_timing: 0 } }, o);
+  const oc = { outside_businesses: { statement: "Outside businesses: 0 confirmed. 1 active business, none confirmed as an outside party." },
+    by_ownership: {
+      own: { agent: blk({ processed: 6, paid_by_agent: 3, held: 1, decided_alone: 4, escalated: { waiting: 1, released: 0, rejected: 1, total: 2 },
+                          person_agreement: { confirmed_agent: 1, overrode_agent: 0, n: 1, rate: 1 }, duplicates_caught: 1, volume_usdc: 3.5,
+                          seconds_to_payment: { median: 42.5, n: 2, without_timing: 1 } }),
+             manual: blk({ processed: 1 }), demo: blk({ processed: 2, duplicates_caught: 1 }) },
+      outside: { agent: blk({}), manual: blk({}), demo: blk({}) } } };
+  const ov = V.outcomesView(oc);
+  assert.strictEqual(ov.statement, oc.outside_businesses.statement);
+  assert.strictEqual(ov.rows.length, 1);                                  // no outside row until an outside business has traffic
+  assert.ok(/^4 decided with no person \(3 paid, 1 held\)$/.test(ov.rows[0].alone));
+  assert.ok(/2 escalated to a person \(1 waiting, 0 released, 1 rejected\)/.test(ov.rows[0].escalated));
+  assert.ok(/100% of settled escalations rejected.*1 of 1/.test(ov.rows[0].agreement));
+  assert.strictEqual(ov.rows[0].median, "42.5 s median, from 2 payments (1 earlier not timed)");
+  assert.deepStrictEqual(ov.apart, ["1 manual invoice (own)", "2 demo invoices (own), 1 duplicate"]);
+  oc.by_ownership.own.agent = blk({});
+  const empty = V.outcomesView(oc);
+  assert.strictEqual(empty.rows[0].agreement, "No escalation settled by a person yet");
+  assert.strictEqual(empty.rows[0].median, "No timed payment yet");
+  oc.by_ownership.outside.agent = blk({ processed: 1, seconds_to_payment: { median: 300, n: 1, without_timing: 0 } });
+  const two = V.outcomesView(oc);
+  assert.ok(two.rows.length === 2 && /^Outside businesses/.test(two.rows[1].label) && two.rows[1].median === "5 min median, from 1 payment");
+
   // ---- the whole ledger chain: a real Ed25519-signed chain built here, checked by the browser code
   const nodeCrypto = require("crypto"), fs = require("fs"), path = require("path");
   const sha = (x) => nodeCrypto.createHash("sha256").update(x).digest("hex");

@@ -4,7 +4,7 @@
 ![CI](https://github.com/MusaAis/CeedeBooks/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Foundry tests](https://img.shields.io/badge/forge%20tests-69%2F69%20passing-brightgreen)
-![Python tests](https://img.shields.io/badge/pytest-491%2F491%20passing-brightgreen)
+![Python tests](https://img.shields.io/badge/pytest-507%2F507%20passing-brightgreen)
 ![Network](https://img.shields.io/badge/Arc-Testnet-informational)
 
 *"Ceede" means money in Pulaar/Fulfulde.*
@@ -13,7 +13,7 @@ An autonomous accounts-payable agent for African SMEs on Arc: it validates and p
 
 Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 – Oct 17, 2026.
 
-**Current: v1.3.0.2** (docs only: the `arc-escrow` comparison reworded to match that sample's code, and the Sep 27 starting point from v1.3.0.1; code as v1.3.0, Phase O, oversight: maker-checker on escalation releases, pause with a stated reason and a banner, and narrative figures written by code; the contracts are those of v1.2.9.4, and Phase E, audit hardening, is complete). The AP/AR engine runs on Arc Testnet behind a key-authenticated HTTPS API (`api.ceedebooks.xyz`), with a public proof page (`ceedebooks.xyz`), a wallet-signed admin site (`admin.ceedebooks.xyz`), a vendor portal (`portal.ceedebooks.xyz`) and a business registration page (`portal.ceedebooks.xyz/business.html`). Two businesses exist, both ours: the original one on the v1 `BudgetEnforcer`, and a test business created through `BudgetFactory` on Oct 8 to check onboarding end to end. No outside business or paying user yet: every payment so far is self-owned. Latest additions, newest first: the Sep 27 comparison (v1.3.0.1, docs); oversight controls (v1.3.0); Gateway deposit script (v1.2.10.1); Gateway balance read on the admin Overview (v1.2.10); live approver on `GET /businesses` (v1.2.9.5); return to agent, re-run and a red-team script (v1.2.9.4); the model's recorded second opinion beside the rules verdict (v1.2.9.3); on-chain anchoring of each ledger head (v1.2.9.2); owner-created categories and entered invoice amounts (v1.2.9.1); a signed hash-chained ledger (v1.2.9); shadow mode (v1.2.8.3); business onboarding (v1.2.8.2). See [Custody trade-off](#custody-trade-off), the [Roadmap](#roadmap) and the [Changelog](#changelog).
+**Current: v1.3.1** (Phase P, piece 1: an Outcomes block on the proof page and a public `GET /outcomes`, each figure computed by one SQL statement that is shown beside it; the code before it is v1.3.0, Phase O, oversight: maker-checker on escalation releases, pause with a stated reason and a banner, and narrative figures written by code; the contracts are those of v1.2.9.4, and Phase E, audit hardening, is complete). The AP/AR engine runs on Arc Testnet behind a key-authenticated HTTPS API (`api.ceedebooks.xyz`), with a public proof page (`ceedebooks.xyz`), a wallet-signed admin site (`admin.ceedebooks.xyz`), a vendor portal (`portal.ceedebooks.xyz`) and a business registration page (`portal.ceedebooks.xyz/business.html`). Two businesses exist, both ours: the original one on the v1 `BudgetEnforcer`, and a test business created through `BudgetFactory` on Oct 8 to check onboarding end to end. No outside business or paying user yet: every payment so far is self-owned. Latest additions, newest first: Outcomes (v1.3.1); the `arc-escrow` wording (v1.3.0.2, docs) and the Sep 27 comparison (v1.3.0.1, docs); oversight controls (v1.3.0); Gateway deposit script (v1.2.10.1); Gateway balance read on the admin Overview (v1.2.10); live approver on `GET /businesses` (v1.2.9.5); return to agent, re-run and a red-team script (v1.2.9.4); the model's recorded second opinion beside the rules verdict (v1.2.9.3); on-chain anchoring of each ledger head (v1.2.9.2); owner-created categories and entered invoice amounts (v1.2.9.1); a signed hash-chained ledger (v1.2.9); shadow mode (v1.2.8.3); business onboarding (v1.2.8.2). See [Custody trade-off](#custody-trade-off), the [Roadmap](#roadmap) and the [Changelog](#changelog).
 
 ## Links
 
@@ -27,7 +27,7 @@ Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 �
 
 ## 60-second tour for reviewers
 
-1. **See it:** open [ceedebooks.xyz](https://ceedebooks.xyz) (no login). Live paid, held and escalated counts, and a feed of decisions.
+1. **See it:** open [ceedebooks.xyz](https://ceedebooks.xyz) (no login). Live paid, held and escalated counts, an Outcomes block that states how many outside businesses exist, and a feed of decisions.
 2. **Check it yourself:** press **Verify** on any decision. Your browser recomputes the hash and compares it to the event on Arc. Or from a terminal:
    ```bash
    curl -s https://api.ceedebooks.xyz/decisions/46f65d7786a368e6e0814c938b8af9a7f6bed20bb1196478ac0a32708fa6f14a/verify
@@ -43,11 +43,11 @@ Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 �
 
 The hackathon is judged on what changed from its start, so here is the starting point and the end, both taken from the git history (`git log`), not from memory.
 
-| | Sep 27, 2026 | Now (v1.3.0) |
+| | Sep 27, 2026 | Now (v1.3.1) |
 |---|---|---|
-| Repository | One commit, `dcf1f2a` "Initial commit", containing only the MIT `LICENSE` | 35 commits and 25 tagged releases, `v1.2.0` to `v1.3.0` |
+| Repository | One commit, `dcf1f2a` "Initial commit", containing only the MIT `LICENSE` | 38 commits and 28 tagged releases, `v1.2.0` to `v1.3.1` |
 | Code and contracts | None | `BudgetEnforcer` (Sep 29), then the multi-business contracts (`BudgetEnforcerV2`, `BudgetFactory`, `LedgerAnchor`, Oct 4); the Python engine, API, proof page, admin site and vendor portal described above |
-| Tests | None | 69 Foundry, 491 Python, 6 Node runs |
+| Tests | None | 69 Foundry, 507 Python, 6 Node runs |
 | Live system | None | An API, a public proof page, a wallet-signed admin site and a vendor portal on Arc Testnet |
 | Users | None | None outside the project: no outside business or paying user. The business that uses it is our own |
 | Real payments | None | One real vendor bill of ours (the domain, 2.20 USDC, paid by card and reimbursed through the contract, labelled `manual`); everything else is self-owned test or shadow activity, shown apart on the proof page |
@@ -79,7 +79,7 @@ It isn't "an LLM with a wallet." The agent proposes; a smart contract, not a pro
 - **Retry-safe payments**: before doing anything, the pipeline asks the contract whether the invoice key is already paid, so a crash-and-retry cannot pay twice
 - **Confirmed, not assumed, settlement**: every commit, payment, and escalation is polled to a terminal on-chain state before it's recorded as succeeded — a reverted transaction is never logged as paid
 - **Audit trail with round-trip check**: every decision (paid, held, escalated) is stored with its exact serialized hash input; `GET /decisions/{hash}/verify` recomputes the hash
-- **Public proof page** (`ceedebooks.xyz`, no login): live paid / held / escalated counts, a feed of recent decisions, and a Verify button that recomputes the hash in the browser and checks it against the on-chain event
+- **Public proof page** (`ceedebooks.xyz`, no login): live paid / held / escalated counts, an Outcomes block, a feed of recent decisions, and a Verify button that recomputes the hash in the browser and checks it against the on-chain event
 - **Refusals shown first-class**: held decisions are anchored on-chain with `logDecision`, and the page counts holds and escalations next to payments
 - **Invoice pre-flight**: `POST /invoices/preflight` is a dry run that says whether an invoice would be paid, held or escalated, and why, without writing anything
 - **Agent manifest**: `GET /.well-known/agent.json` describes the vendor flow, roles and guarantees for other agents
@@ -101,9 +101,11 @@ It isn't "an LLM with a wallet." The agent proposes; a smart contract, not a pro
 - **Pause with a reason (v1.3.0):** the admin site asks for a reason (3 to 200 characters, shown publicly) before it asks the wallet to sign `setPaused`. The server checks the contract really is in the claimed state, then logs the reason in the activity log and in the signed ledger (`ADMIN_PAUSED` or `ADMIN_RESUMED`, with the transaction hash). If the ledger cannot be written the pause still stands and the answer says so. A banner with the reason shows on every page of the admin site and the vendor portal (not the business registration page) while paused (`GET /pause-status`; unreadable is shown as unknown, never as active). The payment step reads the pause state right before it hashes anything and pays nothing if it cannot read it. A paused invoice is held with the marker `held_because: paused` and can be re-run after payments resume. A shadow approval while paused is refused and the invoice keeps waiting for the owner. Pausing never blocks a person's own approve, reject or return of an escalation. Only the approver's wallet can sign in to the admin site, so the same wallet pauses and resumes
 - **Figures written by code (v1.3.0):** `agent/figures.py` (`render_figures`) is the only source of figures for the model's escalation narrative. The prompt gives the model placeholders such as `{amount}` and tells it to write no digits; the text is accepted only if it has no digit of its own and no unknown placeholder, and the placeholders are then filled by code. Otherwise the code-written reason is stored instead, with a line saying the narrative was withheld, so no model-made number is ever stored or hashed
 - **Invoice metrics on the proof page**: invoices processed, USDC paid and duplicates caught, split by origin (`agent`, `manual`, `demo`) so hand-run payments and demo runs never count as agent traffic
+- **Outcomes (v1.3.1):** a public `GET /outcomes` and a block on the proof page for live invoices: how many the agent decided with no person (paid or held), how many it escalated (waiting, released, rejected), how often a person settling an escalation rejected it, duplicates caught, invoices processed, USDC paid, and the median seconds from submission to confirmed payment. Own and outside businesses are separate, the origins `agent`, `manual` and `demo` are never summed, shadow figures are kept apart, and the page states in code-written words how many outside businesses are confirmed. Every figure comes from one SQL statement that the response returns next to it (`queries`, with `definitions`), so it can be reproduced. A rate or median with nothing behind it is null, never a success
 
 **Planned** (see the [Roadmap](#roadmap) for order and status; nothing below is built)
 
+- Phase P, the rest: a "try it in 5 minutes" demo path (`POST /demo/seed`, everything labelled `demo`) and a rollout record per shipped feature
 - Gasless spending from the Gateway balance (the balance read and a manual deposit are built)
 - Treasury: economics-gated yield sweep via a pooled USYC wrapper, continuous vendor screening, other-currency invoices
 - Agent-to-agent reference client for vendors (demo runs labelled `demo`)
@@ -154,7 +156,7 @@ Everything below is checkable on-chain. Nothing here is estimated.
 | What | Evidence |
 |---|---|
 | Contract deployed and verified on Arc Testnet | [`BudgetEnforcer`](https://explorer.testnet.arc.io/address/0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB) |
-| Test suites | 69 Foundry (24 on the v1 contract, 45 on the multi-business contracts) + 491 Python tests + 6 Node runs (proof page, admin site, vendor portal), run by CI on every push |
+| Test suites | 69 Foundry (24 on the v1 contract, 45 on the multi-business contracts) + 507 Python tests + 6 Node runs (proof page, admin site, vendor portal), run by CI on every push |
 | First self-owned vendor bill paid through the contract | `ceedebooks.xyz` registration, 2.20 USDC, category 1 |
 | Multi-business contracts deployed and verified (v1.2.8) | [`BudgetFactory`](https://explorer.testnet.arc.io/address/0x97b9A3802bA6B258cBeF6070532a265656bb391C), [`LedgerAnchor`](https://explorer.testnet.arc.io/address/0x008217BeC86462E76126F94e50eBe68fb4a41444) |
 | First ledger anchor of the original business (sequence 9) | [`0x24045426...a36639fb`](https://explorer.testnet.arc.io/tx/0x24045426ab28d346ce6e48998dfef1964e5890d64ee04f385cae1011a36639fb); `GET /ledger/verify?business=ceedebooks` compares it with the chain |
@@ -200,7 +202,7 @@ Every other business starts with none and creates its own in the admin site's Li
 - **Model output is an input, never a release condition.** In Circle's `arc-escrow` sample, the app releases funds when a GPT-4o answer returns `valid: true` with `HIGH` confidence (`app/api/contracts/validate-work/route.ts`), and the escrow contract itself does not check the work. In CeedeBooks the model's answer is a recorded input: the rules verdict acts, and the contract enforces the limits whatever the model says.
 - **Independent receipt witness.** A three-way match proves nothing if the agent can confirm its own receipts. It can't.
 - **Settlement is confirmed, not hoped for.** Circle's transaction API is asynchronous — accepting a request isn't the same as it succeeding on-chain. CeedeBooks waits for a terminal state before trusting any result, closing a real phantom-payment risk most demos never test for.
-- **Tested, not just described.** 69 Foundry tests (24 cover the v1 contract, 45 cover the multi-business contracts) plus 491 Python tests covering the decision pipeline, the isolation between businesses, onboarding, shadow mode, per-business categories, the signed ledger and its on-chain anchor, the admin routes, and the oversight controls.
+- **Tested, not just described.** 69 Foundry tests (24 cover the v1 contract, 45 cover the multi-business contracts) plus 507 Python tests covering the decision pipeline, the isolation between businesses, onboarding, shadow mode, per-business categories, the signed ledger and its on-chain anchor, the admin routes, the oversight controls, and the outcome figures.
 
 ---
 
@@ -258,6 +260,7 @@ The engine, the audit log and the ledger are built; the Treasury Brain and Contr
 - **Key custody (checked in v1.2.9.4).** Every agent transaction is signed by a Circle developer-controlled wallet; no raw wallet key is held by the service. The only raw key it reads is `LEDGER_SIGNING_KEY` (Ed25519, signs ledger entries, moves no money). `DEPLOYER_PRIVATE_KEY` is not required and nothing signs with it; it has been removed from the live server's `.env`, and holds no power over any contract since the approver rotation (see [Contracts](#contracts)). The Circle entity secret and API key do sit in the server `.env`: whoever reads that file can act as every business's agent, within each contract's rules (see Custody trade-off).
 - **The model.** A language model is used in two places: it writes the narrative when the rules escalate an unregistered vendor, and it gives a second opinion that is recorded and hashed. Neither can release, block or change a payment, and the second opinion waits at most 3 seconds. Since v1.3.0 the narrative may use figures only through code-filled placeholders; a reply with its own digits is replaced.
 - **Oversight limits (v1.3.0).** Maker-checker is enforced by the API and the admin site, not by the contract (it has no such rule), so someone who builds the release transaction by hand is not stopped; the server records it and flags it. An invoice with no recorded submitter (made before v1.3.0) is not blocked. The pause itself is the contract's own `paused` flag, and the reason beside it is a record in our database and ledger that the contract does not check. The pause reason and the banner are public.
+- **Outcome figures (v1.3.1).** They are counts from our own database, so they are exactly as honest as its rows: a person's release is recognised by the admin action the server recorded for that invoice, and an invoice the agent paid after "Return to agent" counts as the agent's. "Person agreement" is the share of settled escalations a person rejected; a release overrides the agent's caution, and an owner who releases everything produces 0%. The median covers only payments stamped at payment time (v1.3.1 on), so earlier payments are counted as `without_timing`, never estimated. Shadow figures and the own, outside and `demo` buckets are never added together.
 - **Public reasoning.** `GET /decisions/{hash}` returns the full reasoning text, so no private data belongs in it.
 
 ---
@@ -298,9 +301,9 @@ Each business's contract and agent wallet addresses are public on the proof page
 | E3. Model-versus-rules log | Rules verdict acts; the model's second opinion is recorded in the hash (format 3); `/metrics/decisions` | v1.2.9.3 | ✅ Built and tested with mocks; the model call was checked live on the server |
 | E4. On-chain red team | Agent wallet tries a payment to a non-approved vendor, the contract's refusal is kept as a `contract_refused` row and anchored | v1.2.9.4 | ✅ Built and tested with mocks (the contract's refusal is also a Foundry test). Run live on Oct 15 on the original business: the contract refused the payment (at Circle's gas estimation, so no pay transaction reached the chain) and the refusal was anchored; see [Traction](#traction) |
 | E5. Key custody, re-evaluate | Deployer key optional, "Return to agent" over `reopenEscalation`, re-run of `error` invoices | v1.2.9.4 | ✅ Built and tested with mocks; the deployer key is out of the live server `.env`. Return to agent needs a v2 contract (the original business's v1 contract has no `reopenEscalation`) |
-| O. Oversight | Maker-checker (`submitted_by`, release key refused to the submitter, claim-first settlement), pause with a reason and a banner (`pause_log`, `GET /pause-status`, `held_because: paused`), figures written by code (`agent/figures.py`) | v1.3.0 | ✅ Built and tested . no contract change: the pause is the existing `setPaused` |
+| O. Oversight | Maker-checker (`submitted_by`, release key refused to the submitter, claim-first settlement), pause with a reason and a banner (`pause_log`, `GET /pause-status`, `held_because: paused`), figures written by code (`agent/figures.py`) | v1.3.0 | ✅ Built and tested; no contract change: the pause is the existing `setPaused` |
 | F. Gateway | F1: read-only `POST /v1/balances` unified balance of the agent wallet on the admin Overview. F2: `scripts/gateway_deposit.py`, a manual deposit from the agent wallet (gasless spending not built) | v1.2.10, v1.2.10.1 | ✅ F1 built, tested with mocks and checked on the live server; F2 built, tested with mocks and run live once (3 USDC deposited on Oct 15) |
-| P. Proof and evidence | Outcomes numbers (decisions made vs escalated, human agreement rate, duplicates caught), "try it in 5 minutes" demo path, rollout records | | ⏳ Planned |
+| P. Proof and evidence | P1: Outcomes block and `GET /outcomes` (decided alone vs escalated, person agreement, duplicates caught, invoices, volume, median seconds to payment; own and outside and each origin apart; the SQL for each figure). P2: "try it in 5 minutes" demo path. P3: rollout records | v1.3.1 (P1) | ✅ P1 built and tested with mocks; ⏳ P2 and P3 planned |
 | G. Treasury brain | Economics-gated sweep, vendor screening, `CeedeBooksYield.sol` pooled USYC wrapper, EURC, CCTP | v1.3.x | ⏳ Planned |
 | N. Agent-to-agent | Reference vendor client; traction counts an outside agent only | v1.3.x | ⏳ Planned |
 | Q. Reach | PDF and email intake, Telegram bot, receivables, webhooks | | ⏳ Planned |
@@ -377,7 +380,7 @@ Run with a **single worker**: `uvicorn backend.main:app` (the rate limiter is pe
 
 **Access model.** Send the key in an `X-API-Key` header. Keys are created on the server with `python3 scripts/create_api_key.py create --role buyer --label <name>` (or `--role vendor --vendor-id N`), shown once, and stored only as SHA-256 hashes. `/decisions/*` needs no key.
 
-**Businesses (v1.2.8.1).** A key, a vendor session and an admin session each belong to exactly one business, and every query is scoped to it: another business's ids answer 404, and its contract is never called. Create a key for a business with `--business <slug>` (default `ceedebooks`). The sign-in challenges (`/admin/auth/challenge`, `/vendor/auth/challenge`, `/apply/challenge`) take an optional `business` slug (default: the first business); the signed message names it, and an admin signature is accepted only if it recovers to that business's own `approver()`. Public reads (`/stats`, `/decisions`) cover every business by default and take `?business=<slug>` to narrow them. A business that is not `active` accepts no writes. New decisions use hash format 2, which also binds the business id and its contract address; older records keep format 1 and still verify.
+**Businesses (v1.2.8.1).** A key, a vendor session and an admin session each belong to exactly one business, and every query is scoped to it: another business's ids answer 404, and its contract is never called. Create a key for a business with `--business <slug>` (default `ceedebooks`). The sign-in challenges (`/admin/auth/challenge`, `/vendor/auth/challenge`, `/apply/challenge`) take an optional `business` slug (default: the first business); the signed message names it, and an admin signature is accepted only if it recovers to that business's own `approver()`. Public reads (`/stats`, `/outcomes`, `/decisions`) cover every business by default and take `?business=<slug>` to narrow them. A business that is not `active` accepts no writes. New decisions use hash format 2, which also binds the business id and its contract address; older records keep format 1 and still verify.
 
 | Endpoint | Who | Purpose |
 |---|---|---|
@@ -418,6 +421,7 @@ Run with a **single worker**: `uvicorn backend.main:app` (the rate limiter is pe
 | `GET /ledger/entries?business=<slug>&after=<n>&limit=<1-500>` | public | The signed entries after sequence `n`, exactly as stored, so a browser can re-check them |
 | `POST /operator/businesses/{id}/archive` | operator session | `{archived: true or false}`. An archived business accepts no writes and is hidden from public lists and totals; still readable with `?business=<slug>` and still verifies. Never the home business |
 | `GET /metrics/decisions?business=<slug>` | public | Rules verdict versus the model's second opinion over decisions that recorded one: `total`, `compared` (a model answered), `agreed`, `disagreed`, `contract_refused` and `agreement_rate` (null when nothing was compared), by origin and by business, `live` and `shadow` apart |
+| `GET /outcomes?business=<slug>` | public | Outcome figures for live invoices, in `by_ownership` (`own` and `outside`) then by origin (`agent`, `manual`, `demo`), never summed: `processed`, `decided_alone` (`paid_by_agent` plus `held`), `escalated` (`waiting`, `released`, `rejected`, `total`), `person_agreement` (`confirmed_agent`, `overrode_agent`, `n`, `rate`, null when no escalation has been settled), `duplicates_caught`, `volume_usdc` and `seconds_to_payment` (`median` null with none, `n`, `without_timing`). Also `outside_businesses` with a code-written statement, `shadow` (apart), `definitions` and the SQL of each figure in `queries`. Counts only; archived businesses leave the aggregate |
 | `GET /stats` | public | Counts of paid, held and escalated agent decisions (manual entries are reported separately and never counted as agent decisions), plus `submissions`: invoices processed, USDC paid and duplicates caught, split by origin |
 
 Hardening: amounts are exact decimals (positive, at most 6 places); request bodies over `MAX_BODY_BYTES` return 413; per-IP rate limit (`RATE_LIMIT_PER_MIN`) and a stricter limit on failed keys (`FAILED_AUTH_PER_MIN`) return 429; CORS allows only `CORS_ORIGINS` (default `https://ceedebooks.xyz`). Behind a reverse proxy set `TRUST_PROXY=1` so limits apply per real client.
@@ -467,11 +471,13 @@ ceedebooks/
 │       ├── test_gateway_deposit.py
 │       ├── test_model_compare.py
 │       ├── test_oversight.py
+│       ├── test_outcomes.py
 │       ├── test_relabel.py
 │       └── test_red_team.py
 ├── backend/
 │   ├── main.py             # FastAPI: every route in the API table below
 │   ├── models.py           # SQLite schema, migrations and tenant-scoped queries
+│   ├── outcomes.py         # public outcome figures: one documented SQL statement per figure (v1.3.1)
 │   ├── auth.py             # API-key auth, roles, failed-key throttling
 │   ├── ratelimit.py        # in-memory sliding-window limiter
 │   ├── admin_auth.py       # wallet sign-in for the admin site (session bound to the on-chain approver)
@@ -561,7 +567,7 @@ The pytest run needs only these placeholders: the chain and Circle's calls are f
 
 **69 Foundry tests** (24 for the v1 contract, 35 for `BudgetEnforcerV2`, 6 for `BudgetFactory`, 4 for `LedgerAnchor`), one per revert path or acceptance scenario: unregistered and revoked vendor, over per-tx / daily / category limits, unset category (fail-closed), same invoice resubmitted as a different file, missing / reused / mismatched commit, crash-and-retry, simulated prompt injection (contract refuses even if the agent were fooled), the escalate → approve / reject flow, escalated invoices blocked from direct payment, pause, withdraw, agent rotation, two-step approver rotation, and the `reasoningHash` round-trip via the `PaymentMade` event.
 
-**491 Python tests** in `agent/tests/`. No test sends a transaction or touches a network. They cover:
+**507 Python tests** in `agent/tests/`. No test sends a transaction or touches a network. They cover:
 - The decision pipeline: three-way match, rules baseline (pay, hold, escalate), retry safety, the 0.01 USDC rounding allowance, and the invoice pre-flight dry run, which writes nothing and reveals no balances.
 - Access control: API keys and roles, vendor wallet sessions, admin wallet sign-in, and every denied path.
 - Multiple businesses: isolation (a key, session or id of one business never reaches another), hash formats 1 to 3, onboarding and its on-chain checks, per-business categories, and shadow mode.
@@ -570,9 +576,10 @@ The pytest run needs only these placeholders: the chain and Circle's calls are f
 - The Gateway read: the request body matches Circle's documented shape, other domains and depositors are not counted, and every failure (status, shape, number, timeout, bad address) is null, never zero.
 - The Gateway deposit script: amount bounds and the 5 USDC cap, the two calls' signatures, the order (audit row, approve, deposit), an exact-amount approval, a declined step sends nothing, and an unreadable chain, a wrong agent, a missing contract or too small a balance sends nothing. Each check was broken on purpose to confirm a test fails.
 - Oversight (v1.3.0): figures (a placeholder is filled, a digit or an unknown placeholder is refused, a reply with its own digits is replaced by the code-written reason), pause (a paused invoice is held with its marker and nothing is sent, an unreadable pause state pays nothing, a re-run only after resume, the record must match the contract and carry a real reason, the ledger entry verifies, the banner is unknown when unreadable, an emergency stop stands without a ledger key, a shadow approval while paused keeps waiting) and maker-checker (the submitter is recorded, the release key is refused to the submitter, a hand-made release is flagged, a second settlement is refused, the invoice list never shows who else submitted). Six of the guards were broken on purpose to confirm a test fails.
+- Outcomes (v1.3.1): the decided-alone, escalated and person-agreement counts (a release by a person is never counted as the agent's own payment, and one business's release is never credited to another's invoice), the null cases, the median over stamped agent payments only, the own and outside split, the origin split, shadow and archived exclusion, the one-business scope, no private field in the response, and that each SQL statement shown runs as written. Seven of the guards were broken on purpose to confirm a test fails.
 - Return to agent and re-run (only v2, only the matching event, one click at a time, another business's invoice is untouchable) and the red-team script (a refusal is recorded, an acceptance is a loud failure, a declined step sends nothing).
 
-**Node suites** run the browser code without a browser: the proof page's hash recomputation and whole-chain check against a real Ed25519-signed chain, with contract selectors compared to the compiled contracts (`site/verify.test.js`); the admin app's call encoding and rendering, including the disabled release button, the pause reason and the banner (`admin/*.test.js`, the admin one also run as a second business); and the vendor portal and business registration page (`portal/*.test.js`).
+**Node suites** run the browser code without a browser: the proof page's hash recomputation and whole-chain check against a real Ed25519-signed chain, with contract selectors compared to the compiled contracts (`site/verify.test.js`, which also covers the Outcomes view: own and outside apart, the rate with its count, a missing figure said plainly); the admin app's call encoding and rendering, including the disabled release button, the pause reason and the banner (`admin/*.test.js`, the admin one also run as a second business); and the vendor portal and business registration page (`portal/*.test.js`).
 
 ### Deploy
 
@@ -620,6 +627,15 @@ Deployment transactions: [LedgerAnchor `0x45c031cd...9f9f4d`](https://explorer.t
 ---
 
 ## Changelog
+
+**v1.3.1: Phase P1, Outcomes (built and tested with mocks)**
+- New public `GET /outcomes` (`?business=<slug>`) and an Outcomes block on the proof page, for live invoices only. Figures: invoices processed; decided alone (paid by the agent with no person releasing it, plus held); escalated (waiting, released by a person, rejected by a person); person agreement (the share of settled escalations a person rejected, with its count, null until one is settled); duplicates caught; USDC paid; median seconds from submission to confirmed payment. Own and outside businesses and the origins `agent`, `manual` and `demo` are reported apart and never summed; shadow figures stay in their own block; archived businesses leave the aggregate
+- Each figure comes from one SQL statement in `backend/outcomes.py`; the response returns those statements as `queries` and plain definitions as `definitions`, so anyone can reproduce a number. The line "Outside businesses: N confirmed" is written by code from the business counts, never by a model
+- New `invoices.settled_at`: stamped once, only when the agent records a confirmed payment of its own (a paid status with its transaction id). A row only re-marked paid because the chain already had the payment gets no time, so the median never counts it. Older databases gain the column in place and their earlier payments are reported as `without_timing`, not estimated
+- A release by a person is recognised from the `approve_escalation` action the server recorded for that invoice in that business; a release recorded for another business never counts
+- The proof page's Outcomes view is a tested function in `site/verify.js` (`outcomesView`), shown beside the existing counts; `/outcomes` is listed as a public route in `agent.json`
+- No contract change, no hash-format change, nothing new in the ledger. 16 new Python tests (507 in total); seven of the new guards were broken on purpose and each was caught; new Node checks for the view. The 69 Foundry tests are unchanged and were not run for this release. Not in this release: the "try it in 5 minutes" demo path and the rollout records (the rest of Phase P)
+- README read top to bottom and rewritten to match the code: badge and every test count, the Current line, the Sep 27 table, Features, Planned, the roadmap (a stray " . " in the Oversight row is fixed), the API table, the trust model, the project tree and Tests
 
 **v1.3.0.2: the `arc-escrow` comparison (docs only, no code change)**
 - The "Model output is an input" line now says what Circle's `arc-escrow` sample does, from its code: the app releases funds when a GPT-4o vision answer returns `valid: true` with `HIGH` confidence, and the escrow contract's `withdraw` does not check the work. It no longer says "bare JSON with no structural check", which overstated it. The Current line is updated.

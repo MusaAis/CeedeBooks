@@ -19,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from agent import categories as category_rules
 from agent import anchor, contract, decision_log, gateway, ledger, payables, treasury
 from agent.config import config
-from backend import admin_auth, auth, models, vendor_auth
+from backend import admin_auth, auth, models, outcomes, vendor_auth
 
 log = logging.getLogger("ceedebooks.api")
 
@@ -439,6 +439,14 @@ async def decision_metrics(business: Optional[Slug] = None):
     return metrics
 
 
+@app.get("/outcomes")
+async def get_outcomes(business: Optional[Slug] = None):
+    """Public outcome figures for live invoices, split by own/outside business and by origin, each from one SQL statement that
+    is returned in `queries`. Shadow figures are kept apart. Without `business` this is the aggregate (counts only)."""
+    biz = await _business_by_slug(business, active_only=False) if business else None
+    return await outcomes.get_outcomes(None if biz is None else biz["id"], business)
+
+
 @app.get("/.well-known/ledger-key")
 async def ledger_key():
     """The Ed25519 public key that signs every ledger entry. Public. The same server holds the private key, so this key alone
@@ -503,7 +511,7 @@ async def agent_manifest():
         "custody": "CeedeBooks runs each business's agent wallet. It can only pay that business's approved vendors within its limits; the owner's own wallet controls the money and limits and can replace the agent at any time.",
         "business_scope": "Every key, session and record belongs to one business. Public reads default to all businesses; add ?business=<slug> to narrow them. Sign-in challenges accept an optional 'business' slug (default: the first business).",
         "auth": {
-            "header": "X-API-Key", "roles": ["buyer", "vendor"], "public": ["/decisions", "/stats"],
+            "header": "X-API-Key", "roles": ["buyer", "vendor"], "public": ["/decisions", "/stats", "/outcomes"],
             "wallet_signin": "A vendor can also sign in by signing a one-time message with its payee wallet (POST /vendor/auth/challenge then /vendor/auth/verify, EIP-191 personal_sign) and send the returned token as 'Authorization: Bearer <token>'. No key is issued.",
         },
         "vendor_flow": [

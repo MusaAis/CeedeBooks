@@ -95,6 +95,7 @@ CREATE TABLE IF NOT EXISTS invoices (
     real_currency TEXT,
     submitted_by TEXT,
     held_because TEXT,
+    settled_at REAL,
     UNIQUE (business_id, invoice_number)
 );
 
@@ -223,7 +224,8 @@ async def _migrate(db) -> None:
         await db.execute("ALTER TABLE invoices_new RENAME TO invoices")
     await db.execute("DROP INDEX IF EXISTS ux_application_pending_wallet")  # was unique per wallet, now per business
     for column, ddl in (("mode", "TEXT NOT NULL DEFAULT 'live'"), ("real_amount", "TEXT"), ("real_currency", "TEXT"),  # v1.2.8.3
-                        ("submitted_by", "TEXT"), ("held_because", "TEXT")):  # v1.3.0
+                        ("submitted_by", "TEXT"), ("held_because", "TEXT"),  # v1.3.0
+                        ("settled_at", "REAL")):  # v1.3.1
         if column not in await _columns(db, "invoices"):
             await db.execute(f"ALTER TABLE invoices ADD COLUMN {column} {ddl}")
 
@@ -396,14 +398,17 @@ async def update_invoice_status(
     business_id: int, invoice_id: int, status: str, reasoning_hash: Optional[str] = None, onchain_tx_id: Optional[str] = None,
     held_because: Optional[str] = None,
 ) -> None:
-    """held_because marks a hold with its one cause ('paused'); any other status clears it."""
+    """held_because marks a hold with its one cause ('paused'); any other status clears it. settled_at is stamped once,
+    only when this call records a confirmed payment of its own (status paid with its transaction id); a row that is only
+    re-marked paid because the chain already had the payment gets no time, so the timing metric never counts it."""
+    stamp = time.time() if status == "paid" and onchain_tx_id else None
     async with aiosqlite.connect(config.db_path) as db:
         await db.execute(
             """UPDATE invoices
                SET status = ?, reasoning_hash = COALESCE(?, reasoning_hash), onchain_tx_id = COALESCE(?, onchain_tx_id),
-                   held_because = ?
+                   held_because = ?, settled_at = COALESCE(settled_at, ?)
                WHERE id = ? AND business_id = ?""",
-            (status, reasoning_hash, onchain_tx_id, held_because if status == "held" else None, invoice_id, business_id),
+            (status, reasoning_hash, onchain_tx_id, held_because if status == "held" else None, stamp, invoice_id, business_id),
         )
         await db.commit()
 

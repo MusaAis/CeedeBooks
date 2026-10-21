@@ -181,6 +181,29 @@
     }
   }
 
+  // ---------- outcomes
+  async function loadOutcomes() {
+    var box = $("outcomes");
+    $("outcomes-link").href = C.api + "/outcomes" + q();
+    try {
+      var v = V.outcomesView(await getJson("/outcomes" + q()));
+      $("outcomes-outside").textContent = v.statement;
+      box.textContent = "";
+      v.rows.forEach(function (r) {
+        var item = el("div", "item"), t = el("div", "t");
+        t.appendChild(el("strong", null, r.label + ": " + r.processed + " invoices processed, " + usdc(r.volume) + " paid"));
+        [r.alone, r.escalated, r.agreement, r.duplicates + " duplicate" + (r.duplicates === 1 ? "" : "s") + " caught", "Submitted to confirmed payment: " + r.median].forEach(function (line) {
+          t.appendChild(el("span", null, line));
+        });
+        item.appendChild(t);
+        box.appendChild(item);
+      });
+      $("outcomes-apart").textContent = v.apart.length ? "Shown apart, not counted above: " + v.apart.join("; ") + "." : "";
+    } catch (e) {
+      $("outcomes-outside").textContent = "The outcome figures could not be loaded just now.";
+    }
+  }
+
   // ---------- feed
   async function loadFeed() {
     var box = $("feed");
@@ -230,7 +253,7 @@
         row.appendChild(t);
         var btn = el("button", "mini", scope === r.slug ? "Showing" : "Show its decisions");
         btn.type = "button";
-        btn.addEventListener("click", function () { scope = scope === r.slug ? null : r.slug; loadStats(); loadFeed(); loadBusinesses(); loadTraction(); });
+        btn.addEventListener("click", function () { scope = scope === r.slug ? null : r.slug; loadStats(); loadOutcomes(); loadFeed(); loadBusinesses(); loadTraction(); });
         row.appendChild(btn);
         box.appendChild(row);
       });
@@ -328,6 +351,7 @@
   });
   heroCheck();
   loadStats();
+  loadOutcomes();
   loadFeed();
   loadBusinesses();
   // A link from the vendor portal (#check=<64 hex>) opens straight onto that decision's check.

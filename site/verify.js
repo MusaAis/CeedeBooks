@@ -179,6 +179,38 @@
     };
   }
 
+  // The Outcomes block. Every sentence is built from the API's figures; nothing is rounded up and a missing rate says so.
+  // Own and outside businesses are separate rows; only the agent origin is headline traction, the rest are shown apart.
+  function outcomesView(o) {
+    function secs(x) { return x == null ? "n/a" : (x >= 120 ? Math.round(x / 60) + " min" : x + " s"); }
+    function row(label, b) {
+      var pa = b.person_agreement, st = b.seconds_to_payment;
+      return {
+        label: label,
+        processed: b.processed,
+        alone: b.decided_alone + " decided with no person (" + b.paid_by_agent + " paid, " + b.held + " held)",
+        escalated: b.escalated.total + " escalated to a person (" + b.escalated.waiting + " waiting, " + b.escalated.released + " released, " + b.escalated.rejected + " rejected)",
+        agreement: pa.n ? Math.round(pa.rate * 100) + "% of settled escalations rejected, so the agent's caution stood: " + pa.confirmed_agent + " of " + pa.n : "No escalation settled by a person yet",
+        duplicates: b.duplicates_caught,
+        volume: b.volume_usdc,
+        median: st.n ? secs(st.median) + " median, from " + st.n + " payment" + (st.n === 1 ? "" : "s") + (st.without_timing ? " (" + st.without_timing + " earlier not timed)" : "")
+                     : "No timed payment yet" + (st.without_timing ? " (" + st.without_timing + " earlier not timed)" : "")
+      };
+    }
+    var rows = [row("Builder's own businesses, agent traffic", o.by_ownership.own.agent)];
+    var oc = o.by_ownership.outside.agent;
+    rows.push(oc.processed || oc.duplicates_caught ? row("Outside businesses, agent traffic", oc) : null);
+    var apart = [];
+    ["own", "outside"].forEach(function (k) {
+      ["manual", "demo"].forEach(function (origin) {
+        var b = o.by_ownership[k][origin];
+        if (b.processed || b.duplicates_caught) apart.push(b.processed + " " + origin + " invoice" + (b.processed === 1 ? "" : "s") + " (" + k + ")" +
+          (b.duplicates_caught ? ", " + b.duplicates_caught + " duplicate" + (b.duplicates_caught === 1 ? "" : "s") : ""));
+      });
+    });
+    return { statement: o.outside_businesses.statement, rows: rows.filter(Boolean), apart: apart };
+  }
+
   // ---- the whole ledger chain
   // Selectors of agent() on a business contract and of lastSequence(address) / lastHead(address) on LedgerAnchor.
   var SELECTORS = { agent: "0xf5ff5c76", lastSequence: "0x0375b443", lastHead: "0x5f1eb783" };
@@ -292,7 +324,7 @@
   }
 
   var api = {
-    tractionView: tractionView, CONFIG: CONFIG, TOPICS: TOPICS, normalizeHash: normalizeHash, isTxHash: isTxHash, sha256Hex: sha256Hex,
+    tractionView: tractionView, outcomesView: outcomesView, CONFIG: CONFIG, TOPICS: TOPICS, normalizeHash: normalizeHash, isTxHash: isTxHash, sha256Hex: sha256Hex,
     checkRecord: checkRecord, findEvent: findEvent, readReceipt: readReceipt, isKnownBusiness: isKnownBusiness, businessRows: businessRows,
     SELECTORS: SELECTORS, checkChain: checkChain, compareAnchor: compareAnchor, readAnchor: readAnchor, verifyWholeChain: verifyWholeChain
   };

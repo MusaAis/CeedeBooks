@@ -221,3 +221,15 @@ No contract change and no new environment variable. The database gains two invoi
 5. Optional live check of the pause banner (two on-chain transactions from the approver wallet, so read each wallet prompt): in the admin site's Limits tab type a reason, press Pause all payments and sign; the red banner with the reason shows on every admin page and on the vendor portal, and `/pause-status` shows `paused: true` with the reason. Then press Resume payments with a reason and sign; the banner disappears. `GET /ledger/verify?business=ceedebooks` must still say `ok: true`. The reason is public, so put no private data in it.
 
 To go back: stop the service and check out v1.2.10.1. The new columns and table are ignored by the old code. `ADMIN_PAUSED` and `ADMIN_RESUMED` ledger entries, if you made any, stay in the chain and still verify.
+
+## Upgrading to v1.3.1 (Outcomes on the proof page)
+
+No contract change and no new environment variable. The first start adds one column, `invoices.settled_at`; nothing is rewritten. Payments made before this release have no settled time, so the median seconds to payment starts empty and fills as new invoices are paid (the response counts the earlier ones as `without_timing`).
+
+1. Back up: `mkdir -p ~/backups && cp ceedebooks.db ~/backups/ceedebooks.db.pre-1.3.1` (from `~/ceedebooks`).
+2. Extract the files, run `pytest agent/tests/` with the CI placeholder variables (507 tests), then `sudo systemctl restart ceedebooks-api` and wait about 15 seconds.
+3. Re-copy the proof page: `sudo cp site/index.html site/app.js site/verify.js /var/www/ceedebooks/`. Hard-refresh the page (the browser may hold the old scripts).
+4. Check the API: `curl -s https://api.ceedebooks.xyz/outcomes | python3 -m json.tool | head -40` shows `outside_businesses` with its statement, `by_ownership` and the `queries`. `curl -s "https://api.ceedebooks.xyz/outcomes?business=ceedebooks" | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['scope'],d['by_ownership']['own']['agent']['processed'])"` prints `ceedebooks` and the number of invoices processed.
+5. Check the page: open `https://ceedebooks.xyz`; under "What the agent has decided so far" the **Outcomes** block states how many outside businesses are confirmed and shows one row for the builder's own businesses. Choose a business in the Businesses list: the block follows it.
+
+To go back: stop the service and check out v1.3.0.2. The new column is ignored by the old code.
