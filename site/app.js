@@ -217,7 +217,7 @@
         row.appendChild(el("span", "chip " + kind, kind.toUpperCase()));
         var t = el("div", "t");
         t.appendChild(el("strong", null, d.subject));
-        t.appendChild(el("span", null, usdc(d.amount_usdc) + ", " + (d.model_used === "manual" ? "manual entry" : "agent decision") + ", " + when(d.timestamp) + (d.chain_tx_hash ? ", on-chain" : ", off-chain only")));
+        t.appendChild(el("span", null, usdc(d.amount_usdc) + ", " + (d.is_demo ? "demo data, not counted" : d.model_used === "manual" ? "manual entry" : "agent decision") + ", " + when(d.timestamp) + (d.chain_tx_hash ? ", on-chain" : ", off-chain only")));
         row.appendChild(t);
         var btn = el("button", "mini", "Verify");
         btn.type = "button";

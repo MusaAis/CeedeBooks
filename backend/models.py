@@ -502,12 +502,38 @@ async def list_purchase_orders(business_id: int, limit: int = 100) -> list:
 async def list_invoices(business_id: int, limit: int = 50) -> list:
     return await _all(
         """SELECT i.id, i.invoice_number, i.vendor_id, v.name AS vendor_name, i.amount_usdc, i.category,
-                  i.status, i.reasoning_hash, i.created_at, i.mode, i.real_amount, i.real_currency, i.submitted_by, i.held_because, d.verdict
+                  i.status, i.reasoning_hash, i.created_at, i.mode, i.real_amount, i.real_currency, i.submitted_by, i.held_because, i.origin, d.verdict
            FROM invoices i JOIN vendors v ON v.id = i.vendor_id AND v.business_id = i.business_id
            LEFT JOIN decision_verdicts d ON d.invoice_id = i.id AND d.business_id = i.business_id
            WHERE i.business_id = ? ORDER BY i.id DESC LIMIT ?""",
         (business_id, limit),
     )
+
+
+# ---- demo data (v1.3.1.1): sample records for an owner to try the flow. Every invoice is origin `demo`, never traction.
+
+DEMO_PREFIX = "DEMO-"
+DEMO_VENDOR = "Demo Supplies (demo)"
+
+
+async def demo_invoices_since(business_id: int, since_ts: float) -> int:
+    row = await _one(
+        "SELECT COUNT(*) AS n FROM invoices WHERE business_id = ? AND origin = 'demo' AND substr(invoice_number, 1, ?) = ? AND created_at >= ?",
+        (business_id, len(DEMO_PREFIX), DEMO_PREFIX, since_ts))
+    return int(row["n"])
+
+
+async def demo_runs(business_id: int) -> int:
+    row = await _one("SELECT COUNT(*) AS n FROM purchase_orders WHERE business_id = ? AND substr(po_number, 1, ?) = ?",
+                     (business_id, len(DEMO_PREFIX), DEMO_PREFIX))
+    return int(row["n"])
+
+
+async def demo_vendor(business_id: int, wallet: str) -> int:
+    """The business's demo vendor, paid at the owner's own wallet; created once and reused."""
+    row = await _one("SELECT id FROM vendors WHERE business_id = ? AND name = ? AND lower(wallet_address) = ?",
+                     (business_id, DEMO_VENDOR, wallet.lower()))
+    return int(row["id"]) if row else await save_vendor(business_id, DEMO_VENDOR, wallet)
 
 
 async def invoice_counts(business_id: int) -> dict:

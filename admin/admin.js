@@ -515,6 +515,17 @@
           await show("invoices");
         }) }, ["Submit shadow invoice"])]),
         h("p", { class: "note" }, ["The real amount and currency are shown publicly on your proof page. The testnet payment mirrors the USDC amount you enter here and only goes out after you approve. If it is more than 0.01 USDC away from the purchase order, the agent escalates instead of paying."])]);
+      var demo = h("div", { class: "panel" }, [
+        h("p", { class: "note" }, ["Try the flow with sample data. It adds a demo vendor paid at your own wallet, a purchase order with its receipt, and three invoices the agent decides for real: one has no purchase order, one is for more than its order, one matches (it is paid if you have already approved the demo vendor on-chain, otherwise escalated as an unregistered vendor). Everything is labelled demo and never counted as traction."]),
+        h("button", { class: "btn sm", onclick: guard(async function () {
+          if (!(await confirmAction("Load demo data", ["Adds a demo vendor paid at your own wallet, a purchase order, a receipt and three demo invoices to this business.",
+            "The agent sends a few small transactions from its own wallet (gas only) while it decides. It takes about a minute, and you can run it twice a day.",
+            "Releasing a demo escalation afterwards moves 0.01 USDC from your pool to your own wallet."], "Load demo data"))) return;
+          say("Running the demo. This takes about a minute.");
+          var r = await api("/demo/seed", { method: "POST" });
+          say("Demo run " + r.run + " loaded: " + r.invoices.map(function (x) { return x.invoice_number + " " + x.decision; }).join(", ") + ".", "ok");
+          await show("invoices");
+        }) }, ["Load demo data"])]);
       var rows = data.invoices.map(function (i) {
         var acts = [], shadowRow = i.mode === "shadow";
         async function judge(path, text, lines, done) {
@@ -573,13 +584,13 @@
             }) }, [verb === "approve" ? "Approve and pay" : "Reject"]));
           });
         }
-        var kind = shadowRow ? chip("shadow", "warn") : "";
+        var kind = shadowRow ? chip("shadow", "warn") : (i.origin === "demo" ? chip("demo", "warn") : "");
         var status = [chip(i.status === "held" && i.held_because === "paused" ? "held: payments paused" : (labels[i.status] || i.status), kinds[i.status] || "warn")];
         if (i.verdict) status.push(chip(i.verdict === "agree" ? "you agreed" : "you disagreed", i.verdict === "agree" ? "ok" : "bad"));
         return [i.invoice_number, i.vendor_name, usdc(i.amount_usdc), shadowRow ? i.real_amount + " " + i.real_currency : "", h("span", null, [kind].concat(status)),
           h("span", { class: "mono" }, [i.reasoning_hash ? W.short(i.reasoning_hash) : ""]), h("div", { class: "actions" }, acts)];
       });
-      return h("div", null, [h("h2", null, ["Invoices"]), h("h3", null, ["Submit a shadow invoice"]), shadow,
+      return h("div", null, [h("h2", null, ["Invoices"]), h("h3", null, ["Try the demo"]), demo, h("h3", null, ["Submit a shadow invoice"]), shadow,
         h("h3", null, ["All invoices"]), table(["Invoice", "Vendor", "Amount", "Real bill", "Status", "Reasoning hash", ""], rows),
         h("p", { class: "note" }, ["Escalations from before v1.2.4 have no recorded transaction and cannot be settled here."])]);
     },

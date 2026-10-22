@@ -194,7 +194,7 @@
         duplicates: b.duplicates_caught,
         volume: b.volume_usdc,
         median: st.n ? secs(st.median) + " median, from " + st.n + " payment" + (st.n === 1 ? "" : "s") + (st.without_timing ? " (" + st.without_timing + " earlier not timed)" : "")
-                     : "No timed payment yet" + (st.without_timing ? " (" + st.without_timing + " earlier not timed)" : "")
+                     : "none timed yet" + (st.without_timing ? " (" + st.without_timing + " earlier not timed)" : "")
       };
     }
     var rows = [row("Builder's own businesses, agent traffic", o.by_ownership.own.agent)];

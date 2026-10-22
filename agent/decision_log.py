@@ -199,26 +199,32 @@ async def comparison_metrics(business_id: Optional[int] = None) -> dict:
 
 async def recent(limit: int = 20, business_id: Optional[int] = None) -> list:
     """Newest first. business_id=None is the public aggregate; a number scopes it to one business."""
-    sql = "SELECT reasoning_hash, action, subject, model_used, amount_usdc, timestamp, chain_tx_hash, business_id FROM audit_log {where}ORDER BY id DESC LIMIT ?"
+    sql = ("SELECT reasoning_hash, action, subject, model_used, amount_usdc, timestamp, chain_tx_hash, business_id{demo} FROM audit_log "
+           "{where}ORDER BY id DESC LIMIT ?")
+    demo = (", reasoning_hash IN (SELECT reasoning_hash FROM invoices WHERE origin = 'demo' AND reasoning_hash IS NOT NULL) AS is_demo")
     async with aiosqlite.connect(config.db_path) as db:
         db.row_factory = aiosqlite.Row
-        if business_id is not None:
-            cursor = await db.execute(sql.format(where="WHERE business_id = ? "), (business_id, limit))
-        else:
-            try:  # the public aggregate leaves out archived businesses
-                cursor = await db.execute(sql.format(where=_VISIBLE_WHERE), (limit,))
-            except aiosqlite.OperationalError:  # no businesses table (audit log used on its own)
-                cursor = await db.execute(sql.format(where=""), (limit,))
+        try:
+            if business_id is not None:
+                cursor = await db.execute(sql.format(demo=demo, where="WHERE business_id = ? "), (business_id, limit))
+            else:  # the public aggregate leaves out archived businesses
+                cursor = await db.execute(sql.format(demo=demo, where=_VISIBLE_WHERE), (limit,))
+        except aiosqlite.OperationalError:  # no businesses or invoices table (audit log used on its own)
+            if business_id is not None:
+                cursor = await db.execute(sql.format(demo="", where="WHERE business_id = ? "), (business_id, limit))
+            else:
+                cursor = await db.execute(sql.format(demo="", where=""), (limit,))
         async with cursor:
-            return [dict(row) for row in await cursor.fetchall()]
+            return [{**dict(row), **({"is_demo": bool(row["is_demo"])} if "is_demo" in row.keys() else {})} for row in await cursor.fetchall()]
 
 
 async def stats(business_id: Optional[int] = None) -> dict:
     """Counts of live agent decisions. Manual entries (model_used = 'manual') are reported separately, never as agent decisions.
-    Shadow decisions (a real bill mirrored as a testnet payment, v1.2.8.3) are left out: they are reported apart by
-    models.shadow_stats and never mixed into these numbers. business_id=None is the public aggregate; a number scopes it to one business."""
+    Shadow decisions (a real bill mirrored as a testnet payment, v1.2.8.3) and demo-run decisions (v1.3.1.1) are left out: shadow
+    is reported apart by models.shadow_stats, demo is never counted as agent traffic. business_id=None is the public aggregate; a number scopes it to one business."""
     scope, args = ("AND business_id = ? ", (business_id,)) if business_id is not None else (_VISIBLE_AND, ())
-    shadow_hashes = "AND reasoning_hash NOT IN (SELECT reasoning_hash FROM invoices WHERE mode = 'shadow' AND reasoning_hash IS NOT NULL) "
+    shadow_hashes = ("AND reasoning_hash NOT IN (SELECT reasoning_hash FROM invoices WHERE (mode = 'shadow' OR origin = 'demo') "
+                     "AND reasoning_hash IS NOT NULL) ")
     query = ("SELECT action, model_used = 'manual', COUNT(*), COALESCE(SUM(amount_usdc), 0) FROM audit_log WHERE action IN "
              "('INVOICE_PAID', 'INVOICE_HELD', 'INVOICE_ESCALATED') {extra}GROUP BY action, model_used = 'manual'")
     async with aiosqlite.connect(config.db_path) as db:

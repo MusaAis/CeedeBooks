@@ -222,6 +222,18 @@ No contract change and no new environment variable. The database gains two invoi
 
 To go back: stop the service and check out v1.2.10.1. The new columns and table are ignored by the old code. `ADMIN_PAUSED` and `ADMIN_RESUMED` ledger entries, if you made any, stay in the chain and still verify.
 
+## Upgrading to v1.3.1.1 (the demo path)
+
+No contract change and no new environment variable; no schema change. Note one public change: the Paid, Held and Escalated totals now leave out demo decisions, so old demo-relabelled rows drop out of them.
+
+1. Back up: `mkdir -p ~/backups && cp ceedebooks.db ~/backups/ceedebooks.db.pre-1.3.1.1` (from `~/ceedebooks`).
+2. Extract the files, run `pytest agent/tests/` with the CI placeholder variables (522 tests), then `sudo systemctl restart ceedebooks-api` and wait about 15 seconds.
+3. Re-copy the sites: `sudo cp site/index.html site/app.js site/verify.js /var/www/ceedebooks/` and `sudo cp admin/admin.js /var/www/ceedebooks-admin/`. Hard-refresh both.
+4. Check the API: `curl -s -o /dev/null -w "%{http_code}\n" -X POST https://api.ceedebooks.xyz/demo/seed` prints `401` (it needs an admin session). `curl -s https://api.ceedebooks.xyz/stats | python3 -m json.tool | head` still answers.
+5. Check the page: `https://ceedebooks.xyz` shows "Try it in 5 minutes" after "How a payment is decided". On the admin site, the Invoices tab shows "Try the demo" with a "Load demo data" button. Running it spends only a little gas from the agent wallet; do it once and read the three decisions.
+
+To go back: stop the service and check out v1.3.1. Demo rows already created stay in the database as origin `demo`.
+
 ## Upgrading to v1.3.1 (Outcomes on the proof page)
 
 No contract change and no new environment variable. The first start adds one column, `invoices.settled_at`; nothing is rewritten. Payments made before this release have no settled time, so the median seconds to payment starts empty and fills as new invoices are paid (the response counts the earlier ones as `without_timing`).

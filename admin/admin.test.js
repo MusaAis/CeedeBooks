@@ -50,7 +50,7 @@ global.fetch = async (url, opt = {}) => {
   if (path === "/admin/auth/state") { stateUrls.push(full); return ok(state); }
   if (path === "/admin/auth/challenge") { challengeBodies.push(JSON.parse(opt.body)); return ok({ nonce: "n".repeat(32), message: "sign me" }); }
   if (path === "/admin/auth/verify") { assert.strictEqual(JSON.parse(opt.body).signature.length, 132); return ok({ token: "tok", address: ADMIN }); }
-  if (path.startsWith("/admin/") || path.startsWith("/operator/") || ["/vendors", "/receipts", "/invoices", "/purchase-orders"].includes(path)) {
+  if (path.startsWith("/admin/") || path.startsWith("/operator/") || ["/vendors", "/receipts", "/invoices", "/purchase-orders", "/demo/seed"].includes(path)) {
     if (auth !== "Bearer tok" || expireSession) return { ok: false, status: 401, json: async () => ({ detail: "no" }) };
     if (path === "/admin/onboarding") return ok({ steps: [{ key: "pool_funded", label: "Fund your pool", done: false }, { key: "agent_gas", label: "Agent wallet gas", done: null }, { key: "vendor", label: "Add a vendor", done: true }], custody: "We run your agent's wallet." });
     if (path === "/operator/business-applications" && method === "GET") {
@@ -75,11 +75,13 @@ global.fetch = async (url, opt = {}) => {
     if (path === "/admin/invoices") return ok({ invoices: [
       { id: 11, invoice_number: "SH-1", vendor_name: "Lagos Hosting", amount_usdc: 0.5, status: "awaiting_owner", mode: "shadow", real_amount: "1200.50", real_currency: "NGN", reasoning_hash: "a1".repeat(32), verdict: null },
       { id: 12, invoice_number: "SH-2", vendor_name: "Lagos Hosting", amount_usdc: 0.5, status: "held", mode: "shadow", real_amount: "99", real_currency: "KES", reasoning_hash: "b2".repeat(32), verdict: null },
+      { id: 17, invoice_number: "DEMO-1-B", vendor_name: "Demo Supplies (demo)", amount_usdc: 0.01, status: "escalated", mode: "live", origin: "demo", real_amount: null, real_currency: null, reasoning_hash: "a7".repeat(32), verdict: null, submitted_by_you: false },
       { id: 14, invoice_number: "ESC-MINE", vendor_name: "Ops", amount_usdc: 3, status: "escalated", mode: "live", real_amount: null, real_currency: null, reasoning_hash: "d4".repeat(32), verdict: null, submitted_by_you: true },
       { id: 15, invoice_number: "ESC-KEY", vendor_name: "Ops", amount_usdc: 4, status: "escalated", mode: "live", real_amount: null, real_currency: null, reasoning_hash: "e5".repeat(32), verdict: null, submitted_by_you: false },
       { id: 16, invoice_number: "HELD-P", vendor_name: "Ops", amount_usdc: 1, status: "held", held_because: "paused", mode: "live", real_amount: null, real_currency: null, reasoning_hash: "f6".repeat(32), verdict: null },
       { id: 13, invoice_number: "LV-1", vendor_name: "Ops", amount_usdc: 2, status: "paid", mode: "live", real_amount: null, real_currency: null, reasoning_hash: "c3".repeat(32), verdict: null }] });
     if (path === "/admin/purchase-orders") return ok({ purchase_orders: [{ id: 5, po_number: "PO-5", vendor_id: 1, vendor_name: "Lagos Hosting", amount_usdc: 0.5, category: 1, received: 1 }] });
+    if (path === "/demo/seed" && method === "POST") { posts.push({ demo: true }); return ok({ run: 1, label: "demo", invoices: [{ invoice_number: "DEMO-1-A", decision: "escalate" }, { invoice_number: "DEMO-1-B", decision: "escalate" }] }); }
     if (path === "/invoices" && method === "POST") { posts.push({ invoice: JSON.parse(opt.body) }); return ok({ invoice_id: 20, decision: "await_owner" }); }
     if (/^\/admin\/invoices\/\d+\/shadow-(approve|reject)$/.test(path) && method === "POST") { posts.push({ shadow: path }); return ok({ ok: true }); }
     if (/^\/admin\/decisions\/[0-9a-f]{64}\/verdict$/.test(path) && method === "POST") { posts.push({ verdict: path, body: JSON.parse(opt.body) }); return ok({ ok: true }); }
@@ -130,6 +132,14 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
   let invTab = []; walk(root, (x) => { if (x.attrs && x.attrs["data-tab"] === "invoices") invTab.push(x); });
   await invTab[0].listeners.click(); await tick();
   assert.ok(/1200.50 NGN/.test(root.textContent) && /waiting for you/.test(root.textContent) && /shadow/.test(root.textContent), "a shadow row shows the real bill and that it waits for the owner");
+  // the demo: one button, a confirmation first, one server call, no wallet transaction; demo rows say so
+  assert.ok(/Try the demo/.test(root.textContent) && /never counted as traction/.test(root.textContent), "the demo panel says it is never traction");
+  const txBeforeDemo = calls.filter((c) => c.method === "eth_sendTransaction").length;
+  await findBtn(root, "Load demo data").listeners.click(); await tick(60);
+  assert.ok(posts.some((p) => p.demo), "the button calls /demo/seed");
+  assert.strictEqual(calls.filter((c) => c.method === "eth_sendTransaction").length, txBeforeDemo, "loading the demo needs no wallet transaction");
+  assert.ok(/Demo run 1 loaded: DEMO-1-A escalate, DEMO-1-B escalate/.test(document.body.textContent), "the person is told what was decided");
+  posts.length = 0;
   const txBeforeShadow = calls.filter((c) => c.method === "eth_sendTransaction").length;
   await findBtn(root, "Approve and pay").listeners.click(); await tick(60);
   await findBtn(root, "Reject").listeners.click(); await tick(60);

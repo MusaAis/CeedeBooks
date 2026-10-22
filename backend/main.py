@@ -358,6 +358,67 @@ async def submit_invoice(body: InvoiceIn, who: auth.Principal = Depends(auth.req
     return {"invoice_id": invoice_id, "decision": decision.value}
 
 
+# ---- demo data (v1.3.1.1): an owner tries the flow on their own business. Everything is origin `demo`, never traction.
+
+DEMO_AMOUNT = 0.01
+DEMO_MAX_INVOICES_PER_DAY = 6  # two runs of three
+
+
+async def _demo_category(business: dict) -> int:
+    """The business's first own category with a daily limit above zero on-chain. None usable is a 422; unreadable is a 503."""
+    for cat in await models.list_categories(business["id"]):
+        try:
+            limit = await asyncio.to_thread(contract.chain_for(business).category_limit, cat["id"])
+        except Exception:
+            log.exception("Could not read a category limit for the demo of business %s", business["id"])
+            raise HTTPException(503, "Could not read the chain right now; nothing was created")
+        if category_rules.usable(limit):
+            return cat["id"]
+    raise HTTPException(422, "Create a category and set its daily limit first (Limits and safety in the admin site)")
+
+
+@app.post("/demo/seed")
+async def demo_seed(who: auth.Principal = Depends(auth.require_admin)):
+    """Loads sample records into the caller's own business and runs three invoices through the real pipeline: one the agent
+    escalates for no PO, one for an amount that is not the PO's, and one that matches (paid if the demo vendor is already
+    approved on-chain, otherwise escalated as an unregistered vendor). The vendor is paid at the signed-in wallet itself, so
+    nothing leaves the owner's hands. Every invoice is origin `demo` and submitted by `demo-seed`, so the owner can release
+    one without tripping maker-checker. Admin session only; two runs a day per business."""
+    business = await _writable(who)
+    if await models.demo_invoices_since(who.business_id, time.time() - 86400) >= DEMO_MAX_INVOICES_PER_DAY:
+        raise HTTPException(429, "The demo has run twice in the last day for this business; try again tomorrow")
+    category = await _demo_category(business)
+    run = await models.demo_runs(who.business_id) + 1
+    vendor_id = await models.demo_vendor(who.business_id, who.admin_address)
+    wallet = who.admin_address
+    try:
+        po_id = await models.save_purchase_order(who.business_id, f"DEMO-{run}-PO", vendor_id, DEMO_AMOUNT, category)
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, "A demo run is already in progress; try again in a moment")
+    await models.save_receipt(who.business_id, po_id, "demo seed", who.role)
+    cases = [("A", "matches its purchase order", f"DEMO-{run}-PO", DEMO_AMOUNT),
+             ("B", "has no purchase order", None, DEMO_AMOUNT),
+             ("C", "is for more than its purchase order", f"DEMO-{run}-PO", 0.05)]
+    results = []
+    for letter, case, po_number, amount in cases:
+        number = f"DEMO-{run}-{letter}"
+        doc_hash = hashlib.sha256(f"ceedebooks-demo:{who.business_id}:{number}".encode()).hexdigest()
+        invoice_id = await models.save_invoice(who.business_id, number, vendor_id, po_id if po_number else None, amount, category,
+                                               doc_hash, "demo", "live", None, None, "demo-seed")
+        invoice = payables.Invoice(business_id=who.business_id, id=invoice_id, invoice_number=number, vendor_wallet=wallet,
+                                   amount_usdc=amount, category=category, doc_hash=doc_hash, po_number=po_number)
+        try:
+            runway = await treasury.runway_days(amount, business)
+            decision = (await payables.process_invoice(invoice, runway, business)).value
+        except Exception:
+            log.exception("Demo invoice %s failed", number)
+            await models.update_invoice_status(who.business_id, invoice_id, "error")
+            decision = "error"
+        results.append({"invoice_id": invoice_id, "invoice_number": number, "case": case, "decision": decision})
+    await _admin_log(who, "load_demo", f"run {run}")
+    return {"run": run, "label": "demo", "vendor_wallet": wallet, "invoices": results}
+
+
 @app.get("/invoices/{invoice_id}")
 async def get_invoice(invoice_id: int, who: auth.Principal = Depends(auth.require("buyer", "vendor"))):
     invoice = await models.get_invoice(who.business_id, invoice_id)

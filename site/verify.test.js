@@ -132,7 +132,7 @@ const zero = "0x" + "00".repeat(32);
   oc.by_ownership.own.agent = blk({});
   const empty = V.outcomesView(oc);
   assert.strictEqual(empty.rows[0].agreement, "No escalation settled by a person yet");
-  assert.strictEqual(empty.rows[0].median, "No timed payment yet");
+  assert.strictEqual(empty.rows[0].median, "none timed yet");
   oc.by_ownership.outside.agent = blk({ processed: 1, seconds_to_payment: { median: 300, n: 1, without_timing: 0 } });
   const two = V.outcomesView(oc);
   assert.ok(two.rows.length === 2 && /^Outside businesses/.test(two.rows[1].label) && two.rows[1].median === "5 min median, from 1 payment");
