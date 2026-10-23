@@ -1402,7 +1402,8 @@ EXPLORER_URL = "https://explorer.testnet.arc.io"
 @app.get("/businesses/{slug}/traction")
 async def business_traction(slug: Slug):
     """Public, no login. One business's outcomes with live and shadow kept apart, the agreement rate with how many
-    verdicts it rests on, and its latest paid decisions with links anyone can check. No contacts or private fields."""
+    verdicts it rests on, and its latest paid decisions with links anyone can check. `live` and `latest_paid` are the
+    agent's own traffic only; manual and demo figures are in `not_traction`. No contacts or private fields."""
     business = await _business_by_slug(slug, active_only=True)
     paid = await models.latest_paid(business["id"])
     return {
@@ -1410,9 +1411,10 @@ async def business_traction(slug: Slug):
                      "agent_wallet": business["agent_address"],
                      "kind": "own" if business["id"] == models.HOME_BUSINESS_ID else ("outside" if business["external"] else "unconfirmed")},
         "live": await models.live_counts(business["id"]),
+        "not_traction": await models.apart_counts(business["id"]),
         "shadow": await models.shadow_stats(business["id"]),
         "latest_paid": [
-            {"invoice": r["invoice_number"], "mode": r["mode"], "usdc": r["amount_usdc"],
+            {"invoice": r["invoice_number"], "mode": r["mode"], "origin": r["origin"], "usdc": r["amount_usdc"],
              "real_amount": r["real_amount"], "real_currency": r["real_currency"],
              "reasoning_hash": r["reasoning_hash"], "tx_hash": r["chain_tx_hash"], "time": r["timestamp"],
              "tx_url": f"{EXPLORER_URL}/tx/{r['chain_tx_hash']}" if r["chain_tx_hash"] else None}

@@ -109,6 +109,13 @@ const zero = "0x" + "00".repeat(32);
     shadow: { paid: 0, held: 0, escalated: 0, awaiting_owner: 0, mirrored_usdc: 0, real_totals: {}, agreement: { agree: 0, disagree: 0, n: 0, rate: null } }, latest_paid: [] }, "https://x");
   assert.strictEqual(none.agreement, "No verdicts yet");
   assert.strictEqual(none.kind, "Not yet confirmed as outside");
+  // demo and manual invoices are named apart and never added into the live line
+  assert.strictEqual(none.apart, "", "no apart line when there is nothing apart");
+  const withApart = V.tractionView({ business: { kind: "own" }, live: { paid: 1, held: 0, escalated: 0, volume_usdc: 3 },
+    not_traction: { manual: { paid: 1, held: 0, escalated: 0, volume_usdc: 2.2 }, demo: { paid: 1, held: 0, escalated: 2, volume_usdc: 0.01 } },
+    shadow: { paid: 0, held: 0, escalated: 0, awaiting_owner: 0, mirrored_usdc: 0, real_totals: {}, agreement: { agree: 0, disagree: 0, n: 0, rate: null } }, latest_paid: [] }, "https://x");
+  assert.strictEqual(withApart.live, "1 paid, 0 held, 0 escalated, 3 USDC paid");
+  assert.ok(/^Shown apart, not counted above \(demo: 1 paid \(0.01 USDC\), 0 held, 2 escalated; manual: 1 paid \(2.2 USDC\)/.test(withApart.apart), withApart.apart);
 
   // ---- outcomes block: own and outside stay apart, the rate carries its n, a missing figure says so, manual and demo are shown apart
   const blk = (o) => Object.assign({ processed: 0, paid_by_agent: 0, released_by_person: 0, held: 0, decided_alone: 0,

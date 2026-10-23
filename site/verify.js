@@ -161,6 +161,16 @@
     });
   }
 
+  // Manual and demo invoices are never traction: the card names them in one line beside the figures, or says nothing when there are none.
+  function apartText(na) {
+    var parts = [];
+    ["demo", "manual"].forEach(function (k) {
+      var c = na && na[k];
+      if (c && (c.paid + c.held + c.escalated) > 0) parts.push(k + ": " + c.paid + " paid (" + c.volume_usdc + " USDC), " + c.held + " held, " + c.escalated + " escalated");
+    });
+    return parts.length ? "Shown apart, not counted above (" + parts.join("; ") + ")" : "";
+  }
+
   // What the per-business traction card shows. Live and shadow are never added together; the agreement rate always
   // carries how many verdicts it rests on, and says so plainly when there are none.
   function tractionView(t, explorer) {
@@ -172,6 +182,7 @@
       shadow: sh.paid + " paid, " + sh.held + " held, " + sh.escalated + " escalated, " + sh.awaiting_owner + " waiting for the owner, " + sh.mirrored_usdc +
         " USDC mirrored" + (real ? " (real bills: " + real + ")" : ""),
       agreement: ag.n ? Math.round(ag.rate * 100) + "% agree: " + ag.agree + " of " + ag.n + " verdicts" : "No verdicts yet",
+      apart: apartText(t.not_traction),
       paid: (t.latest_paid || []).map(function (p) {
         return { label: p.invoice + (p.mode === "shadow" ? " (shadow" + (p.real_amount ? ", real bill " + p.real_amount + " " + p.real_currency : "") + ")" : ""),
                  hash: p.reasoning_hash, txUrl: p.tx_hash ? explorer + "/tx/" + p.tx_hash : null, shadow: p.mode === "shadow" };

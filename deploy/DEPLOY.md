@@ -222,6 +222,18 @@ No contract change and no new environment variable. The database gains two invoi
 
 To go back: stop the service and check out v1.2.10.1. The new columns and table are ignored by the old code. `ADMIN_PAUSED` and `ADMIN_RESUMED` ledger entries, if you made any, stay in the chain and still verify.
 
+## Upgrading to v1.3.1.2 (rollout records, evidence-first README, traction counting fix)
+
+No contract change, no new environment variable and no schema change. One public change: `GET /businesses/{slug}/traction` now counts only the agent's own traffic (origin `agent`) in `live` and `latest_paid`, and adds a `not_traction` block with the manual and demo counts. The per-business card on the proof page and the text the admin site builds for `arc-canteen update-traction` follow it.
+
+1. Back up: `mkdir -p ~/backups && cp ceedebooks.db ~/backups/ceedebooks.db.pre-1.3.1.2` (from `~/ceedebooks`).
+2. Extract the files, run `pytest agent/tests/` with the CI placeholder variables (526 tests), then `sudo systemctl restart ceedebooks-api` and wait about 15 seconds.
+3. Re-copy the proof page: `sudo cp site/index.html site/app.js site/verify.js /var/www/ceedebooks/`. Hard-refresh it.
+4. Check the API: `curl -s https://api.ceedebooks.xyz/businesses/ceedebooks/traction | python3 -c "import sys,json;d=json.load(sys.stdin);print(d['live'], d['not_traction'])"` prints the agent's own live counts, then the manual and demo counts apart. The demo payment (DEMO-1-A) and the relabelled test runs are in the second part and not in the first.
+5. Check the page: choose the business in the Businesses list at `https://ceedebooks.xyz`; the card says "Live (the agent's own traffic)" and a line "Shown apart, not counted above" with the demo and manual figures.
+
+To go back: stop the service and check out v1.3.1.1.
+
 ## Upgrading to v1.3.1.1 (the demo path)
 
 No contract change and no new environment variable; no schema change. Note one public change: the Paid, Held and Escalated totals now leave out demo decisions, so old demo-relabelled rows drop out of them.

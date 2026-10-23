@@ -921,24 +921,32 @@ async def shadow_stats(business_id: Optional[int] = None) -> dict:
     }
 
 
-async def live_counts(business_id: int) -> dict:
-    """Live (non-shadow) invoice outcomes for one business, from the invoices table."""
+async def live_counts(business_id: int, origin: str = "agent") -> dict:
+    """Live (non-shadow) invoice outcomes for one business and one origin, from the invoices table. The default is the agent's
+    own traffic, the only thing that is headline traction (rule 14); `manual` and `demo` are read apart with `apart_counts`."""
     rows = await _all(
-        "SELECT status, COUNT(*) AS n, COALESCE(SUM(amount_usdc), 0) AS usdc FROM invoices WHERE mode = 'live' AND business_id = ? GROUP BY status",
-        (business_id,),
+        "SELECT status, COUNT(*) AS n, COALESCE(SUM(amount_usdc), 0) AS usdc FROM invoices "
+        "WHERE mode = 'live' AND business_id = ? AND origin = ? GROUP BY status",
+        (business_id, origin),
     )
     by = {r["status"]: r for r in rows}
     return {"paid": by.get("paid", {"n": 0})["n"], "held": by.get("held", {"n": 0})["n"], "escalated": by.get("escalated", {"n": 0})["n"],
             "volume_usdc": round(float(by.get("paid", {"usdc": 0})["usdc"]), 6)}
 
 
+async def apart_counts(business_id: int) -> dict:
+    """The same live figures for the origins that are never traction, so they are shown beside it and not in it."""
+    return {o: await live_counts(business_id, o) for o in ORIGINS if o != "agent"}
+
+
 async def latest_paid(business_id: int, limit: int = 10) -> list:
-    """The newest paid decisions with what a judge needs to check them. No contacts, no private fields."""
+    """The newest paid decisions of the agent's own traffic (live or shadow) with what a judge needs to check them. Manual and
+    demo payments are left out: they are not traction. No contacts, no private fields."""
     return await _all(
-        """SELECT i.invoice_number, i.amount_usdc, i.mode, i.real_amount, i.real_currency, i.reasoning_hash,
+        """SELECT i.invoice_number, i.amount_usdc, i.mode, i.origin, i.real_amount, i.real_currency, i.reasoning_hash,
                   a.chain_tx_hash, a.timestamp
            FROM invoices i LEFT JOIN audit_log a ON a.reasoning_hash = i.reasoning_hash
-           WHERE i.business_id = ? AND i.status = 'paid' ORDER BY i.id DESC LIMIT ?""",
+           WHERE i.business_id = ? AND i.status = 'paid' AND i.origin = 'agent' ORDER BY i.id DESC LIMIT ?""",
         (business_id, limit),
     )
 

@@ -276,7 +276,8 @@
       var card = el("div", "item");
       var head = el("div", "t");
       head.appendChild(el("strong", null, v.kind));
-      head.appendChild(el("span", null, "Live: " + v.live));
+      head.appendChild(el("span", null, "Live (the agent's own traffic): " + v.live));
+      if (v.apart) head.appendChild(el("span", null, v.apart));
       head.appendChild(el("span", null, "Shadow (real bills, mirrored as testnet payments after the owner approves): " + v.shadow));
       head.appendChild(el("span", null, "Owner agreement with the agent: " + v.agreement));
       v.paid.forEach(function (p) {
