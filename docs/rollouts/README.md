@@ -14,10 +14,11 @@ Testnet USDC. The business in every record is the builder's own, so none of this
 | Oct 15 | [Gateway deposit](2026-10-15-gateway-deposit.md) | v1.2.10.1 | 3 USDC, transaction `0xa022b539...caba3f` |
 | Oct 21 | [Outcomes, first live reading](2026-10-outcomes-live.md) | v1.3.1 | `GET /outcomes` and its SQL |
 | Oct 22 | [Demo path, first live run](2026-10-22-demo-run.md) | v1.3.1.1 | one paid (`0xc791305f...cbfebf`), two escalated; a counting bug it exposed |
+| Oct 24 | [MilestoneEscrow, reference deployment](2026-10-24-milestone-escrow-deploy.md) | v1.3.2 | contract `0x9752F995...2971dd5`, read back and bytecode-compared; explorer source not verified; never funded |
 
 ## Shipped but with no live run recorded here
 
-These exist in the code and are tested with mocks. Treat none of them as evidence of live use: the pause with a stated reason (it writes permanent public ledger entries), the maker-checker release rule, Return to agent on a v2 contract, and a Gateway gasless spend (not built).
+These exist in the code and are tested with mocks. Treat none of them as evidence of live use: the pause with a stated reason (it writes permanent public ledger entries), the maker-checker release rule, Return to agent on a v2 contract, every action of the milestone escrow (funding, commit, release, reject, override, withdraw and pause: the deployed contract has never held funds), and a Gateway gasless spend (not built).
 
 ## Record format
 

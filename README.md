@@ -3,17 +3,17 @@
 ![Release](https://img.shields.io/github/v/release/MusaAis/CeedeBooks?label=release)
 ![CI](https://github.com/MusaAis/CeedeBooks/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
-![Foundry tests](https://img.shields.io/badge/forge%20tests-69%2F69%20passing-brightgreen)
+![Foundry tests](https://img.shields.io/badge/forge%20tests-111%2F111%20passing-brightgreen)
 ![Python tests](https://img.shields.io/badge/pytest-526%2F526%20passing-brightgreen)
 ![Network](https://img.shields.io/badge/Arc-Testnet-informational)
 
 *"Ceede" means money in Pulaar/Fulfulde.*
 
-An autonomous accounts-payable agent for African SMEs on Arc: it validates and pays invoices, with spending limits enforced **on-chain** (never in a prompt) and every decision hash-logged before money moves. Contractor escrow and idle-cash yield are planned, not built.
+An autonomous accounts-payable agent for African SMEs on Arc: it validates and pays invoices, with spending limits enforced **on-chain** (never in a prompt) and every decision hash-logged before money moves. A contractor milestone escrow contract is deployed on testnet but nothing in the agent, the API or the sites uses it yet; idle-cash yield is planned, not built.
 
 Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 – Oct 17, 2026.
 
-**Current: v1.3.1.2** (Phase P, piece 3, which finishes Phase P: a rollout record for each thing run live in [`docs/rollouts/`](docs/rollouts/README.md), an Evidence section at the top of this README, and a counting fix: the per-business traction figures count the agent's own traffic only, with manual and demo invoices shown apart; piece 2 is v1.3.1.1, a demo path: a demo path, "Load demo data" on the admin Invoices tab and "Try it in 5 minutes" on the proof page, every demo row labelled and never counted; piece 1 is v1.3.1: an Outcomes block on the proof page and a public `GET /outcomes`, each figure computed by one SQL statement that is shown beside it; the code before it is v1.3.0, Phase O, oversight: maker-checker on escalation releases, pause with a stated reason and a banner, and narrative figures written by code; the contracts are those of v1.2.9.4, and Phase E, audit hardening, is complete). The AP/AR engine runs on Arc Testnet behind a key-authenticated HTTPS API (`api.ceedebooks.xyz`), with a public proof page (`ceedebooks.xyz`), a wallet-signed admin site (`admin.ceedebooks.xyz`), a vendor portal (`portal.ceedebooks.xyz`) and a business registration page (`portal.ceedebooks.xyz/business.html`). Two businesses exist, both ours: the original one on the v1 `BudgetEnforcer`, and a test business created through `BudgetFactory` on Oct 8 to check onboarding end to end. No outside business or paying user yet: every payment so far is self-owned. Latest additions, newest first: Outcomes (v1.3.1); the `arc-escrow` wording (v1.3.0.2, docs) and the Sep 27 comparison (v1.3.0.1, docs); oversight controls (v1.3.0); Gateway deposit script (v1.2.10.1); Gateway balance read on the admin Overview (v1.2.10); live approver on `GET /businesses` (v1.2.9.5); return to agent, re-run and a red-team script (v1.2.9.4); the model's recorded second opinion beside the rules verdict (v1.2.9.3); on-chain anchoring of each ledger head (v1.2.9.2); owner-created categories and entered invoice amounts (v1.2.9.1); a signed hash-chained ledger (v1.2.9); shadow mode (v1.2.8.3); business onboarding (v1.2.8.2). See [Custody trade-off](#custody-trade-off), the [Roadmap](#roadmap) and the [Changelog](#changelog).
+**Current: v1.3.2** (Phase H, piece 1: the `MilestoneEscrow` contract and its 42 Foundry tests, deployed on Arc Testnet and not source-verified on the explorer; no Python, API or site change, so the agent does not use it yet; the code before it is v1.3.1.2, Phase P, piece 3, which finishes Phase P: a rollout record for each thing run live in [`docs/rollouts/`](docs/rollouts/README.md), an Evidence section at the top of this README, and a counting fix: the per-business traction figures count the agent's own traffic only, with manual and demo invoices shown apart; piece 2 is v1.3.1.1, a demo path: a demo path, "Load demo data" on the admin Invoices tab and "Try it in 5 minutes" on the proof page, every demo row labelled and never counted; piece 1 is v1.3.1: an Outcomes block on the proof page and a public `GET /outcomes`, each figure computed by one SQL statement that is shown beside it; the code before it is v1.3.0, Phase O, oversight: maker-checker on escalation releases, pause with a stated reason and a banner, and narrative figures written by code; the contracts before `MilestoneEscrow` are those of v1.2.9.4, and Phase E, audit hardening, is complete). The AP/AR engine runs on Arc Testnet behind a key-authenticated HTTPS API (`api.ceedebooks.xyz`), with a public proof page (`ceedebooks.xyz`), a wallet-signed admin site (`admin.ceedebooks.xyz`), a vendor portal (`portal.ceedebooks.xyz`) and a business registration page (`portal.ceedebooks.xyz/business.html`). Two businesses exist, both ours: the original one on the v1 `BudgetEnforcer`, and a test business created through `BudgetFactory` on Oct 8 to check onboarding end to end. No outside business or paying user yet: every payment so far is self-owned. Latest additions, newest first: the `MilestoneEscrow` contract (v1.3.2); Outcomes (v1.3.1); the `arc-escrow` wording (v1.3.0.2, docs) and the Sep 27 comparison (v1.3.0.1, docs); oversight controls (v1.3.0); Gateway deposit script (v1.2.10.1); Gateway balance read on the admin Overview (v1.2.10); live approver on `GET /businesses` (v1.2.9.5); return to agent, re-run and a red-team script (v1.2.9.4); the model's recorded second opinion beside the rules verdict (v1.2.9.3); on-chain anchoring of each ledger head (v1.2.9.2); owner-created categories and entered invoice amounts (v1.2.9.1); a signed hash-chained ledger (v1.2.9); shadow mode (v1.2.8.3); business onboarding (v1.2.8.2). See [Custody trade-off](#custody-trade-off), the [Roadmap](#roadmap) and the [Changelog](#changelog).
 
 ## Evidence you can check
 
@@ -28,6 +28,7 @@ Every row links to the explorer or to a public API route, so none of it has to b
 | Shadow-mode payments | Five approved decisions mirrored as testnet payments, 8.47 USDC, with the owner's real amounts and verdicts: [transactions and hashes](docs/rollouts/2026-10-shadow-mode-payments.md) |
 | The demo path, run live | One paid (0.01 USDC, [`0xc791305f...cbfebf`](https://explorer.testnet.arc.io/tx/0xc791305f9c3f698408c0785eef8fb0673662f67ee1b9a3191eeedf10b9cbfebf)) and two escalated, all labelled `demo` and never traction: [record](docs/rollouts/2026-10-22-demo-run.md) |
 | A Gateway deposit | 3 USDC from the agent wallet, [`0xa022b539...caba3f`](https://explorer.testnet.arc.io/tx/0xa022b539a506cfb58f1b2fe1f509a00cce6b5b3ccc23c4ebe40a410bebcaba3f); `manual`, not a payment and not traction: [record](docs/rollouts/2026-10-15-gateway-deposit.md) |
+| A milestone escrow contract | [`0x9752F995...2971dd5`](https://explorer.testnet.arc.io/address/0x9752F995739C8A171AbD24944925EaF4d2971dd5) (not verified on the explorer), deployed in [`0x906d8cc3...57a6b5`](https://explorer.testnet.arc.io/tx/0x906d8cc3d1d4d474dfc418b626b197341b1dc026427a8c2788588b2a6257a6b5), read back with `cast call` and compared with a local build of the same source. A reference deployment: no engagement has run and it holds no funds: [record](docs/rollouts/2026-10-24-milestone-escrow-deploy.md) |
 
 ## Links
 
@@ -57,11 +58,11 @@ Every row links to the explorer or to a public API route, so none of it has to b
 
 The hackathon is judged on what changed from its start, so here is the starting point and the end, both taken from the git history (`git log`), not from memory.
 
-| | Sep 27, 2026 | Now (v1.3.1.2) |
+| | Sep 27, 2026 | Now (v1.3.2) |
 |---|---|---|
-| Repository | One commit, `dcf1f2a` "Initial commit", containing only the MIT `LICENSE` | 40 commits and 30 tagged releases, `v1.2.0` to `v1.3.1.2` |
-| Code and contracts | None | `BudgetEnforcer` (Sep 29), then the multi-business contracts (`BudgetEnforcerV2`, `BudgetFactory`, `LedgerAnchor`, Oct 4); the Python engine, API, proof page, admin site and vendor portal described above |
-| Tests | None | 69 Foundry, 526 Python, 6 Node runs |
+| Repository | One commit, `dcf1f2a` "Initial commit", containing only the MIT `LICENSE` | 41 commits and 31 tagged releases, `v1.2.0` to `v1.3.2` |
+| Code and contracts | None | `BudgetEnforcer` (Sep 29), then the multi-business contracts (`BudgetEnforcerV2`, `BudgetFactory`, `LedgerAnchor`, Oct 4) and the `MilestoneEscrow` contract (Oct 24); the Python engine, API, proof page, admin site and vendor portal described above |
+| Tests | None | 111 Foundry, 526 Python, 6 Node runs |
 | Live system | None | An API, a public proof page, a wallet-signed admin site and a vendor portal on Arc Testnet |
 | Users | None | None outside the project: no outside business or paying user. The business that uses it is our own |
 | Real payments | None | One real vendor bill of ours (the domain, 2.20 USDC, paid by card and reimbursed through the contract, labelled `manual`); everything else is self-owned test or shadow activity, shown apart on the proof page |
@@ -73,7 +74,7 @@ The first build commit after the initial one is `15d1b0f` (Sep 29): `BudgetEnfor
 ## What is CeedeBooks
 
 Most African SMEs run their finances the way most small businesses everywhere do: a spreadsheet, a WhatsApp thread with a bookkeeper, and someone manually checking a bank app before every payment.
-CeedeBooks is an agent that takes over the repetitive parts of that job: it checks each invoice against a purchase order and a confirmed receipt, then pays, holds or escalates it, while the business owner keeps hard, contract-level control over what the agent is allowed to spend, on whom, and how much. Contractor milestone escrow and moving idle cash into yield are planned, not built.
+CeedeBooks is an agent that takes over the repetitive parts of that job: it checks each invoice against a purchase order and a confirmed receipt, then pays, holds or escalates it, while the business owner keeps hard, contract-level control over what the agent is allowed to spend, on whom, and how much. A contractor milestone escrow contract exists on testnet but the agent does not use it yet, and moving idle cash into yield is planned, not built.
 
 It isn't "an LLM with a wallet." The agent proposes; a smart contract, not a prompt, decides whether a payment is actually allowed to go through.
 
@@ -119,13 +120,15 @@ It isn't "an LLM with a wallet." The agent proposes; a smart contract, not a pro
 - **Demo path (v1.3.1.1):** an owner signed in with the admin wallet presses "Load demo data" on the Invoices tab (`POST /demo/seed`). It adds a demo vendor paid at the owner's own wallet, a 0.01 USDC purchase order with its receipt, and three invoices the agent decides through the real pipeline: one matching, one with no purchase order, one with the wrong amount. Until the owner approves the demo vendor on-chain all three escalate with the real written reason; once approved, the matching one is paid 0.01 USDC to the owner's own wallet. Every demo row is origin `demo`: labelled on the feed, left out of the Paid, Held and Escalated totals, never traction. At most two runs a day per business. The proof page has a "Try it in 5 minutes" section.
 - **Outcomes (v1.3.1):** a public `GET /outcomes` and a block on the proof page for live invoices: how many the agent decided with no person (paid or held), how many it escalated (waiting, released, rejected), how often a person settling an escalation rejected it, duplicates caught, invoices processed, USDC paid, and the median seconds from submission to confirmed payment. Own and outside businesses are separate, the origins `agent`, `manual` and `demo` are never summed, shadow figures are kept apart, and the page states in code-written words how many outside businesses are confirmed. Every figure comes from one SQL statement that the response returns next to it (`queries`, with `definitions`), so it can be reproduced. A rate or median with nothing behind it is null, never a success
 
+- **Milestone escrow contract (v1.3.2):** `MilestoneEscrow.sol` holds USDC for one contractor job and releases it per milestone. The milestones and their `requirementsHash`es are fixed in the constructor; the agent can release a Pending milestone only after committing the decision in an earlier block (the commitment is bound to this contract, the chain, the milestone, the evidence hash and the reasoning hash), and only up to its `agentReleaseLimit`; anything above it can be released only by the approver. The approver can always reject, override and pause, and can withdraw only the balance that Pending milestones do not need. Deployed on testnet as a reference deployment and covered by 42 Foundry tests; nothing in the Python code, the API or the sites calls it yet. See [Contracts](#contracts)
+
 **Planned** (see the [Roadmap](#roadmap) for order and status; nothing below is built)
 
 - Gasless spending from the Gateway balance (the balance read and a manual deposit are built)
 - Treasury: economics-gated yield sweep via a pooled USYC wrapper, continuous vendor screening, other-currency invoices
 - Agent-to-agent reference client for vendors (demo runs labelled `demo`)
 - Invoice intake from PDF or email (a person confirms every amount), a Telegram status bot, receivables
-- Contractor milestone escrow
+- Contractor milestone escrow in the product: a backend module that commits and releases, routes to register and read an escrow, evidence checks with the fetch rules, and admin actions (the contract exists; nothing calls it)
 - Moving the original business onto a factory contract (optional)
 - A self-held agent wallet for technical users, and rotation of the ledger key as a ledger entry
 - Laya fast-path decision model (built separately, not wired in)
@@ -171,7 +174,7 @@ Everything below is checkable on-chain. Nothing here is estimated.
 | What | Evidence |
 |---|---|
 | Contract deployed and verified on Arc Testnet | [`BudgetEnforcer`](https://explorer.testnet.arc.io/address/0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB) |
-| Test suites | 69 Foundry (24 on the v1 contract, 45 on the multi-business contracts) + 526 Python tests + 6 Node runs (proof page, admin site, vendor portal), run by CI on every push |
+| Test suites | 111 Foundry (24 on the v1 contract, 45 on the multi-business contracts, 42 on the escrow contract) + 526 Python tests + 6 Node runs (proof page, admin site, vendor portal), run by CI on every push |
 | First self-owned vendor bill paid through the contract | `ceedebooks.xyz` registration, 2.20 USDC, category 1 |
 | Multi-business contracts deployed and verified (v1.2.8) | [`BudgetFactory`](https://explorer.testnet.arc.io/address/0x97b9A3802bA6B258cBeF6070532a265656bb391C), [`LedgerAnchor`](https://explorer.testnet.arc.io/address/0x008217BeC86462E76126F94e50eBe68fb4a41444) |
 | First ledger anchor of the original business (sequence 9) | [`0x24045426...a36639fb`](https://explorer.testnet.arc.io/tx/0x24045426ab28d346ce6e48998dfef1964e5890d64ee04f385cae1011a36639fb); `GET /ledger/verify?business=ceedebooks` compares it with the chain |
@@ -217,7 +220,7 @@ Every other business starts with none and creates its own in the admin site's Li
 - **Model output is an input, never a release condition.** In Circle's `arc-escrow` sample, the app releases funds when a GPT-4o answer returns `valid: true` with `HIGH` confidence (`app/api/contracts/validate-work/route.ts`), and the escrow contract itself does not check the work. In CeedeBooks the model's answer is a recorded input: the rules verdict acts, and the contract enforces the limits whatever the model says.
 - **Independent receipt witness.** A three-way match proves nothing if the agent can confirm its own receipts. It can't.
 - **Settlement is confirmed, not hoped for.** Circle's transaction API is asynchronous — accepting a request isn't the same as it succeeding on-chain. CeedeBooks waits for a terminal state before trusting any result, closing a real phantom-payment risk most demos never test for.
-- **Tested, not just described.** 69 Foundry tests (24 cover the v1 contract, 45 cover the multi-business contracts) plus 526 Python tests covering the decision pipeline, the isolation between businesses, onboarding, shadow mode, per-business categories, the signed ledger and its on-chain anchor, the admin routes, the oversight controls, and the outcome figures.
+- **Tested, not just described.** 111 Foundry tests (24 cover the v1 contract, 45 cover the multi-business contracts, 42 cover the escrow contract) plus 526 Python tests covering the decision pipeline, the isolation between businesses, onboarding, shadow mode, per-business categories, the signed ledger and its on-chain anchor, the admin routes, the oversight controls, and the outcome figures.
 
 ---
 
@@ -228,15 +231,15 @@ Every other business starts with none and creates its own in the admin site's Li
 │                      CeedeBooks Agent                            │
 ├──────────────────┬──────────────────┬───────────────────────────┤
 │  Treasury Brain   │  AP/AR Engine    │  Contractor Manager       │
-│  (planned)        │  (BUILT)         │  (planned)                │
+│  (planned)        │  (BUILT)         │  (contract only)          │
 ├──────────────────┼──────────────────┼───────────────────────────┤
 │ Circle Gateway    │ Three-way match  │ MilestoneEscrow.sol       │
 │ POST /v1/balances │ rules baseline   │ holds USDC per milestone  │
 │                   │ LLM: narrative + │                           │
-│ USYC via own      │ recorded 2nd     │ Model validates evidence: │
-│ pooled wrapper    │ opinion (never   │ gates the CALL, never     │
-│ (CeedeBooksYield  │ acts)            │ the CONTRACT's own        │
-│  .sol)            │ FastAPI intake + │ require() checks          │
+│ USYC via own      │ recorded 2nd     │ Evidence check (planned,  │
+│ pooled wrapper    │ opinion (never   │ not built): gates the     │
+│ (CeedeBooksYield  │ acts)            │ CALL, never the           │
+│  .sol)            │ FastAPI intake + │ contract's own require    │
 │                   │ SQLite ledger    │                           │
 └──────────────────┴──────────────────┴───────────────────────────┘
                     │
@@ -256,7 +259,7 @@ Every other business starts with none and creates its own in the admin site's Li
                                         └──────────────────────┘
 ```
 
-The engine, the audit log and the ledger are built; the Treasury Brain and Contractor Manager columns are planned (the only pieces of the Treasury Brain that exist are the read-only Gateway balance on the admin Overview and a manual script that deposits into Gateway). There is one `BudgetEnforcer` per business: the original business runs on the v1 contract drawn above, and every other business gets a `BudgetEnforcerV2` from `BudgetFactory` (same shape, plus a weekly limit and return-to-agent). Each business has its own audit log, ledger chain and anchors.
+The engine, the audit log and the ledger are built; the Treasury Brain column is planned and in the Contractor Manager column only the contract exists: it is deployed (reference deployment) and the agent, the API and the sites do not call it, and the evidence check drawn there is not built (the only pieces of the Treasury Brain that exist are the read-only Gateway balance on the admin Overview and a manual script that deposits into Gateway). There is one `BudgetEnforcer` per business: the original business runs on the v1 contract drawn above, and every other business gets a `BudgetEnforcerV2` from `BudgetFactory` (same shape, plus a weekly limit and return-to-agent). Each business has its own audit log, ledger chain and anchors.
 
 ---
 
@@ -276,6 +279,7 @@ The engine, the audit log and the ledger are built; the Treasury Brain and Contr
 - **The model.** A language model is used in two places: it writes the narrative when the rules escalate an unregistered vendor, and it gives a second opinion that is recorded and hashed. Neither can release, block or change a payment, and the second opinion waits at most 3 seconds. Since v1.3.0 the narrative may use figures only through code-filled placeholders; a reply with its own digits is replaced.
 - **Oversight limits (v1.3.0).** Maker-checker is enforced by the API and the admin site, not by the contract (it has no such rule), so someone who builds the release transaction by hand is not stopped; the server records it and flags it. An invoice with no recorded submitter (made before v1.3.0) is not blocked. The pause itself is the contract's own `paused` flag, and the reason beside it is a record in our database and ledger that the contract does not check. The pause reason and the banner are public.
 - **Outcome figures (v1.3.1).** They are counts from our own database, so they are exactly as honest as its rows: a person's release is recognised by the admin action the server recorded for that invoice, and an invoice the agent paid after "Return to agent" counts as the agent's. "Person agreement" is the share of settled escalations a person rejected; a release overrides the agent's caution, and an owner who releases everything produces 0%. The median covers only payments stamped at payment time (v1.3.1 on), so earlier payments are counted as `without_timing`, never estimated. Shadow figures and the own, outside and `demo` buckets are never added together.
+- **The escrow contract (v1.3.2).** It enforces who can release what, in which order and up to which amount, not that the work was done: the evidence hash is a record, and anything above `agentReleaseLimit` needs the approver. Its agent and approver are wallets of one operator, like the rest of the system. The only deployment is a reference with no funds and no engagement, nothing calls it, and its explorer source verification failed (the bytecode matches a local build). The server never deploys escrows and will never hold the approver key; the fetch rules for evidence (https only, no private or link-local addresses, no redirects, size and time caps) are planned with the backend, not built.
 - **Public reasoning.** `GET /decisions/{hash}` returns the full reasoning text, so no private data belongs in it.
 
 ---
@@ -322,7 +326,7 @@ Each business's contract and agent wallet addresses are public on the proof page
 | G. Treasury brain | Economics-gated sweep, vendor screening, `CeedeBooksYield.sol` pooled USYC wrapper, EURC, CCTP | v1.3.x | ⏳ Planned |
 | N. Agent-to-agent | Reference vendor client; traction counts an outside agent only | v1.3.x | ⏳ Planned |
 | Q. Reach | PDF and email intake, Telegram bot, receivables, webhooks | | ⏳ Planned |
-| H. Milestone escrow | `MilestoneEscrow.sol` with a `requirementsHash` fixed at funding | | ⏳ Planned, after Proof and evidence |
+| H. Milestone escrow | H1: `MilestoneEscrow.sol` (milestones and `requirementsHash`es fixed in the constructor, agent release only after a commit in an earlier block and only up to a limit, approver override, pause and reserved-balance withdraw), deployed on testnet with 42 Foundry tests. Next: a backend module, routes, evidence checks and admin actions | v1.3.2 (H1) | ✅ H1 contract deployed and tested (not source-verified on the explorer; no engagement has run; no funds in it). ⏳ Backend, evidence checks and admin actions planned |
 | Later | Agent-posted decision bond | | 💡 Idea |
 
 **Still open in Phase 2:** Laya isn't wired into `payables.py` yet (built and tested separately; live decisions run on the rules baseline until it is). So far the pipeline has only processed self-owned flows; an outside business or agent is the next thing to land.
@@ -368,6 +372,17 @@ One instance per business. This is the original business's contract (v1): it is 
 - **`BudgetFactory`**: `createBusiness(agent, daily, perTx, weekly)` deploys one enforcer per business, and the caller becomes its approver. The factory has no admin function, holds no funds and cannot touch any enforcer.
 - **`LedgerAnchor`**: `anchor(head, sequence)` records a ledger head per sender, and the sequence must increase. A verifier trusts only events from a business's agent address.
 
+### `MilestoneEscrow.sol` (v1.3.2)
+
+Holds USDC for one contractor job and releases it per milestone. One instance per job, deployed with `forge create` (the server never deploys). The agent proposes, the contract enforces, the approver can always override.
+
+- **Fixed at deployment:** the agent, the approver and the contractor (three different non-zero addresses), the USDC address, an `agentReleaseLimit`, and 1 to 50 milestones, each with an amount and a non-zero `requirementsHash`. There is no function that changes a milestone. Funding is a plain USDC transfer to the contract.
+- **Agent release:** `commitDecision(commitment)`, then in a later block `releaseMilestone(index, evidenceHash, reasoningHash)`. The commitment is `keccak256(abi.encode(contract, chainId, index, evidenceHash, reasoningHash))` (`commitmentFor`), single use, so it cannot be replayed on another escrow, chain or milestone. Only a Pending milestone at or below `agentReleaseLimit` can be released this way; the amount goes to the contractor.
+- **Approver:** `overrideRelease` (a Pending or Rejected milestone, the only way to release one above the limit), `rejectMilestone` (the agent can reject too), `setPaused`, `setAgent`, a two-step approver change, and `withdraw`, which can take only the balance not reserved for Pending milestones (`withdrawable()`). Pause blocks the agent's release and reject; the approver's override, reject and withdraw still work.
+- **What it does not do:** it cannot check that work was done. The `evidenceHash` is a record emitted in `MilestoneReleased`, not proof, and the approver threshold is what keeps the agent from releasing a large milestone alone. A milestone that is not funded cannot be released: the transfer reverts and the milestone stays Pending.
+
+The one deployment, below, is a reference: no engagement has run and it holds no funds. Its source could not be verified on the explorer (see Documented bugs, #12); the deployed bytecode matches a local build of this source.
+
 ### Contracts (Arc Testnet)
 
 | Contract | Address |
@@ -378,7 +393,7 @@ One instance per business. This is the original business's contract (v1): it is 
 | BudgetEnforcerV2, test business `ceedebooks-test-v1282` (created through the factory on Oct 8) | [`0x030512Cd974F9A282415B0e6C81465f31502e32C`](https://explorer.testnet.arc.io/address/0x030512Cd974F9A282415B0e6C81465f31502e32C) |
 | BudgetEnforcerV2, any other business | created per business by the factory |
 | CeedeBooksYield | not built yet |
-| MilestoneEscrow | not built yet |
+| MilestoneEscrow (v1.3.2, reference deployment, **not verified**) | [`0x9752F995739C8A171AbD24944925EaF4d2971dd5`](https://explorer.testnet.arc.io/address/0x9752F995739C8A171AbD24944925EaF4d2971dd5) |
 
 | Business | Contract | Agent wallet (Circle, hosted by us) | What it is |
 |---|---|---|---|
@@ -521,7 +536,7 @@ ceedebooks/
 │   ├── verify.test.js
 │   └── logo.png, favicon.png, apple-touch-icon.png
 ├── docs/
-│   └── rollouts/           # one record per thing run live, and an index (v1.3.1.2)
+│   └── rollouts/           # one record per thing run live, and an index (v1.3.1.2; the escrow deployment record is v1.3.2)
 ├── deploy/
 │   ├── DEPLOY.md           # server steps, one upgrade section per release
 │   ├── ceedebooks-api.service
@@ -530,12 +545,14 @@ ceedebooks/
 │   ├── BudgetEnforcer.sol      # v1, deployed (original business)
 │   ├── BudgetEnforcerV2.sol    # multi-business version, created by the factory
 │   ├── BudgetFactory.sol       # one enforcer per business, deployed
-│   └── LedgerAnchor.sol        # public ledger-head anchor, deployed
+│   ├── LedgerAnchor.sol        # public ledger-head anchor, deployed
+│   └── MilestoneEscrow.sol     # contractor milestone escrow, deployed (reference deployment)
 ├── test/
 │   ├── BudgetEnforcer.t.sol
 │   ├── BudgetEnforcerV2.t.sol
 │   ├── BudgetFactory.t.sol
 │   ├── LedgerAnchor.t.sol
+│   ├── MilestoneEscrow.t.sol
 │   └── mocks/MockUSDC.sol
 ├── .github/workflows/ci.yml  # forge build and test, pytest and the Node suites on every push
 ├── foundry.toml
@@ -585,7 +602,7 @@ node portal/portal.test.js && node portal/business.test.js
 
 The pytest run needs only these placeholders: the chain and Circle's calls are faked. Importing `agent/contract.py` still creates the Circle client, so the machine needs network access to Circle's API host (CI has it). `forge build` comes first because the wallet and portal Node tests read the compiled contracts in `out/`.
 
-**69 Foundry tests** (24 for the v1 contract, 35 for `BudgetEnforcerV2`, 6 for `BudgetFactory`, 4 for `LedgerAnchor`), one per revert path or acceptance scenario: unregistered and revoked vendor, over per-tx / daily / category limits, unset category (fail-closed), same invoice resubmitted as a different file, missing / reused / mismatched commit, crash-and-retry, simulated prompt injection (contract refuses even if the agent were fooled), the escalate → approve / reject flow, escalated invoices blocked from direct payment, pause, withdraw, agent rotation, two-step approver rotation, and the `reasoningHash` round-trip via the `PaymentMade` event.
+**111 Foundry tests** (24 for the v1 contract, 35 for `BudgetEnforcerV2`, 6 for `BudgetFactory`, 4 for `LedgerAnchor`, 42 for `MilestoneEscrow`), one per revert path or acceptance scenario: unregistered and revoked vendor, over per-tx / daily / category limits, unset category (fail-closed), same invoice resubmitted as a different file, missing / reused / mismatched commit, crash-and-retry, simulated prompt injection (contract refuses even if the agent were fooled), the escalate → approve / reject flow, escalated invoices blocked from direct payment, pause, withdraw, agent rotation, two-step approver rotation, and the `reasoningHash` round-trip via the `PaymentMade` event. The 42 escrow tests cover the happy path, a double release, the wrong agent, no commit, a commit in the same block, a commitment from another escrow, for another milestone or chain, the approver-only limit, reject then override, a withdraw that cannot touch Pending amounts (with a fuzz test), pause behaviour for the agent and the approver, an unfunded escrow, bad constructor roles and milestones, and agent and approver rotation. Six of the escrow guards were broken on purpose (same-block release, the approver limit, the reserved balance, the pause check, commitment reuse, the contract binding) and each break failed a test. `forge build` needs the solc 0.8.20 download; a network that blocks it needs a local `solc` and `forge test --use <path>`.
 
 **526 Python tests** in `agent/tests/`. No test sends a transaction or touches a network. They cover:
 - The decision pipeline: three-way match, rules baseline (pay, hold, escalate), retry safety, the 0.01 USDC rounding allowance, and the invoice pre-flight dry run, which writes nothing and reveals no balances.
@@ -649,6 +666,14 @@ Deployment transactions: [LedgerAnchor `0x45c031cd...9f9f4d`](https://explorer.t
 ---
 
 ## Changelog
+
+**v1.3.2: Phase H, piece 1, the MilestoneEscrow contract (deployed on Arc Testnet and tested with Foundry; not source-verified on the explorer)**
+- New `contracts/MilestoneEscrow.sol` and `test/MilestoneEscrow.t.sol` (42 tests, one a fuzz test). One instance per contractor job: three different roles (agent, approver, contractor), 1 to 50 milestones with fixed amounts and non-zero `requirementsHash`es, an `agentReleaseLimit` above which only the approver can release, commit-then-release with a commitment bound to the contract, chain, milestone, evidence hash and reasoning hash, approver override, reject, pause, agent rotation, two-step approver rotation, and a withdraw that cannot touch the balance reserved for Pending milestones
+- **Deviation from the design drafted earlier, stated here:** the draft had a `fund` function and a requirements hash agreed at funding. The build fixes the milestones and their hashes in the constructor, so they cannot change afterwards, and funding is a plain USDC transfer to the contract, so there is no funding function. The "approver confirmation above a threshold" is the contract's `agentReleaseLimit`
+- Deployed once as a reference deployment: [`0x9752F995739C8A171AbD24944925EaF4d2971dd5`](https://explorer.testnet.arc.io/address/0x9752F995739C8A171AbD24944925EaF4d2971dd5), transaction [`0x906d8cc3...57a6b5`](https://explorer.testnet.arc.io/tx/0x906d8cc3d1d4d474dfc418b626b197341b1dc026427a8c2788588b2a6257a6b5). Read back with `cast call` (roles, limit, three milestones, pending total 800000) and compared with a local build: same length, same metadata tail, 110 bytes differ, which fits the three immutable values. The record is [`docs/rollouts/2026-10-24-milestone-escrow-deploy.md`](docs/rollouts/2026-10-24-milestone-escrow-deploy.md)
+- **Explorer source verification failed at deployment, failed on a second run (a third was answered `Too many requests`) and failed when submitted by hand, so the contract is listed as not verified** (Documented bugs, #12). It was never funded, and no commit, release, override or withdraw was sent, so none has a live run
+- Tests: 111 Foundry tests pass (the 69 earlier ones and 42 new), run in the build chat with a static solc 0.8.20 and again on the server. Six escrow guards were broken on purpose and each was caught. No Python, API, site or database change: the 526 Python tests and the Node suites are unchanged and were not run for this release
+- Not in this release: a backend module that commits and releases, routes to register and read an escrow, evidence fetching with its SSRF rules, admin actions to fund, withdraw and override, a proof-page view, and any real engagement
 
 **v1.3.1.2: Phase P3, rollout records, an evidence-first README and a traction counting fix (built and tested with mocks)**
 - New [`docs/rollouts/`](docs/rollouts/README.md): eight records (domain payment, multi-business contracts, shadow-mode payments, first ledger anchor, red team, Gateway deposit, the Outcomes reading, the demo run) and an index. Each says what ran, gives the transaction and decision hash, and says what failed, what was not captured and what changed afterwards. Facts were read from the live API on Oct 23 (decision verification, the traction and ledger routes) and from earlier runs recorded in this README; a hash or link that could not be checked is not in them
@@ -897,6 +922,7 @@ Deployment transactions: [LedgerAnchor `0x45c031cd...9f9f4d`](https://explorer.t
 | 9 | `GET /businesses` | The original business lists an approver that is the old deployer key, not the current on-chain approver | The row stored the `APPROVER_ADDRESS` value seen when the business was first recorded and never refreshed it. The admin site and every approver check read `approver()` from the contract, so nothing is gated on the stored value | Fixed in v1.2.9.5: `GET /businesses` now reads `approver()` from each contract (own 15-second cache, null if unreadable) and refreshes the stored copy on a successful read |
 | 10 | Gateway | `POST /v1/balances` is rejected with a 400 | The body is `{"token": "USDC", "sources": [{"domain": 26, "depositor": <address>}]}`, not a list of addresses | Use that shape; a missing row for the domain after a good answer is a real zero |
 | 11 | Gateway | USDC sent to the Gateway Wallet is not credited to a Gateway balance | Circle's docs say a balance is created only by calling the Gateway Wallet's `deposit(token, value)` after an `approve`, and warn that a plain ERC-20 transfer to the contract loses the funds | `scripts/gateway_deposit.py` approves the exact amount then calls `deposit`; a test fails if a plain transfer is ever built there |
+| 12 | verification | `forge create --verify`, then `forge verify-contract` twice and a manual submission on the explorer, all failed for `MilestoneEscrow` (`Fail - Unable to verify`; one run was answered `Too many requests`) | Not found. The earlier contracts verified through the same flow | None yet. The contract is listed as not verified; the deployed bytecode was compared with a local build of the tagged source (same length, same metadata tail, only the immutable bytes differ) |
 
 ---
 

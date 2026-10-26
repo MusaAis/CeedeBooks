@@ -222,6 +222,25 @@ No contract change and no new environment variable. The database gains two invoi
 
 To go back: stop the service and check out v1.2.10.1. The new columns and table are ignored by the old code. `ADMIN_PAUSED` and `ADMIN_RESUMED` ledger entries, if you made any, stay in the chain and still verify.
 
+## Upgrading to v1.3.2 (the MilestoneEscrow contract)
+
+No server change: no Python, API, site or database change, no new environment variable and no restart. The release adds `contracts/MilestoneEscrow.sol` and its 42 Foundry tests. Nothing calls the contract yet.
+
+1. Extract the files, then from `~/ceedebooks` run `forge test`. It should end with `111 tests passed, 0 failed`. The first compile of the escrow with `via_ir` takes a couple of minutes.
+2. Deploying an escrow is optional and is an on-chain step from a wallet you choose (the server never deploys). Use a key kept outside `.env` and the repo, read it into a shell variable only, and compute each milestone's requirements hash with `cast keccak "<text>"`. The three roles must be different addresses. Amounts are USDC in 6 decimals:
+
+```bash
+forge create contracts/MilestoneEscrow.sol:MilestoneEscrow \
+  --rpc-url $ARC_TESTNET_RPC_URL --private-key $KEY --broadcast \
+  --verify --verifier blockscout --verifier-url https://explorer.testnet.arc.io/api/ \
+  --constructor-args $AGENT $APPROVER $CONTRACTOR 0x3600000000000000000000000000000000000000 $AGENT_LIMIT "[$AMOUNT0,$AMOUNT1]" "[$HASH0,$HASH1]"
+```
+
+3. Read the deployment back: `cast call <escrow> "agent()(address)"`, `"approver()(address)"`, `"contractor()(address)"`, `"agentReleaseLimit()(uint256)"`, `"milestoneCount()(uint256)"` and `"milestones(uint256)(uint256,bytes32,uint8)" 0` all with `--rpc-url $ARC_TESTNET_RPC_URL`. Funding is a plain USDC transfer to the escrow address. A deployed escrow is frozen: a change is a new deployment.
+4. Explorer verification of the reference deployment failed (README, Documented bugs, #12). To compare the code instead: `forge inspect contracts/MilestoneEscrow.sol:MilestoneEscrow deployedBytecode` against `cast code <escrow>`: the length and the last 106 hex characters should match, and only the immutable values differ.
+
+To go back: nothing to undo on the server; check out v1.3.1.2 to drop the files. A deployed escrow stays on the chain.
+
 ## Upgrading to v1.3.1.2 (rollout records, evidence-first README, traction counting fix)
 
 No contract change, no new environment variable and no schema change. One public change: `GET /businesses/{slug}/traction` now counts only the agent's own traffic (origin `agent`) in `live` and `latest_paid`, and adds a `not_traction` block with the manual and demo counts. The per-business card on the proof page and the text the admin site builds for `arc-canteen update-traction` follow it.
