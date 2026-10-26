@@ -154,6 +154,14 @@ CREATE TABLE IF NOT EXISTS admin_actions (
     created_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS escrows (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    address TEXT NOT NULL UNIQUE,
+    registered_by TEXT NOT NULL,
+    created_at REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS api_keys (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     business_id INTEGER NOT NULL DEFAULT 1,
@@ -176,6 +184,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_bizapp_open_slug ON business_applications(s
 CREATE UNIQUE INDEX IF NOT EXISTS ux_business_contract ON businesses(enforcer_address) WHERE enforcer_address != '';
 CREATE UNIQUE INDEX IF NOT EXISTS ux_category_name ON categories(business_id, lower(name));
 CREATE INDEX IF NOT EXISTS ix_pause_log_business ON pause_log(business_id, id);
+CREATE INDEX IF NOT EXISTS ix_escrows_business ON escrows(business_id, id);
 CREATE INDEX IF NOT EXISTS ix_invoices_business ON invoices(business_id, id);
 CREATE INDEX IF NOT EXISTS ix_vendors_business ON vendors(business_id, id);
 """
@@ -988,3 +997,42 @@ async def relabel_agent_to_demo(business_id: int, invoice_ids: list) -> int:
             return 0
         await db.commit()
         return cur.rowcount
+
+
+# ---- milestone escrows (Phase H): only a registered address is ever read or shown; everything else comes from the chain
+
+async def add_escrow(business_id: int, address: str, registered_by: str) -> int:
+    """Registers an already-deployed escrow to one business. The address is unique across businesses (sqlite3.IntegrityError)."""
+    async with aiosqlite.connect(config.db_path) as db:
+        cur = await db.execute(
+            "INSERT INTO escrows (business_id, address, registered_by, created_at) VALUES (?, ?, ?, ?)",
+            (business_id, address.lower(), registered_by.lower(), time.time()))
+        await db.commit()
+        return cur.lastrowid
+
+
+async def list_escrows(business_id: int) -> list:
+    return await _all("SELECT id, business_id, address, registered_by, created_at FROM escrows WHERE business_id = ? ORDER BY id", (business_id,))
+
+
+async def get_escrow(business_id: int, escrow_id: int) -> Optional[dict]:
+    row = await _one("SELECT id, business_id, address, registered_by, created_at FROM escrows WHERE id = ? AND business_id = ?", (escrow_id, business_id))
+    return dict(row) if row else None
+
+
+async def get_escrow_by_address(address: str) -> Optional[dict]:
+    """For the public read only: the row, with its business, if that business is active."""
+    row = await _one(
+        "SELECT e.id, e.business_id, e.address, e.created_at, b.slug AS business_slug FROM escrows e "
+        "JOIN businesses b ON b.id = e.business_id WHERE e.address = ? AND b.status = 'active'", (address.lower(),))
+    return dict(row) if row else None
+
+
+async def list_public_escrows(business_id: Optional[int] = None) -> list:
+    sql = ("SELECT e.id, e.address, e.created_at, b.slug AS business_slug FROM escrows e "
+           "JOIN businesses b ON b.id = e.business_id WHERE b.status = 'active'")
+    args: tuple = ()
+    if business_id is not None:
+        sql += " AND e.business_id = ?"
+        args = (business_id,)
+    return await _all(sql + " ORDER BY e.id", args)

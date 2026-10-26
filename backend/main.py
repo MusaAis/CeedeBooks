@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agent import categories as category_rules
-from agent import anchor, contract, decision_log, gateway, ledger, payables, treasury
+from agent import anchor, contract, decision_log, escrow_chain, evidence, gateway, ledger, payables, safe_fetch, treasury
 from agent.config import config
 from backend import admin_auth, auth, models, outcomes, vendor_auth
 
@@ -71,6 +71,18 @@ class VendorIn(_Strict):
     wallet_address: str
 
     _addr = field_validator("wallet_address")(_check_address)
+
+
+class EscrowIn(_Strict):
+    address: str
+
+    _addr = field_validator("address")(_check_address)
+
+
+class EvidenceCheckIn(_Strict):
+    owner: str = Field(pattern=evidence.OWNER_PATTERN)
+    repo: str = Field(pattern=evidence.REPO_PATTERN)
+    pr_number: int = Field(ge=1, le=evidence.MAX_PR_NUMBER)
 
 
 class PurchaseOrderIn(_Strict):
@@ -1517,3 +1529,106 @@ async def admin_onboarding(who: auth.Principal = Depends(auth.require_admin)):
     steps.append({"key": "purchase_order", "label": "Create a purchase order for it", "done": len(pos) > 0})
     return {"business": business["slug"], "contract": business["enforcer_address"], "agent_address": business["agent_address"] or None,
             "steps": steps, "custody": CUSTODY_NOTICE}
+
+
+# ---- milestone escrows (Phase H, v1.3.2.1): register and read only. Nothing here sends a transaction or moves money.
+
+ESCROW_CACHE_SECONDS = 15
+EVIDENCE_PER_ADMIN_PER_MIN = 10
+EVIDENCE_ALL_PER_HOUR = 30  # GitHub's unauthenticated limit is 60 an hour per address
+_escrow_cache: dict = {}  # address (lower) -> (snapshot, read at); a failed read is never cached
+
+
+async def _escrow_snapshot(address: str, fresh: bool = False):
+    """The escrow's state read from the chain, or None when it cannot be read (never a guess). Reads are cached briefly
+    because one snapshot is one call per milestone."""
+    key = address.lower()
+    hit = _escrow_cache.get(key)
+    if hit and not fresh and time.time() - hit[1] < ESCROW_CACHE_SECONDS:
+        return hit[0]
+    try:
+        snap = await asyncio.to_thread(lambda: escrow_chain.escrow_for(address).snapshot())
+    except Exception:
+        log.exception("escrow chain read failed")
+        return None
+    if not fresh:
+        _escrow_cache[key] = (snap, time.time())  # a registration attempt never fills the cache with arbitrary addresses
+    return snap
+
+
+@app.post("/admin/escrows")
+async def admin_register_escrow(body: EscrowIn, who: auth.Principal = Depends(auth.require_admin)):
+    """Registers an escrow that is already deployed (the server never deploys). It is accepted only if the contract itself
+    says its agent is this business's agent wallet, its approver is the signed-in wallet and it holds this system's USDC."""
+    business = await _writable(who)
+    if not auth.request_limiter.allow("escrow-register:" + who.admin_address.lower(), 10, 3600.0):
+        raise HTTPException(429, "Too many registrations, try again later")
+    snap = await _escrow_snapshot(body.address, fresh=True)
+    if snap is None:
+        raise HTTPException(503, "The escrow could not be read from the chain, so nothing was registered")
+    problems = escrow_chain.registration_problems(snap, business, who.admin_address)
+    if problems:
+        raise HTTPException(422, "; ".join(problems))
+    try:
+        escrow_id = await models.add_escrow(who.business_id, body.address, who.admin_address)
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, "That escrow is already registered")
+    await _admin_log(who, "register_escrow", body.address.lower())
+    return {"id": escrow_id, "address": body.address.lower(), "business": business["slug"], "escrow": snap}
+
+
+@app.get("/admin/escrows")
+async def admin_escrows(who: auth.Principal = Depends(auth.require_admin)):
+    rows = await models.list_escrows(who.business_id)
+    out = []
+    for row in rows:
+        snap = await _escrow_snapshot(row["address"])
+        out.append({"id": row["id"], "address": row["address"], "registered_at": row["created_at"], "chain_ok": snap is not None, "escrow": snap})
+    return {"escrows": out}
+
+
+@app.get("/admin/escrows/{escrow_id}")
+async def admin_escrow(escrow_id: int = Path(gt=0), who: auth.Principal = Depends(auth.require_admin)):
+    row = await models.get_escrow(who.business_id, escrow_id)
+    if row is None:
+        raise HTTPException(404, "Escrow not found")
+    snap = await _escrow_snapshot(row["address"])
+    return {"id": row["id"], "address": row["address"], "registered_at": row["created_at"], "chain_ok": snap is not None, "escrow": snap}
+
+
+@app.post("/admin/escrows/{escrow_id}/evidence-check")
+async def admin_evidence_check(body: EvidenceCheckIn, escrow_id: int = Path(gt=0), who: auth.Principal = Depends(auth.require_admin)):
+    """A dry run: reads one GitHub pull request and returns the facts and the evidence hash they give. It writes nothing and
+    sends nothing to the chain. A merged pull request is an input to a decision, not proof the requirements are met."""
+    row = await models.get_escrow(who.business_id, escrow_id)
+    if row is None:
+        raise HTTPException(404, "Escrow not found")
+    if (not auth.request_limiter.allow("evidence-admin:" + who.admin_address.lower(), EVIDENCE_PER_ADMIN_PER_MIN, 60.0)
+            or not auth.request_limiter.allow("evidence-all", EVIDENCE_ALL_PER_HOUR, 3600.0)):
+        raise HTTPException(429, "Too many evidence checks, try again later")
+    try:
+        result = await evidence.github_pr(body.owner, body.repo, body.pr_number)
+    except safe_fetch.FetchRefused as e:
+        raise HTTPException(422, str(e))
+    except safe_fetch.FetchFailed as e:
+        log.warning("evidence check failed: %s", e)
+        raise HTTPException(502, "GitHub could not be read, so nothing was checked")
+    return {"escrow_id": row["id"], **result,
+            "note": "A merged pull request shows that code was merged, not that the requirements are met. Nothing was sent to the chain."}
+
+
+@app.get("/escrows")
+async def public_escrows(business: Optional[Slug] = Query(default=None)):
+    """Registered escrows of active businesses: the address and the business, nothing else."""
+    biz = None if business is None else await _business_by_slug(business, active_only=True)
+    rows = await models.list_public_escrows(None if biz is None else biz["id"])
+    return {"escrows": [{"address": r["address"], "business": r["business_slug"]} for r in rows]}
+
+
+@app.get("/escrows/{address}")
+async def public_escrow(address: str = Path(pattern=r"^0x[a-fA-F0-9]{40}$")):
+    row = await models.get_escrow_by_address(address)
+    if row is None:
+        raise HTTPException(404, "Escrow not found")
+    snap = await _escrow_snapshot(row["address"])
+    return {"address": row["address"], "business": row["business_slug"], "registered_at": row["created_at"], "chain_ok": snap is not None, "escrow": snap}

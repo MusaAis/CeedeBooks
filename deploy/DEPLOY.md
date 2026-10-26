@@ -222,6 +222,18 @@ No contract change and no new environment variable. The database gains two invoi
 
 To go back: stop the service and check out v1.2.10.1. The new columns and table are ignored by the old code. `ADMIN_PAUSED` and `ADMIN_RESUMED` ledger entries, if you made any, stay in the chain and still verify.
 
+## Upgrading to v1.3.2.1 (escrow reads, registration and the evidence dry run)
+
+No contract change and no new environment variable. The database gains an `escrows` table on the first start; nothing existing changes. The server never deploys an escrow and holds no escrow key.
+
+1. Back up: `mkdir -p ~/backups && cp ceedebooks.db ~/backups/ceedebooks.db.pre-1.3.2.1` (from `~/ceedebooks`).
+2. Extract the files, run `pytest agent/tests/` with the CI placeholder variables (642 tests, about 5 minutes), then `sudo systemctl restart ceedebooks-api` and wait about 15 seconds.
+3. Check the API: `curl -s https://api.ceedebooks.xyz/escrows` prints `{"escrows":[]}` until one is registered, and an unauthenticated `POST /admin/escrows` answers 401.
+4. Check the chain read and GitHub from the server (read-only): write a short helper that calls `escrow_chain.escrow_for(<escrow address>).snapshot()` and `asyncio.run(evidence.github_pr("<owner>", "<repo>", <number>))` with `PYTHONPATH=.` after `set -a; . ./.env; set +a`. A merged pull request prints facts and an `evidence_hash`; a number that does not exist prints `FetchFailed ... 404`. If every call is refused with "did not go to a public address", the server reaches the internet through a proxy; the fetch rules do not allow that, so route GitHub traffic directly.
+5. Registering an escrow needs the approver wallet's sign-in, so it is done through the API with a signed admin session; the admin site has no screen for it yet.
+
+To go back: stop the service and check out v1.3.2. The `escrows` table is ignored by the old code.
+
 ## Upgrading to v1.3.2 (the MilestoneEscrow contract)
 
 No server change: no Python, API, site or database change, no new environment variable and no restart. The release adds `contracts/MilestoneEscrow.sol` and its 42 Foundry tests. Nothing calls the contract yet.
