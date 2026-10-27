@@ -1,0 +1,18 @@
+# Known issues: documented bugs and gotchas
+
+Numbers are stable: a new row takes the next number and an old row is never renumbered.
+
+| # | Area | Symptom | Cause | Fix |
+|---|---|---|---|---|
+| 1 | `forge create` | `Constructor argument count mismatch: expected N but got N+k` | `--constructor-args` swallows every token after it, including later flags | Put `--constructor-args ...` **last** |
+| 2 | verification | `Params 'module' and 'action' are required parameters` from `testnet.arcscan.app` | Open upstream bug (`circlefin/arc-node#210`) | Verify via `--verifier blockscout --verifier-url https://explorer.testnet.arc.io/api/` |
+| 3 | Laya | Model card looks production-ready; the base checkpoint isn't | Base `laya` scores **0.362 zero-shot** on typed-decisions, below majority-class guessing (0.461) | Never gate a real decision on the base checkpoint; fine-tune on your own schema |
+| 4 | Groq | LLM calls fail silently while the process looks healthy | `groq/compound-mini` decommissioned Sep 21, 2026; `llama-3.3-70b-versatile` moved to Enterprise-only on developer keys; a try/except hid the failure | Health-check the exact model string; target `openai/gpt-oss-120b` |
+| 5 | USYC | Deposits revert / can't clear eligibility | Arc's USYC Teller has a $100k minimum + non-US-institution allowlist | Route through one pooled wrapper allowlisted once |
+| 6 | CCTP on Arc | Attestation stuck at "pending" | Arc needs `minFinalityThreshold: 2000`, not `1000` | Hardcode `2000` |
+| 7 | CCTP on Arc | Silent revert with no error data | Arc only supports the V2 7-parameter `depositForBurn` | Confirm the V2 selector explicitly |
+| 8 | Circle wallets | A payment looked successful but reverted on-chain | Circle's `contractExecution` API returns a transaction ID on *acceptance*, not on-chain confirmation — calling `pay()` right after `commitDecision()` can fire before the commit is actually mined | Poll `get_transaction` to a terminal state (`COMPLETE`/`FAILED`/`CANCELLED`) before trusting any result |
+| 9 | `GET /businesses` | The original business lists an approver that is the old deployer key, not the current on-chain approver | The row stored the `APPROVER_ADDRESS` value seen when the business was first recorded and never refreshed it. The admin site and every approver check read `approver()` from the contract, so nothing is gated on the stored value | Fixed in v1.2.9.5: `GET /businesses` now reads `approver()` from each contract (own 15-second cache, null if unreadable) and refreshes the stored copy on a successful read |
+| 10 | Gateway | `POST /v1/balances` is rejected with a 400 | The body is `{"token": "USDC", "sources": [{"domain": 26, "depositor": <address>}]}`, not a list of addresses | Use that shape; a missing row for the domain after a good answer is a real zero |
+| 11 | Gateway | USDC sent to the Gateway Wallet is not credited to a Gateway balance | Circle's docs say a balance is created only by calling the Gateway Wallet's `deposit(token, value)` after an `approve`, and warn that a plain ERC-20 transfer to the contract loses the funds | `scripts/gateway_deposit.py` approves the exact amount then calls `deposit`; a test fails if a plain transfer is ever built there |
+| 12 | verification | `forge create --verify`, then `forge verify-contract` twice and a manual submission on the explorer, all failed for `MilestoneEscrow` (`Fail - Unable to verify`; one run was answered `Too many requests`) | Not found. The earlier contracts verified through the same flow | None yet. The contract is listed as not verified; the deployed bytecode was compared with a local build of the tagged source (same length, same metadata tail, only the immutable bytes differ) |

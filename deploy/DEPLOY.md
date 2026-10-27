@@ -222,6 +222,10 @@ No contract change and no new environment variable. The database gains two invoi
 
 To go back: stop the service and check out v1.2.10.1. The new columns and table are ignored by the old code. `ADMIN_PAUSED` and `ADMIN_RESUMED` ledger entries, if you made any, stay in the chain and still verify.
 
+## Upgrading to v1.3.2.2 (documentation only)
+
+No code, contract, schema or environment change, so no restart, no backup and no test run are needed on the server. Pull the files (or check out the tag) so the server's copy of the docs matches, and read the README at the new tag.
+
 ## Upgrading to v1.3.2.1 (escrow reads, registration and the evidence dry run)
 
 No contract change and no new environment variable. The database gains an `escrows` table on the first start; nothing existing changes. The server never deploys an escrow and holds no escrow key.
@@ -249,7 +253,7 @@ forge create contracts/MilestoneEscrow.sol:MilestoneEscrow \
 ```
 
 3. Read the deployment back: `cast call <escrow> "agent()(address)"`, `"approver()(address)"`, `"contractor()(address)"`, `"agentReleaseLimit()(uint256)"`, `"milestoneCount()(uint256)"` and `"milestones(uint256)(uint256,bytes32,uint8)" 0` all with `--rpc-url $ARC_TESTNET_RPC_URL`. Funding is a plain USDC transfer to the escrow address. A deployed escrow is frozen: a change is a new deployment.
-4. Explorer verification of the reference deployment failed (README, Documented bugs, #12). To compare the code instead: `forge inspect contracts/MilestoneEscrow.sol:MilestoneEscrow deployedBytecode` against `cast code <escrow>`: the length and the last 106 hex characters should match, and only the immutable values differ.
+4. Explorer verification of the reference deployment failed ([known issues, #12](../docs/known-issues.md)). To compare the code instead: `forge inspect contracts/MilestoneEscrow.sol:MilestoneEscrow deployedBytecode` against `cast code <escrow>`: the length and the last 106 hex characters should match, and only the immutable values differ.
 
 To go back: nothing to undo on the server; check out v1.3.1.2 to drop the files. A deployed escrow stays on the chain.
 

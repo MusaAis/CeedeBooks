@@ -14,7 +14,7 @@ Checked on-chain after deployment: the factory's USDC address is the Arc USDC, `
 
 - `forge create` swallows every token after `--constructor-args`, so a later flag caused `Constructor argument count mismatch`; the arguments must come last.
 - The explorer's default verification endpoint returned `Params 'module' and 'action' are required parameters` (an open upstream bug, `circlefin/arc-node#210`); verification used the Blockscout verifier with `https://explorer.testnet.arc.io/api/`.
-- Both are in the README's "Documented bugs and gotchas" table.
+- Both are in the [known issues](../known-issues.md) table.
 
 ## What was not captured
 

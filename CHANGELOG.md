@@ -1,0 +1,257 @@
+# Changelog
+
+Every release, newest first: what was built, what was tested, what was not run. The short status is in the [README](README.md); the full record of what ran live is in [`docs/rollouts/`](docs/rollouts/README.md).
+
+**v1.3.2.2: documentation only, the README split (no code, contract, schema or API change)**
+- The README was 975 lines and 155 KB. It is now a short front page (status, an honesty block, evidence, the 60-second tour, "Since Sep 27", a feature summary, the contract addresses, setup and an index). Its detail moved word for word, not rewritten, into this `CHANGELOG.md` and into `docs/`: `features.md`, `how-it-works.md` (payment flow, shadow mode), `architecture.md` (diagram, Circle tools, why), `trust-model.md` (limits, custody trade-off, design notes), `roadmap.md`, `contracts.md`, `api.md`, `traction.md`, `testing.md`, `setup-and-deploy.md`, `project-structure.md` and `known-issues.md`, with an index and the rule for keeping them current in `docs/README.md`
+- Each fact now lives in one place and is linked from the others. Links and anchors were checked by script, and the moved text was compared with the old README
+- The v1.3.2.1 entry's wording is unchanged. The "Since Sep 27" counts were updated (43 commits, 33 tagged releases)
+- Tests: nothing changed, so none were rerun beyond the link and attribution checks; the 111 Foundry, 642 Python and 6 Node runs stand as at v1.3.2.1
+- Not in this release: any code change; the next piece is the agent's commit and release for the escrow
+
+**v1.3.2.1: Phase H, piece 2, evidence fetch rules, escrow reads, registration and a GitHub evidence dry run (built and tested with mocks; read and fetch checked on the live server)**
+- New `agent/safe_fetch.py`: the only way the server fetches evidence. https on port 443 to `api.github.com` only; every address the name resolves to and the address the connection actually reached must be public (private, loopback, link-local, shared, multicast, IPv4-mapped, NAT64 and 6to4 addresses are refused); no redirects, no proxy from the environment, a 256 KB cap and a 6-second limit. A peer address that cannot be read is refused. Callers cannot pass a URL: `agent/evidence.py` builds it from a validated owner, repository and pull-request number
+- `agent/evidence.py` turns a pull request into facts (repository, number, merged, merge time and commit, base branch, author) and an evidence hash, the SHA-256 of those facts in canonical JSON. The title and other free text never enter it; an unexpected shape is a failure
+- New `agent/escrow_chain.py` (read-only; it cannot send a transaction) and an `escrows` table. Routes: `POST /admin/escrows`, `GET /admin/escrows`, `GET /admin/escrows/{id}`, `POST /admin/escrows/{id}/evidence-check`, public `GET /escrows` and `GET /escrows/{address}` (see the API table). Registration is accepted only if the contract itself ties the escrow to the signed-in business; another business's escrow answers 404
+- Checked on the live server on Oct 27: the escrow read matches the deployment; a real merged pull request gave facts and a hash that recompute from the public pull request; pull requests that do not exist failed with the GitHub 404; `GET /escrows` answered an empty list. The wallet-signed routes were not run live (no admin screen yet). [Record](docs/rollouts/2026-10-27-escrow-reads-and-evidence.md)
+- 116 new Python tests (642 in total). Eighteen guards were broken on purpose and each was caught. `EscrowChain.snapshot()` was also run against a real local copy of the contract. The 111 Foundry tests are unchanged and were not run for this release; the Node suites are unchanged and `site/verify.test.js` and `admin/admin.test.js` passed on a clean clone
+- New table `escrows` is created on first start; nothing existing changes and no public figure moves. No hash-format change and nothing new in the ledger
+- Not in this release: the agent's commit and release, a decision record for it, admin actions to fund, withdraw and override, a proof-page view, and any real engagement
+
+**v1.3.2: Phase H, piece 1, the MilestoneEscrow contract (deployed on Arc Testnet and tested with Foundry; not source-verified on the explorer)**
+- New `contracts/MilestoneEscrow.sol` and `test/MilestoneEscrow.t.sol` (42 tests, one a fuzz test). One instance per contractor job: three different roles (agent, approver, contractor), 1 to 50 milestones with fixed amounts and non-zero `requirementsHash`es, an `agentReleaseLimit` above which only the approver can release, commit-then-release with a commitment bound to the contract, chain, milestone, evidence hash and reasoning hash, approver override, reject, pause, agent rotation, two-step approver rotation, and a withdraw that cannot touch the balance reserved for Pending milestones
+- **Deviation from the design drafted earlier, stated here:** the draft had a `fund` function and a requirements hash agreed at funding. The build fixes the milestones and their hashes in the constructor, so they cannot change afterwards, and funding is a plain USDC transfer to the contract, so there is no funding function. The "approver confirmation above a threshold" is the contract's `agentReleaseLimit`
+- Deployed once as a reference deployment: [`0x9752F995739C8A171AbD24944925EaF4d2971dd5`](https://explorer.testnet.arc.io/address/0x9752F995739C8A171AbD24944925EaF4d2971dd5), transaction [`0x906d8cc3...57a6b5`](https://explorer.testnet.arc.io/tx/0x906d8cc3d1d4d474dfc418b626b197341b1dc026427a8c2788588b2a6257a6b5). Read back with `cast call` (roles, limit, three milestones, pending total 800000) and compared with a local build: same length, same metadata tail, 110 bytes differ, which fits the three immutable values. The record is [`docs/rollouts/2026-10-24-milestone-escrow-deploy.md`](docs/rollouts/2026-10-24-milestone-escrow-deploy.md)
+- **Explorer source verification failed at deployment, failed on a second run (a third was answered `Too many requests`) and failed when submitted by hand, so the contract is listed as not verified** (Documented bugs, #12). It was never funded, and no commit, release, override or withdraw was sent, so none has a live run
+- Tests: 111 Foundry tests pass (the 69 earlier ones and 42 new), run in the build chat with a static solc 0.8.20 and again on the server. Six escrow guards were broken on purpose and each was caught. No Python, API, site or database change: the 526 Python tests and the Node suites are unchanged and were not run for this release
+- Not in this release: a backend module that commits and releases, routes to register and read an escrow, evidence fetching with its SSRF rules, admin actions to fund, withdraw and override, a proof-page view, and any real engagement
+
+**v1.3.1.2: Phase P3, rollout records, an evidence-first README and a traction counting fix (built and tested with mocks)**
+- New [`docs/rollouts/`](docs/rollouts/README.md): eight records (domain payment, multi-business contracts, shadow-mode payments, first ledger anchor, red team, Gateway deposit, the Outcomes reading, the demo run) and an index. Each says what ran, gives the transaction and decision hash, and says what failed, what was not captured and what changed afterwards. Facts were read from the live API on Oct 23 (decision verification, the traction and ledger routes) and from earlier runs recorded in this README; a hash or link that could not be checked is not in them
+- The README now opens with an Evidence section: a payment, a contract refusal, the anchored ledger, the shadow payments, the demo run and the Gateway deposit, each with its link
+- **Fix, found by reading the live traction route for these records:** `GET /businesses/{slug}/traction` counted invoices of every origin in `live` and in `latest_paid`, so a paid demo invoice (DEMO-1-A) and relabelled test runs showed as the business's live traction, and the helper text the admin site builds for `arc-canteen update-traction` would have repeated them. `live` and `latest_paid` now count origin `agent` only; manual and demo figures are in a new `not_traction` block and each paid row carries its `origin`. The proof page's per-business card says what is shown apart. The route was added in v1.2.8.3, so this had been the case since then; the two `update-traction` posts in the CLI history predate it, so none used the wrong numbers. `GET /stats` and `GET /outcomes` already kept origins apart and are unchanged
+- The proof page's step 3 of "Try it in 5 minutes" now describes both outcomes of the matching demo invoice: the first live run paid it (the owner's wallet was already an approved vendor), where a new owner's would be escalated
+- No contract change, no hash-format change, nothing new in the ledger. 4 new Python tests (526 in total) and new Node checks; the 69 Foundry tests are unchanged and were not run for this release. Not in this release: a live run of the pause with a stated reason or of the maker-checker rule, and any outside business
+
+**v1.3.1.1: Phase P2, the demo path (built and tested with mocks)**
+- New `POST /demo/seed` (admin session) and a "Load demo data" button on the admin Invoices tab, behind a confirmation. It adds a demo vendor (`Demo Supplies (demo)`, paid at the signed-in owner's own wallet), a 0.01 USDC purchase order `DEMO-<run>-PO` with its receipt, and invoices `DEMO-<run>-A` (matches), `-B` (no purchase order) and `-C` (wrong amount), each run through the real `process_invoice`. The seed itself needs no wallet signature: the invoices are submitted by `demo-seed`, which is not the owner's wallet, so the owner can release an escalation afterwards without tripping maker-checker
+- Everything is origin `demo`. It never counts as traction, never enters the Outcomes agent figures, and is shown apart. Two runs a day per business (429 after), a clear 422 when the business has no usable category, and a failure on one invoice is reported without hiding the others
+- Changed, public: the agent decision totals in `GET /stats` (Paid, Held, Escalated, decisions) now also leave out decisions on `demo` invoices, as they already left out shadow ones, so earlier home-page demo rows no longer count in them. `GET /decisions` rows carry `is_demo`, and the proof-page feed says "demo data, not counted"
+- The proof page has a "Try it in 5 minutes" section; the admin invoice list carries `origin` and labels demo rows
+- Deviation from the handoff plan: the plan listed "hold (no PO)" and "refuse (over limit)". The code escalates an invoice with no purchase order and has no demo over-limit case, so the demo shows what the code really does: three escalations, or one payment and two escalations once the demo vendor is approved
+- No contract change, no hash-format change. 15 new Python tests (522 in total) and new admin Node checks. The 69 Foundry tests are unchanged and were not run for this release
+
+**v1.3.1: Phase P1, Outcomes (built and tested with mocks)**
+- New public `GET /outcomes` (`?business=<slug>`) and an Outcomes block on the proof page, for live invoices only. Figures: invoices processed; decided alone (paid by the agent with no person releasing it, plus held); escalated (waiting, released by a person, rejected by a person); person agreement (the share of settled escalations a person rejected, with its count, null until one is settled); duplicates caught; USDC paid; median seconds from submission to confirmed payment. Own and outside businesses and the origins `agent`, `manual` and `demo` are reported apart and never summed; shadow figures stay in their own block; archived businesses leave the aggregate
+- Each figure comes from one SQL statement in `backend/outcomes.py`; the response returns those statements as `queries` and plain definitions as `definitions`, so anyone can reproduce a number. The line "Outside businesses: N confirmed" is written by code from the business counts, never by a model
+- New `invoices.settled_at`: stamped once, only when the agent records a confirmed payment of its own (a paid status with its transaction id). A row only re-marked paid because the chain already had the payment gets no time, so the median never counts it. Older databases gain the column in place and their earlier payments are reported as `without_timing`, not estimated
+- A release by a person is recognised from the `approve_escalation` action the server recorded for that invoice in that business; a release recorded for another business never counts
+- The proof page's Outcomes view is a tested function in `site/verify.js` (`outcomesView`), shown beside the existing counts; `/outcomes` is listed as a public route in `agent.json`
+- No contract change, no hash-format change, nothing new in the ledger. 16 new Python tests (507 in total); seven of the new guards were broken on purpose and each was caught; new Node checks for the view. The 69 Foundry tests are unchanged and were not run for this release. Not in this release: the "try it in 5 minutes" demo path and the rollout records (the rest of Phase P)
+- README read top to bottom and rewritten to match the code: badge and every test count, the Current line, the Sep 27 table, Features, Planned, the roadmap (a stray " . " in the Oversight row is fixed), the API table, the trust model, the project tree and Tests
+
+**v1.3.0.2: the `arc-escrow` comparison (docs only, no code change)**
+- The "Model output is an input" line now says what Circle's `arc-escrow` sample does, from its code: the app releases funds when a GPT-4o vision answer returns `valid: true` with `HIGH` confidence, and the escrow contract's `withdraw` does not check the work. It no longer says "bare JSON with no structural check", which overstated it. The Current line is updated.
+
+**v1.3.0.1: the Sep 27 starting point (docs only, no code change)**
+- New "Since Sep 27" section: the starting point and the end, checked against `git log` (one commit, `LICENSE` only, on Sep 27; the first build commit is Sep 29). It says plainly that there is no outside business or paying user. The Current line is updated
+
+**v1.3.0: Phase O, oversight controls (built and tested)**
+- Maker-checker: new `invoices.submitted_by` (the admin's wallet, or `key:<id>` for an API key; null for older invoices). `GET /admin/invoices/{id}/escalation?purpose=approve` answers 403 for an invoice the signed-in wallet submitted, and the admin site shows a disabled Approve button with the reason; reject and return stay open. Approve and reject now claim the invoice row (`escalated` to `paid` or `rejected`), so a second settlement answers 409. The contract has no maker-checker, so an approval made by hand on-chain is recorded as it happened, logged as `maker_checker_bypass` and answered with a warning
+- Pause with a reason: `set_paused` in `POST /admin/actions` needs the claimed state and a reason, checks the contract is in that state (422 if not, 503 if unreadable), logs `paused: <reason>` in the activity log, writes an `ADMIN_PAUSED` or `ADMIN_RESUMED` ledger entry with the transaction hash (a failure to write it never undoes the pause), and stores a `pause_log` row. New public `GET /pause-status` and a banner on the admin site and the vendor portal
+- The payment step reads the pause state before it hashes anything: paused means the invoice is held with `held_because: paused` (nothing is committed, paid or anchored), an unreadable state pays nothing. `POST /admin/invoices/{id}/rerun` takes such a hold back to the agent once payments resume. The invoice pre-flight says `would_hold` while paused. A shadow approval while paused answers 409 and the invoice keeps waiting; a person's own approve, reject or return of an escalation is never blocked by a pause
+- Figures written by code: new `agent/figures.py`. The escalation prompt gives the model placeholders (`{amount}`) and tells it to write no digits; text with a digit of its own, an unknown placeholder or stray braces is replaced by the code-written reason, and the placeholders of an accepted text are filled by code
+- New columns `invoices.submitted_by` and `invoices.held_because` and a new table `pause_log`; older databases gain them in place. No contract change, no hash-format change, no change to how decisions enter the ledger (`log_decision` only). Not in this release: a hard block on releasing an escalation for a vendor in a screening tier (the screening tiers are Phase G), and a second approver role
+- 47 new Python tests (491 in total); 6 of the new guards were broken on purpose and each was caught. The admin Node test covers the disabled release button, the pause reason and the banner. The 69 Foundry tests are unchanged and were not run for this release
+- README read top to bottom and rewritten to match the code: badge and every test count, the Current line, Features, Planned (the oversight item is gone), the payment steps, the trust model, the roadmap, the API table, the project tree and Tests
+
+**v1.2.10.1: Phase F2, Gateway deposit from the agent wallet (built, tested with mocks, run live once)**
+- New `scripts/gateway_deposit.py --business <slug> --amount <USDC>` (and `--dry-run`, which reads and prints only). It checks the agent wallet is the contract's `agent()`, that contracts exist at the Gateway Wallet and USDC addresses, and that the wallet holds the amount plus 0.1 USDC for gas; any unreadable or wrong read stops it with nothing sent. The amount must be above zero, at most 6 decimals and at most 5 USDC
+- Three steps, each after a typed `yes`: the audit row (action `GATEWAY_DEPOSIT`, `manual`, written and ledger-chained before any on-chain call), `approve(GatewayWallet, amount)` for the exact amount (skipped if that allowance exists, and checked again afterwards), then `GatewayWallet.deposit(USDC, amount)`. It never sends a plain transfer, which Circle's docs warn loses the funds. Afterwards it reads the Gateway balance and says plainly when it has not moved yet (Gateway credits a deposit after finality)
+- The audit row keeps no `chain_tx_hash`, because the proof page's Verify looks for a payment event and a deposit has none; the transaction hash is printed and listed under Traction. The row is not counted in `/stats`
+- `agent/contract.py`: `usdc_balance_of`, `usdc_allowance`, `has_code`, `approve_usdc`, `gateway_deposit`. `agent/config.py`: `GATEWAY_WALLET_ADDRESS`, defaulting to Circle's testnet GatewayWallet `0x0077777d7EBA4688BDeF3E311b846F25870A19B9` (Circle's contract-addresses page; the quickstart gives the same address)
+- Run live on Oct 15 on the original business: 3 USDC deposited, and Circle's Gateway API read 3 USDC back for the agent wallet (see Traction). Deposit only: no gasless spend is built and no decision uses the Gateway balance
+- README read top to bottom and rewritten to match the code: the Traction and "Why" sections still said 380 Python tests while the badge said 404 (now 444 everywhere); the red-team result is in the roadmap, Traction and the v1.2.9.4 entry; the selection for the XERJ Corpus Hub is listed as outside recognition, not traction; every route is spelled out in the API table, the tree equals `git ls-files`, the Gateway rows and the Circle tools count describe a deposit and no spend
+- No contract change and no database change. 40 new Python tests (444 in total); the 69 Foundry tests are unchanged. Not in this release: a gasless spend from the Gateway balance, or any use of that balance in a decision
+
+**v1.2.10: Circle Gateway balance (Phase F1), shorter Links section**
+- New `agent/gateway.py` reads the USDC balance Circle Gateway holds for an agent wallet on Arc (domain 26) with `POST /v1/balances` and the documented body. It sends no key, times out after 8 seconds, caches a good answer for 15 seconds, counts only the row for our domain and depositor, and returns null on any failure (status, shape, bad number, timeout, bad address); a good answer with no row for the domain is a zero.
+- `GET /admin/overview` returns `gateway: {domain, depositor, balance_usdc}`, and the admin Overview shows a "Gateway balance (agent wallet)" card, or "Unavailable". Read only: nothing is deposited or spent, and no payment decision uses it.
+- README Links section cut to the product's own addresses; contract addresses and explorer links stay in the Contracts section.
+- No contract change. 24 new Python tests (404 in total); no test calls the network, a default stub answers 503.
+
+**v1.2.9.5: live approver on the public business list, README and deploy notes**
+- `GET /businesses` read the approver from a column copied when the business was created, so the original business still showed the old deployer wallet after the Oct 4 hand-over. It now reads `approver()` from each contract (own 15-second cache, separate from the sign-in cache, so an unauthenticated route never feeds sign-in) and returns null if the chain cannot be read. The stored copy is refreshed on a successful read; nothing authorises from it. Documented bug 9 is fixed.
+- No contract change. 2 new Python tests run the real route against fake chains (380 in total); both fail on the old code.
+- README read top to bottom and rewritten to match the code. The Planned list holds only what is not built; the architecture diagram and the text under it show the ledger and the anchor; the project tree equals `git ls-files`; every route in `backend/main.py` is in the API table, including `POST /admin/invoices/{id}/rerun` and `can_reopen`; the Tests section has the commands and short, accurate descriptions
+- The model's role is described as it is: a narrative only when the rules escalate an unregistered vendor, plus a recorded second opinion on each decision that never acts
+- Contracts section: the test business's contract and both agent wallets are listed, the approver of the original contract is the wallet from the Oct 4 rotation, and the Links table has its full set of rows again
+- Documented bug 9 added (fixed in the same release): `GET /businesses` showed a stored approver that was out of date
+- `deploy/DEPLOY.md` and `.env.example` brought into line: static file lists include the images, a stale version number is fixed, the ledger key is a first-start requirement, and variables no code reads yet are marked as reserved
+- Checked on a clean clone of v1.2.9.4: 69 Foundry tests, 378 Python tests and the Node suites pass; with the approver fix, 380 Python tests
+
+**v1.2.9.4: Phases E4 and E5, red team and key custody (built and tested with mocks)**
+- E5, key custody: `DEPLOYER_PRIVATE_KEY` is optional in `agent/config.py`. A search of the repo found no code that signs with it (agent transactions go through Circle wallets; the ledger uses its own Ed25519 key), so the server can run without it
+- E5, return to agent: new admin action `reopen_escalation`. The wallet sends `reopenEscalation(bytes32)` (selector `c5cf0d03`); `POST /admin/actions` accepts it only for a v2 contract, only if the transaction's `EscalationReopened` event matches the invoice's own reasoning hash, and then re-runs the stored invoice through the normal pipeline. `GET /admin/invoices/{id}/escalation` now also returns `can_reopen`
+- E5, re-run: `POST /admin/invoices/{id}/rerun` takes an invoice in `error` back to the agent (own business only, one run at a time, logged as `rerun_invoice`). A failed run leaves it in `error`; the pipeline checks the chain first, so an invoice already paid is never paid twice
+- E4: `scripts/red_team.py` writes an audit row, commits and tries `pay` to a fresh non-approved address for 1 unit, expecting a revert, marks the row `contract_refused`, then anchors the ledger head. It asks for "yes" before every on-chain step and stops loudly if the contract does not refuse. It needs the agent wallet and your confirmation at each step
+- No contract change (the 69 Foundry tests are unchanged). 9 new Python tests in `test_admin.py` and 3 in `test_red_team.py` (378 in total); the wallet call encoding has a new check
+- Not in this release: a v1-contract equivalent of Return to agent (the contract has none)
+- Run live on Oct 15, after this release was pushed: the red team ran on the original business and the contract refused the payment (`Vendor not approved`, at Circle's gas estimation, so no pay transaction reached the chain); the refusal row was anchored in sequence 16 and `/ledger/verify` returned `fully_verified` true. Details and links are under Traction
+
+**v1.2.9.3: Phase E3, model-versus-rules log (built and tested with mocks)**
+- `agent/second_opinion.py`: for each invoice decision the rules verdict acts as before; the model is asked for `{action, reasoning, confidence}` on facts computed by code, with a 3-second limit, before the hash is written. Both verdicts go into the hashed record as hash format 3 (`comparison`); formats 1 and 2 are untouched and still hash to their known values, and the proof page checks all three
+- No model, `MODEL_COMPARE` off, a timeout, an error or an unusable answer: `model_action`, `model_confidence` and `agreed` are null, never counted as agreement. Model text containing a figure the code did not provide is replaced before it is stored
+- New `audit_log` columns `rules_action`, `model_action`, `agreed`, `model_confidence` (readable columns, checked against the hash by the proof page) and `contract_refused`, set when a transaction for the decision reverts on-chain (after the fact, so it is not in the hash). Older databases gain the columns; older rows stay null
+- New public `GET /metrics/decisions` (`?business=<slug>`), live and shadow apart, by origin and by business; archived businesses leave the aggregate. The proof page shows the rules verdict and the model's opinion on a decision it checks
+- No contract change; the ledger entry shape is unchanged. 31 new Python tests (366 in total) and new Node checks. Not in this release: letting the model make a stricter-only call (hold instead of pay); the model is an input, never the release condition
+
+**v1.2.9.2: Phase E2, on-chain anchoring of the ledger head (built and tested with mocks)**
+- New `agent/anchor.py` and table `ledger_anchors`. A business's own agent wallet calls `LedgerAnchor.anchor(head, sequence)` (head is the newest entry hash). The background job runs every 25 new entries or 6 hours, whichever comes first, only if the head moved, and only for a business that already has a first anchor. It is off unless `LEDGER_ANCHOR_AUTO=1`. A failure is logged; decisions and payments never wait for it
+- Before sending it checks the agent wallet has gas, that the wallet is the agent its contract names, and that the chain is not already ahead of the ledger. After sending it reads the chain back and records the anchor only if the contract shows that head for that agent
+- `GET /ledger/verify` adds `anchor` and `fully_verified`; a head that is not in the chain at its anchored sequence, or a chain shorter than the anchored sequence, fails the check. An unreadable chain is reported as unknown, never as verified. New public `GET /ledger/entries`
+- The proof page gets a "Verify the whole chain" button: every hash, link and Ed25519 signature re-checked in the browser, then `agent()` and the anchor read by `eth_call` on public RPCs. A browser without Ed25519 support says so and never reports "fully verified"
+- `scripts/anchor_ledger.py status` (read-only) and `anchor --business <slug>` (shows the call, asks for "yes"). No contract change, no hash change; the ledger is untouched
+- 27 new Python tests (335 in total) and new Node checks. Not in this release: proof that the anchor is independent of the operator (same operator, separate wallet), or anything about entries after the newest anchor
+
+**v1.2.9.1: Phase E6, owner-created categories and entered invoice amounts (built and tested)**
+- New `categories` table (`business_id`, `id` 0 to 255, `name`), unique per business by id and by name in any case. The original business is seeded with 0 and 1; every other business starts empty. Every query takes `business_id`, and another business's ids answer 404 or 422
+- `GET`, `POST` and `PATCH /admin/categories`: the server picks the next free id; a rename changes only the name. The owner then signs `setCategoryDailyLimit` from their own wallet (existing Limits-tab call). The hard-coded two-entry enum is gone from the API, the admin forms, the vendor portal and the owner checklist
+- A purchase order or invoice needs a category of its own business whose on-chain daily limit is above zero right now. An unknown category or a zero limit is a 422; a limit that cannot be read is a 503 and nothing is saved (fail closed). A dry run only needs the category to exist
+- Invoice amounts have no default anywhere. The admin shadow form and the vendor portal form fill in the purchase-order amount, show it, and send whatever the person enters; empty or malformed amounts send nothing. The 0.01 USDC three-way-match tolerance stays as a rounding allowance, now compared in whole micro-USDC, and is stated in the README and `agent.json`. An amount further off the order is escalated
+- No contract change, no hash-format change, no change to the ledger: decisions still go through `log_decision`
+- 23 new Python tests (308 in total) and new Node checks for the admin and portal forms, including a scan that no form sends the purchase-order amount unchanged. Not in this release: reading amounts from receipts (PDF or photo), which will always need a person to confirm the value
+
+**v1.2.9: Phase E1, signed hash-chained ledger, archive flag, relabel tool (built and tested)**
+- New `ledger` table per business: `sequence`, `prev_hash`, `entry_hash`, canonical JSON body, `key_id` and an Ed25519 signature. The audit row and its ledger entry are written in one `BEGIN IMMEDIATE` transaction. With no usable key nothing is logged and nothing is paid
+- One-time ordered backfill for a business with no chain, starting from a genesis entry that records how many entries were backfilled and that this shows nothing about the period before. Decisions added behind the chain later show as `unchained_decision`, never auto-chained
+- `GET /ledger/verify?business=<slug>` and `GET /.well-known/ledger-key`. Detects fork, bad sequence, bad body, bad hash, broken link, wrong key, bad signature, bad genesis, duplicate, missing or changed decision. The API refuses to start without the key and logs any business whose chain fails at startup
+- Archive flag (reuses `businesses.status`): operator-only `POST /operator/businesses/{id}/archive`; archived is read-only, excluded from public lists, `/stats`, `/decisions` and the manifest, and still verifies. Archive button in the admin site
+- `scripts/relabel_origin.py` lists self-run test invoices first and relabels them `demo` only for the exact rows you confirm; `scripts/ledger_key.py` creates the key without printing it
+- `deploy/DEPLOY.md` backup lines fixed to `cp ceedebooks.db ~/backups/ceedebooks.db.pre-<version>`, with an "Upgrading to v1.2.9" section
+- New Python tests for the ledger, archive and relabel tool (285 in total). Not in this release: on-chain anchoring, browser-side chain check, key rotation. The key and database share a server, so this is tamper-evident against partial edits, not against someone holding both
+
+**v1.2.8.3: Phase L4, shadow mode and per-business proof (built and tested)**
+- Invoices gain `mode` (`live` or `shadow`), `real_amount` (exact decimal text) and `real_currency`. A shadow invoice must carry both, a live one must not, a vendor cannot submit one, and the model layer refuses a half-shadow invoice. Older databases gain the columns in place and their invoices stay live
+- A shadow decision to pay is hashed as `INVOICE_SHADOW_PENDING` and parked as `awaiting_owner`: no commit, no escalation, nothing on-chain. Held and escalated shadow decisions behave as live ones
+- `POST /admin/invoices/{id}/shadow-approve` pays through the existing commit-then-pay (so the contract still enforces vendor, limits and pause) and records agree only after the payment confirms; a failed payment goes back to waiting; a double click pays once. `shadow-reject` pays nothing and records disagree. It deliberately does not reuse the on-chain escalation: `approveEscalation` pays with no limit check and would put a public escalation event on-chain for something that is not one
+- New table `decision_verdicts` and `POST /admin/decisions/{hash}/verdict` for held and escalated shadow decisions: one final verdict per decision, only for the admin's own business
+- The real amount and currency are written into the code-produced reasoning text, so the hash covers them. No hash-format change; live reasoning text is byte-identical
+- `/stats` and the new public `GET /businesses/{slug}/traction` keep shadow apart from live and show the agreement rate with its `n` (null when there are no verdicts). Shadow decisions are excluded from the live paid, held and escalated counts and from the invoice metrics
+- Admin site: a "Submit a shadow invoice" form, Approve and Reject buttons, verdict buttons, and a "Copy traction update" block for `arc-canteen update-traction` (no blank lines). Proof page: a per-business card with the shadow label, the agreement rate and links to check the latest payments. Onboarding page: a short shadow-mode note
+- 27 new Python tests (235 in total) and new Node tests for the admin flows, the copy block and the proof card
+- Not in this release: an FX oracle, bank or ERP integration, PDF or email intake. The wallet and portal Node suites read the compiled contracts and run in CI after `forge build`
+
+**v1.2.8.2: Phase L3, business onboarding (built; no outside business has used it yet)**
+- A business applies with a wallet signature (`/business/apply`), the operator accepts it in the admin site's new Businesses tab, and the server creates the business's hosted agent wallet (a Circle wallet in its own wallet set). The owner then creates the contract with one transaction to `BudgetFactory.createBusiness` from their own wallet, choosing their own daily, per-payment and weekly limits at `portal.ceedebooks.xyz/business.html`
+- The server activates a business only after `verify_business_creation` proves it from the chain: the transaction succeeded and went to our factory, exactly one `BusinessCreated` event is in it, the factory lists the new contract as a business, and the contract's own `approver()` and `agent()` match the applicant's wallet and the issued agent wallet. Checked against a real factory on a local node, and against crafted receipts for every refusal
+- Custody is stated plainly at application, at acceptance, in the README and in `agent.json` (see Custody trade-off). Each business funds its own pool and its agent wallet's fee balance; the operator funds no business
+- Operator-only controls: accept or reject, and the `external` flag (never settable on the home business). `GET /businesses`, the proof page's new Businesses section (contract and agent wallet links, per-business counts and feed) and `/stats` counts of outside businesses
+- Funding: the admin site's **Add funds** button sends a USDC token transfer from the owner's wallet into the business's contract. A plain wallet Send to the contract fails, because the contracts accept no native value
+- Admin site: any business's owner signs in at `/?business=<slug>`; transactions go to that business's contract, not a fixed one; a setup checklist for the owner. Vendor portal: `/?business=<slug>`
+- Hardening: one pending application per wallet and 2 per client, an hourly cap, single-use challenges bound to their purpose, a crash after the wallet exists never creates a second wallet, a Circle failure accepts nothing
+- 36 new Python tests (208 in total) and new Node tests for the owner page, the operator tab and the business parameter; CI runs them
+- Not in this release: moving the home business onto a factory contract (optional, last), a self-held agent mode. Hosted wallet creation was tested with a mock only; if Circle refuses it, accepting a business shows a clear error and changes nothing
+
+**v1.2.8.1: Phase L2, multi-tenant backend (no new business yet)**
+- `businesses` table; business 1 is the live v1 contract, recorded in the database (not only in `.env`). `business_id` on vendors, purchase orders, receipts, invoices, applications, rejected submissions, admin actions, API keys and the audit log. Databases from v1.2.7 migrate on first start (every existing row becomes business 1; PO and invoice numbers become unique per business, not globally)
+- `agent/contract.py` has no module-level contract any more: `chain_for(business)` returns that business's v1 or v2 handle, and every read and Circle-signed write goes through it. The v2 commitment (bound to the contract address and chain id) was checked against the real v2 contract on a local node
+- Every model query takes `business_id` as a required argument. Keys, vendor sessions and admin sessions are bound to one business; admin sign-in accepts only that business's on-chain `approver()`, and a session ends if that approver changes or its chain cannot be read
+- Hash format 2 binds the business id and contract address into every new decision; format 1 records still verify. The proof page checks both, and trusts a v2 record's contract only if the factory created it
+- `create_api_key.py --business`, `?business=` on public reads, `agent.json` lists active businesses
+- 32 new Python tests (172 in total; the existing ones now run against a fake chain), including a migration from a real v1.2.7 schema, cross-business denial on every route family and per-business session and chain-failure tests; new Node tests for format-2 records. The isolation tests were checked by breaking the scoping on purpose
+- Not in this release: creating a business, deploying anything, moving the pool (Phase L3). The live pool, API behaviour and the admin and portal sites are unchanged for business 1
+
+**v1.2.8: Phase L1, multi-business contracts (factory and anchor deployed and verified on Arc Testnet)**
+- Deployed and verified: `BudgetFactory` [`0x97b9A3802bA6B258cBeF6070532a265656bb391C`](https://explorer.testnet.arc.io/address/0x97b9A3802bA6B258cBeF6070532a265656bb391C) and `LedgerAnchor` [`0x008217BeC86462E76126F94e50eBe68fb4a41444`](https://explorer.testnet.arc.io/address/0x008217BeC86462E76126F94e50eBe68fb4a41444). Checked on-chain after deployment: the factory's USDC address is the Arc USDC, `businessCount` is 0, the anchor's sequence starts at 0. `BudgetEnforcerV2` has no standalone deployment: the factory creates one per business
+- `BudgetEnforcerV2.sol`: weekly rolling limit via `setBudget(daily, perTx, weekly)`, `reopenEscalation` (approver only, Pending only), commitments bound to the contract and chain, distinct agent and approver roles
+- `BudgetFactory.sol`: one enforcer per business, the caller becomes its approver; no admin and no funds
+- `LedgerAnchor.sol`: public anchor for a ledger head, sequence must increase per sender
+- 45 new Foundry tests (69 in total); the deployed v1 contract and its 24 tests are unchanged
+- README audited against the repo: current-version line, "what is CeedeBooks" no longer implies escrow and yield are built, architecture labels, roadmap rows and versions, Circle tools table, project tree, API table (admin logout), Setup (forge-std), live snapshot replaced by a pointer to the proof page
+- `lib/` is git-ignored so a local forge-std clone is never committed
+- The running API and the live v1 contract are unchanged; no business has been created through the factory yet (Phase L2 and L3)
+
+**v1.2.7.1: README polish (docs only, no code change)**
+- A 60-second reviewer tour with a copy-paste verification command
+- A "Trust model and limits" section: what the contract guarantees, what it does not, one operator, database audit log, testnet only
+- The tagline no longer implies escrow and yield are built; the Planned list and Roadmap now show the multi-business redeploy, audit hardening, oversight, treasury, proof and reach phases with their order
+- Contracts section describes the planned factory design; Circle tools show the honest live and planned count
+- Project tree lists `test_portal.py`
+
+**v1.2.7: Phase K2, vendor portal**
+- Vendors apply with a wallet signature (proof of control of the payee address) at `portal.ceedebooks.xyz`; the admin site has a new Applications tab. Accepting creates the vendor record only; approving the wallet on-chain stays a separate admin signature. `/vendors` stays buyer-only
+- Vendors sign in with the same wallet (15-minute sessions, no keys issued) and see only their own purchase orders and invoices; dry run first, then submit; each decision links to the proof page (`#check=<hash>` opens the check directly)
+- Spam controls on applications: 1 pending per wallet, 3 pending per IP, 5 per hour per IP, body cap; applications and contact details are private
+- Invoices now carry an `origin` (`agent`, `manual`, `demo`); the hand-run domain payment is relabelled `manual` on first start. Only the buyer can label a demo run. Rejected duplicate submissions are counted (counts only, no vendor data)
+- `/stats` and the proof page show invoices processed, USDC paid and duplicates caught, split by origin
+- Agent manifest updated: vendors apply with a signature; wallet sign-in described
+- One look across the proof page, the vendor portal and the admin site: the CeedeBooks logo (favicon and touch icon included), the same typeface and palette, the receipt as the action card. The portal is mobile first: the headline, then the Connect button, then the reassurance points
+- 31 new Python tests (140 in total) and a Node test for the portal; CI runs it
+
+**v1.2.6.2: admin site on phones, README brought up to date**
+- Admin header stays on one row (the wallet address shortens instead of pushing Sign out down)
+- Tables become labelled cards under 40rem, so the reasoning hash and action buttons are no longer clipped; action buttons are larger to tap
+- README: built features moved out of Planned, roadmap now lists every phase with its version and status, live snapshot added to Traction, stale `verify` note fixed, test count corrected to 109
+- Test: table cells carry their column label (the phone layout reads it)
+
+**v1.2.6.1: admin overview fix**
+- Fixed the admin Overview and Limits pages, which showed no spending categories because a name in `backend/main.py` hid the category list. Added a regression test that runs the real chain snapshot
+
+**v1.2.6: Phase K1, admin site**
+- `admin.ceedebooks.xyz`: a private admin app. Before a wallet connects it shows only a Connect wallet button; every action after sign-in is a wallet signature, and the admin never types an API key
+- Admin identity is the contract itself: the `/admin` API accepts a session only if its signature recovers to the current on-chain `approver()`, and a session ends the moment the approver changes (or the chain cannot be read). One-time challenges, 15-minute idle and 2-hour absolute session limits, tokens held in browser memory only
+- Admin actions: add and approve or revoke vendors on-chain, create purchase orders, confirm receipts, approve or reject escalated payments, set category limits, pause and resume payments, view the activity log. On-chain steps are signed in the admin's own wallet; the server then verifies each transaction on-chain before recording it
+- A wallet proposed with `proposeApprover` can take over with one **Accept admin role** button, so the approver key can leave the server
+- `agent/contract.py` reads `approver`, `pendingApprover`, `paused` and the limits; new `admin_actions` table; CORS allows the admin origin and the `Authorization` header
+- Tests: wrong signer, non-approver, replayed and expired challenges, approver rotated mid-session, unreadable chain, every admin route without a session, a buyer API key on admin routes, transaction verification and escalation settling (Python); call encoding and the sign-in and approval flows with a mocked wallet (Node, run by CI)
+
+**v1.2.5.1: proof page wording and README**
+- The ceedebooks.xyz domain payment is now presented as what it is: a real bill, paid by card and reimbursed through `BudgetEnforcer`, run by hand and shown apart from the agent's decisions
+- Fewer repeated network caveats on the proof page; fixed a typo in its "does not prove" list
+- README test counts, project tree and status line brought up to date (79 Python tests)
+
+**v1.2.5: invoice pre-flight and agent manifest**
+- `POST /invoices/preflight`: a dry run of the payment pipeline that tells a vendor (or the buyer) whether an invoice would be paid, held or escalated, and why, before anything is saved or sent on-chain. It also flags an invoice that would exceed today's budget, which the contract would otherwise refuse at payment time
+- `GET /.well-known/agent.json`: public manifest of the vendor flow and guarantees for agent-to-agent use
+- The invoice access checks are shared between `/invoices` and `/invoices/preflight`, with 17 new tests (79 in total)
+
+**v1.2.4: Phase C, public proof page**
+- Static proof page at `ceedebooks.xyz` (`site/`): live decision counts, a feed of recent decisions, and a Verify button that recomputes the SHA-256 in the browser, checks the displayed record is what was hashed, and reads the matching `PaymentMade`, `PaymentEscalated` or `DecisionLogged` event straight from a public Arc RPC
+- New public endpoints `GET /stats` and `GET /decisions`; `GET /decisions/{hash}/verify` now also checks the recorded on-chain transaction (this closes the "verify is off-chain only" limitation)
+- Audit rows now store the on-chain transaction hash (`chain_tx_hash`; existing databases are migrated on startup)
+- Held decisions are now also written on-chain with `logDecision`, so refusals are provable like payments (best effort: a failed anchor never blocks or changes the hold)
+- Page logic tested in Node (`site/verify.test.js`, run by CI) against records produced by the Python hashing code
+
+**v1.2.3: Phase B, deployment**
+- Added `deploy/` (nginx site config, systemd unit, DEPLOY.md): API behind nginx with a Let's Encrypt certificate at `api.ceedebooks.xyz`, one uvicorn worker under systemd, `TRUST_PROXY=1`
+- README status line and test description brought up to date
+
+**v1.2.2: Phase A, API auth and safe intake**
+- `X-API-Key` authentication with `buyer` and `vendor` roles (keys stored as SHA-256 hashes), keyless read-only `/decisions/*`; `scripts/create_api_key.py` to create and revoke keys
+- Receipt role is set by the server from the key, never from the body; vendors cannot create vendors, POs or receipts, and can submit and read only their own invoices
+- Treasury runway computed server-side (`agent/treasury.py`) and removed from the request body; fails closed to 0 if the pool balance cannot be read
+- Invoice pays the wallet on file; invoice category must match the PO's
+- Exact-decimal amounts, 413 body cap, per-IP rate limit, failed-key throttle, CORS limited to the site origin, internal errors no longer returned to clients
+- New tests in `agent/tests/test_api_auth.py` covering every denied path
+
+**v1.2.1: Phase 2 follow-up**
+- Added `agent/categories.py` (the README already listed it) and registered category 1 (infrastructure) on-chain
+- Added `.github/workflows/ci.yml`: `forge test` and `pytest` on every push, plus a CI badge
+- Pinned `agent/requirements.txt` to exact versions
+- Tests no longer poll Circle: `wait_for_transaction` is mocked, so the suite runs offline and with newer Circle SDK versions
+- Added a Traction section and `scripts/pay_domain.py`; first self-owned vendor bill (the `ceedebooks.xyz` domain) paid through `BudgetEnforcer`
+
+**Phase 2: AP/AR engine**
+- Added FastAPI intake (vendors, POs, receipts, invoices, decisions, verify)
+- Added three-way match with PO number, amount tolerance, independent receipt witness, vendor wallet match
+- Added rules-baseline pay / hold / escalate with an LLM narrative on vendor-registration escalations (a recorded second opinion on every decision came in v1.2.9.3)
+- Added retry guard (`paid` check on-chain before any action) and confirmed-commit-before-pay
+- Audit log now hashes canonical JSON, stores the exact `hash_input`, and records `model_used` explicitly
+- Added `wait_for_transaction`: every commit, payment, and escalation is polled to a terminal on-chain state before being trusted or recorded — closes a phantom-payment gap where a reverted transaction could have been logged as paid
+- Added input validation on wallet addresses (0x + 40 hex), a clean 409 on duplicate invoice numbers, and `GET /vendors/{id}` / `GET /decisions/{hash}` for inspecting stored records directly
+- Confirmed live on Arc Testnet: a real invoice processed end-to-end through the deployed contract, vendor balance verified on-chain
+
+**Phase 1: Foundation**
+- `BudgetEnforcer.sol` deployed and verified on Arc Testnet; 24 Foundry tests
+- Circle treasury wallet, Groq health check, Canteen RPC in `.env.example`
