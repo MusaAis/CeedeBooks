@@ -23,6 +23,9 @@ _ABI = [
 ]
 
 
+_RELEASED_TOPIC = contract._hex(Web3.keccak(text="MilestoneReleased(uint256,bytes32,bytes32,uint256)"))
+
+
 def usdc_text(units: int) -> str:
     """Exact USDC text for raw 6-decimal units, computed by code."""
     return f"{Decimal(int(units)) / Decimal(10**6):f}"
@@ -57,6 +60,20 @@ class EscrowChain:
             "pending_usdc": usdc_text(f.pendingTotal().call()), "withdrawable_usdc": usdc_text(f.withdrawable().call()),
             "milestones": milestones,
         }
+
+
+    def release_events(self, tx_hash: str) -> list:
+        """The MilestoneReleased events this escrow emitted in one transaction: [{event, reasoning_hash, block, success}].
+        Events from any other contract are ignored. Raises if the chain cannot be read."""
+        receipt = contract._w3.eth.get_transaction_receipt(tx_hash)
+        found = []
+        for log in receipt["logs"]:
+            topics = [contract._hex(t) for t in log["topics"]]
+            if str(log["address"]).lower() != self.address.lower() or len(topics) < 3 or topics[0] != _RELEASED_TOPIC:
+                continue
+            found.append({"event": "MilestoneReleased", "reasoning_hash": topics[2], "block": receipt["blockNumber"],
+                          "success": receipt["status"] == 1})
+        return found
 
 
 def escrow_for(address: str) -> EscrowChain:

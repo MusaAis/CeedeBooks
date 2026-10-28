@@ -4,7 +4,7 @@
 ![CI](https://github.com/MusaAis/CeedeBooks/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Foundry tests](https://img.shields.io/badge/forge%20tests-111%2F111%20passing-brightgreen)
-![Python tests](https://img.shields.io/badge/pytest-642%2F642%20passing-brightgreen)
+![Python tests](https://img.shields.io/badge/pytest-693%2F693%20passing-brightgreen)
 ![Network](https://img.shields.io/badge/Arc-Testnet-informational)
 
 *"Ceede" means money in Pulaar/Fulfulde.*
@@ -13,9 +13,9 @@ An autonomous accounts-payable agent for African SMEs on Arc: it validates and p
 
 Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 – Oct 17, 2026.
 
-**Status: v1.3.2.2** (docs only: this README split into [`docs/`](docs/README.md) and a [changelog](CHANGELOG.md)). Code: v1.3.2.1, Phase H piece 2 (read-only escrow routes and a GitHub evidence dry run). Next: the agent's release path for the escrow. See the [roadmap](docs/roadmap.md).
+**Status: v1.3.2.3**, Phase H piece 3: the agent's release path for a milestone escrow. On an admin's request the agent decides with code only, records the decision (hashed, chained and signed) and, if the verdict is release, commits and then releases from its own wallet; anything above the escrow's agent limit is left to the approver. Run live once on Oct 28: one hold, one escalation and one release of 0.1 USDC from the agent wallet ([record](docs/rollouts/2026-10-28-escrow-release-live.md)). Before it: v1.3.2.2 (docs split), v1.3.2.1 (read-only escrow routes, GitHub evidence dry run), v1.3.2 (the contract). The admin site has an Escrows tab for it. Next: override, withdraw and pause actions and a proof-page view. See the [roadmap](docs/roadmap.md).
 
-> **Read this first.** Everything runs on Arc Testnet with test USDC. Two businesses exist and both are ours: no outside business or paying user yet, and every payment so far is self-owned. The `MilestoneEscrow` contract is a reference deployment: no funds, no engagement, nothing sends a transaction to it, and its source is not verified on the explorer. Idle-cash yield is planned, not built. Limits and guarantees: [trust model](docs/trust-model.md).
+> **Read this first.** Everything runs on Arc Testnet with test USDC. Two businesses exist and both are ours: no outside business or paying user yet, and every payment so far is self-owned. The `MilestoneEscrow` contract is a reference deployment: no funds, no engagement; it has held only our own testnet funds, and the agent's release path has been run live once, on milestone 0 with a stand-in merged pull request (the other milestones, and any reject, override, withdraw or pause, have not been run live); its source is not verified on the explorer. Idle-cash yield is planned, not built. Limits and guarantees: [trust model](docs/trust-model.md).
 
 ## Evidence you can check
 
@@ -32,6 +32,7 @@ Every row links to the explorer or to a public API route, so none of it has to b
 | A Gateway deposit | 3 USDC from the agent wallet, [`0xa022b539...caba3f`](https://explorer.testnet.arc.io/tx/0xa022b539a506cfb58f1b2fe1f509a00cce6b5b3ccc23c4ebe40a410bebcaba3f); `manual`, not a payment and not traction: [record](docs/rollouts/2026-10-15-gateway-deposit.md) |
 | A milestone escrow contract | [`0x9752F995...2971dd5`](https://explorer.testnet.arc.io/address/0x9752F995739C8A171AbD24944925EaF4d2971dd5) (not verified on the explorer), deployed in [`0x906d8cc3...57a6b5`](https://explorer.testnet.arc.io/tx/0x906d8cc3d1d4d474dfc418b626b197341b1dc026427a8c2788588b2a6257a6b5), read back with `cast call` and compared with a local build of the same source. A reference deployment: no engagement has run and it holds no funds: [record](docs/rollouts/2026-10-24-milestone-escrow-deploy.md) |
 | Escrow reads and a GitHub evidence check, on the server | The reference escrow read back through the API's own code (roles, limit, three Pending milestones), and a real merged pull request turned into facts and an evidence hash from GitHub's API; a pull request that does not exist is a failure: [record](docs/rollouts/2026-10-27-escrow-reads-and-evidence.md) |
+| An escrow release, run live | Oct 28: the agent wallet committed [`0x73ac7434...a22421f0`](https://explorer.testnet.arc.io/tx/0x73ac7434b489d13da2678cba5552b2f5339bf6c7c7f980eda905e1eea22421f0) and then released milestone 0 in [`0xc49c13dd...b83f1f`](https://explorer.testnet.arc.io/tx/0xc49c13ddf6e89980df395a88db87bdb4445d7d1997385988f18b6ab14fb83f1f) (0.1 USDC to the contractor; block 69485148). `GET /decisions/e720c5eb.../verify` returns `verified: true` and an on-chain `MilestoneReleased` match. A hold and an escalation were recorded the same day and sent nothing. All our own wallets; the pull request was a stand-in input, not proof of work: [record](docs/rollouts/2026-10-28-escrow-release-live.md) |
 
 ## Links
 
@@ -61,11 +62,11 @@ Every row links to the explorer or to a public API route, so none of it has to b
 
 The hackathon is judged on what changed from its start, so here is the starting point and the end, both taken from the git history (`git log`), not from memory.
 
-| | Sep 27, 2026 | Now (v1.3.2.2) |
+| | Sep 27, 2026 | Now (v1.3.2.3) |
 |---|---|---|
-| Repository | One commit, `dcf1f2a` "Initial commit", containing only the MIT `LICENSE` | 43 commits and 33 tagged releases, `v1.2.0` to `v1.3.2.2` |
+| Repository | One commit, `dcf1f2a` "Initial commit", containing only the MIT `LICENSE` | 44 commits and 34 tagged releases, `v1.2.0` to `v1.3.2.3` |
 | Code and contracts | None | `BudgetEnforcer` (Sep 29), then the multi-business contracts (`BudgetEnforcerV2`, `BudgetFactory`, `LedgerAnchor`, Oct 4) and the `MilestoneEscrow` contract (Oct 24); the Python engine, API, proof page, admin site and vendor portal described above |
-| Tests | None | 111 Foundry, 642 Python, 6 Node runs |
+| Tests | None | 111 Foundry, 693 Python, 6 Node runs |
 | Live system | None | An API, a public proof page, a wallet-signed admin site and a vendor portal on Arc Testnet |
 | Users | None | None outside the project: no outside business or paying user. The business that uses it is our own |
 | Real payments | None | One real vendor bill of ours (the domain, 2.20 USDC, paid by card and reimbursed through the contract, labelled `manual`); everything else is self-owned test or shadow activity, shown apart on the proof page |
@@ -89,7 +90,7 @@ It is not "an LLM with a wallet". The agent proposes; a smart contract, not a pr
 - **Oversight:** maker-checker on releases, a pause with a public reason, figures written by code
 - **Sites:** a public proof page, a wallet-signed admin site, a vendor portal and a business registration page
 - **Multi-business and shadow mode:** one contract per business from a factory; real bills mirrored as testnet payments after the owner approves
-- **Escrow (contract and read-only API):** milestone escrow with an evidence dry run; the agent's release path is not built
+- **Escrow:** a milestone escrow contract, read-only routes, a GitHub evidence dry run and the agent's commit-then-release path, an Escrows tab in the admin site, and one live release of 0.1 USDC ([record](docs/rollouts/2026-10-28-escrow-release-live.md))
 
 The full list, with limits for each item, is in [features](docs/features.md); the payment flow is in [how it works](docs/how-it-works.md).
 
@@ -122,7 +123,7 @@ set -a; source .env; set +a
 uvicorn backend.main:app   # one worker only
 ```
 
-Use the Canteen RPC (`arc-canteen rpc-url`) for `ARC_TESTNET_RPC_URL`, since testnet traction is counted through it. The Circle wallet and contract deployment steps are in [setup and deploy](docs/setup-and-deploy.md). CI runs 111 Foundry tests, 642 Python tests and 6 Node runs on every push; how to run each is in [testing](docs/testing.md).
+Use the Canteen RPC (`arc-canteen rpc-url`) for `ARC_TESTNET_RPC_URL`, since testnet traction is counted through it. The Circle wallet and contract deployment steps are in [setup and deploy](docs/setup-and-deploy.md). CI runs 111 Foundry tests, 693 Python tests and 6 Node runs on every push; how to run each is in [testing](docs/testing.md).
 
 ## Documentation
 

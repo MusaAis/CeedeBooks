@@ -12,7 +12,7 @@
 ## What failed or was not captured
 
 - The first target chosen, `foundry-rs/forge-std` pull request 1, does not exist; it is the 404 above, not a fault.
-- The routes that need a wallet session (register, list, evidence check) were not run live: the admin site has no screen for them yet. They are covered by the tests only.
+- The routes that need a wallet session (register, list, evidence check) were not run live at the time: the admin site had no screen for them yet. They were first run live on Oct 28 ([record](2026-10-28-escrow-release-live.md)).
 - The server's own check that the connection reached a public address passed for GitHub; it was not tried against a hostile address on the server, only in the tests.
 
 ## What changed afterwards

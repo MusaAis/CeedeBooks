@@ -162,6 +162,21 @@ CREATE TABLE IF NOT EXISTS escrows (
     created_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS escrow_releases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    escrow_id INTEGER NOT NULL,
+    milestone_index INTEGER NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('claiming', 'released', 'failed')),
+    requested_by TEXT NOT NULL,
+    evidence_hash TEXT,
+    reasoning_hash TEXT,
+    onchain_tx_id TEXT,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    UNIQUE (escrow_id, milestone_index)
+);
+
 CREATE TABLE IF NOT EXISTS api_keys (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     business_id INTEGER NOT NULL DEFAULT 1,
@@ -1036,3 +1051,48 @@ async def list_public_escrows(business_id: Optional[int] = None) -> list:
         sql += " AND e.business_id = ?"
         args = (business_id,)
     return await _all(sql + " ORDER BY e.id", args)
+
+
+# ---- escrow releases (Phase H3): one row per milestone, claimed before anything is sent so two clicks cannot both release
+
+RELEASE_CLAIM_STALE_SECONDS = 300  # a claim left behind by a crash can be taken again after this, and the chain is read first
+
+
+async def claim_escrow_release(business_id: int, escrow_id: int, index: int, requested_by: str, evidence_hash: str) -> bool:
+    """True if this caller now owns the release of this milestone. A new milestone, a failed attempt, or a claim older than
+    RELEASE_CLAIM_STALE_SECONDS can be claimed; a released milestone or a live claim cannot."""
+    now = time.time()
+    async with aiosqlite.connect(config.db_path) as db:
+        await db.execute("BEGIN IMMEDIATE")
+        cur = await db.execute("SELECT status, updated_at FROM escrow_releases WHERE escrow_id = ? AND milestone_index = ?", (escrow_id, index))
+        row = await cur.fetchone()
+        if row is None:
+            await db.execute(
+                "INSERT INTO escrow_releases (business_id, escrow_id, milestone_index, status, requested_by, evidence_hash, created_at, updated_at) "
+                "VALUES (?, ?, ?, 'claiming', ?, ?, ?, ?)", (business_id, escrow_id, index, requested_by.lower(), evidence_hash, now, now))
+        elif row[0] == "failed" or (row[0] == "claiming" and now - row[1] > RELEASE_CLAIM_STALE_SECONDS):
+            await db.execute(
+                "UPDATE escrow_releases SET status = 'claiming', requested_by = ?, evidence_hash = ?, reasoning_hash = NULL, "
+                "onchain_tx_id = NULL, updated_at = ? WHERE escrow_id = ? AND milestone_index = ?",
+                (requested_by.lower(), evidence_hash, now, escrow_id, index))
+        else:
+            await db.rollback()
+            return False
+        await db.commit()
+        return True
+
+
+async def finish_escrow_release(escrow_id: int, index: int, status: str, reasoning_hash: Optional[str] = None,
+                                onchain_tx_id: Optional[str] = None) -> None:
+    async with aiosqlite.connect(config.db_path) as db:
+        await db.execute(
+            "UPDATE escrow_releases SET status = ?, reasoning_hash = COALESCE(?, reasoning_hash), "
+            "onchain_tx_id = COALESCE(?, onchain_tx_id), updated_at = ? WHERE escrow_id = ? AND milestone_index = ?",
+            (status, reasoning_hash, onchain_tx_id, time.time(), escrow_id, index))
+        await db.commit()
+
+
+async def list_escrow_releases(business_id: int, escrow_id: int) -> list:
+    return await _all(
+        "SELECT milestone_index, status, requested_by, evidence_hash, reasoning_hash, onchain_tx_id, created_at, updated_at "
+        "FROM escrow_releases WHERE business_id = ? AND escrow_id = ? ORDER BY milestone_index", (business_id, escrow_id))

@@ -12,7 +12,7 @@ Gas before anchoring: the original business's agent wallet held 39.95 USDC (nati
 
 ## What was not verified
 
-- The automatic job (every 25 new entries or 6 hours after a new entry, only once a first anchor exists) was tested with mocks only at the time of this run.
+- The automatic job (every 25 new entries or 6 hours after a new entry, only once a first anchor exists) had not been run live at the time of this run.
 - The second business made through the factory was never anchored on purpose: the job skips a business with no first anchor, and that business was archived before the demo video.
 - The key and the database share one server, and the agent wallet and the approver share one operator. The anchor makes the ledger tamper-evident against partial edits and against rewriting history after the anchor; it is not proof that the operator is independent.
 

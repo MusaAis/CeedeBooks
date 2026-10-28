@@ -222,6 +222,18 @@ No contract change and no new environment variable. The database gains two invoi
 
 To go back: stop the service and check out v1.2.10.1. The new columns and table are ignored by the old code. `ADMIN_PAUSED` and `ADMIN_RESUMED` ledger entries, if you made any, stay in the chain and still verify.
 
+## Upgrading to v1.3.2.3 (the agent's release path for an escrow)
+
+No contract change and no new environment variable. The database gains an `escrow_releases` table on the first start; nothing existing changes. The routes only act for a registered escrow whose agent is the business's agent wallet, and nothing runs by itself: a release happens only when a signed-in admin calls the release route.
+
+1. Back up: `mkdir -p ~/backups && cp ceedebooks.db ~/backups/ceedebooks.db.pre-1.3.2.3` (from `~/ceedebooks`).
+2. Extract the files, run `pytest agent/tests/` with the CI placeholder variables (693 tests, about 5 minutes), then `sudo systemctl restart ceedebooks-api` and wait about 15 seconds.
+3. Re-copy the admin site (it gained an Escrows tab): `sudo cp admin/index.html admin/admin.css admin/wallet.js admin/admin.js /var/www/ceedebooks-admin/` and hard-refresh `admin.ceedebooks.xyz`. No restart is needed for this step.
+4. Check the API: `curl -s https://api.ceedebooks.xyz/escrows` still answers `{"escrows":[]}` and an unauthenticated `POST /admin/escrows/1/milestones/0/decision` answers 401.
+5. Do not release from the Escrows tab without your explicit go-ahead: a release sends two real transactions from the agent wallet. The first live run (a hold, an escalation and one 0.1 USDC release, one step at a time) is in `docs/rollouts/2026-10-28-escrow-release-live.md`.
+
+To go back: stop the service and check out v1.3.2.2. The `escrow_releases` table is ignored by the old code.
+
 ## Upgrading to v1.3.2.2 (documentation only)
 
 No code, contract, schema or environment change, so no restart, no backup and no test run are needed on the server. Pull the files (or check out the tag) so the server's copy of the docs matches, and read the README at the new tag.

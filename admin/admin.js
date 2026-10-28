@@ -12,7 +12,7 @@
     var q = typeof window.location !== "undefined" && window.location.search ? new URLSearchParams(window.location.search).get("business") : null;
     return q && /^[a-z0-9][a-z0-9-]*$/.test(q) ? q : null;
   })();
-  var TABS = [["overview", "Overview"], ["applications", "Applications"], ["vendors", "Vendors"], ["pos", "Purchase orders"], ["invoices", "Invoices"], ["limits", "Limits and safety"], ["activity", "Activity"]];
+  var TABS = [["overview", "Overview"], ["applications", "Applications"], ["vendors", "Vendors"], ["pos", "Purchase orders"], ["invoices", "Invoices"], ["limits", "Limits and safety"], ["escrows", "Escrows"], ["activity", "Activity"]];
 
   function h(tag, attrs, kids) {
     var n = document.createElement(tag);
@@ -326,6 +326,82 @@
     return x.usable === true ? chip("Ready", "ok") : x.usable === false ? chip("Needs a limit", "warn") : chip("Unknown", "warn");
   }
   function limitText(x) { return x.daily_limit_usdc == null ? "Unknown" : usdc(x.daily_limit_usdc); }
+
+  // ---------- escrows: one panel per registered escrow. The chain is the source of truth; an unreadable chain is said, never shown as zero.
+  function escrowPanel(e) {
+    var s = e.escrow;
+    var box = h("div", { class: "panel" }, [h("h3", null, ["Escrow " + W.short(e.address)]),
+      h("p", { class: "note" }, [h("a", { href: C.explorer + "/address/" + e.address, target: "_blank", rel: "noopener noreferrer" }, [e.address])])]);
+    if (!e.chain_ok || !s) { box.appendChild(h("p", { class: "note" }, ["The chain could not be read just now. Refresh in a moment."])); return box; }
+    box.appendChild(h("div", { class: "cards" }, [
+      card("Balance", usdc(s.balance_usdc)), card("Reserved for pending milestones", usdc(s.pending_usdc)),
+      card("Agent release limit", usdc(s.agent_release_limit_usdc)), card("State", s.paused ? "PAUSED" : "Active")]));
+    box.appendChild(table(["#", "Amount", "Status", "Agent may release", "Requirements hash"], s.milestones.map(function (m) {
+      return [String(m.index), usdc(m.amount_usdc), chip(m.status, m.status === "released" ? "ok" : m.status === "rejected" ? "bad" : "warn"),
+        m.status === "pending" ? (m.agent_can_release ? "Yes" : "No: approver only") : "", W.short(m.requirements_hash)];
+    })));
+    var amount = h("input", { inputmode: "decimal", autocomplete: "off", placeholder: "0.5" });
+    box.appendChild(h("div", null, [h("h4", null, ["Add funds"]),
+      h("p", { class: "note" }, ["Sends USDC from your wallet to the escrow. Only the unreserved part can ever be withdrawn."]),
+      field("Amount in USDC", amount),
+      h("button", { class: "btn ghost", onclick: guard(async function () {
+        var units = W.usdcToUnits(amount.value);
+        if (units <= 0n) throw new Error("Enter an amount above zero.");
+        if (!(await confirmAction("Add funds to an escrow", ["Amount: " + amount.value.trim() + " USDC", "From your wallet: " + S.account, "Into the escrow: " + e.address, "This is a USDC token transfer."]))) return;
+        var hash = await sendTx(W.CALLS.usdcTransfer(e.address, units), W.CONFIG.usdc);
+        say("Funds added.", "ok", hash);
+        await sleep(2500);
+        await show("escrows");
+      }) }, ["Add funds"])]));
+    var pending = s.milestones.filter(function (m) { return m.status === "pending"; });
+    if (!pending.length) { box.appendChild(h("p", { class: "note" }, ["No milestone is waiting."])); return box; }
+    var sel = h("select", { "aria-label": "Milestone" }, pending.map(function (m) { return h("option", { value: String(m.index) }, ["#" + m.index + ", " + usdc(m.amount_usdc)]); }));
+    sel.value = String(pending[0].index);
+    var owner = h("input", { autocomplete: "off", placeholder: "owner" }), repo = h("input", { autocomplete: "off", placeholder: "repository" }),
+        num = h("input", { inputmode: "numeric", autocomplete: "off", placeholder: "pull request number" });
+    var out = h("div", { class: "note" }, []);
+    var last = null;  // the dry run the Release button is allowed to act on
+    function target() {
+      var n = Number(String(num.value).trim());
+      if (!owner.value.trim() || !repo.value.trim() || !(n >= 1) || String(n) !== String(num.value).trim()) throw new Error("Enter the repository owner, the repository and the pull request number.");
+      return { owner: owner.value.trim(), repo: repo.value.trim(), pr_number: n };
+    }
+    function same(a, b) { return a && a.index === b.index && a.body.owner === b.body.owner && a.body.repo === b.body.repo && a.body.pr_number === b.body.pr_number; }
+    function say2(lines) { out.textContent = ""; lines.forEach(function (l) { out.appendChild(h("p", null, [l])); }); }
+    var base = function (idx) { return "/admin/escrows/" + e.id + "/milestones/" + idx; };
+    box.appendChild(h("div", null, [h("h4", null, ["Decide on a milestone"]),
+      h("p", { class: "note" }, ["Dry run first: it shows what the agent would do and writes nothing. Release then records the decision and, if the verdict is release, the agent wallet sends the commit and the release."]),
+      field("Milestone", sel), field("Repository owner", owner), field("Repository", repo), field("Pull request number", num),
+      h("div", { class: "actions" }, [
+        h("button", { class: "btn ghost", onclick: guard(async function () {
+          var idx = Number(sel.value), body = target();
+          var r = await api(base(idx) + "/decision", { method: "POST", body: body });
+          last = { index: idx, body: body, evidence_hash: r.evidence_hash, verdict: r.verdict };
+          say2(["Verdict: " + r.verdict + ". " + r.reason, "The pull request is " + (r.facts.merged ? "merged" : "not merged") + " (" + r.facts.repo + " #" + r.facts.pr + " by " + r.facts.author + ").", "Evidence hash: " + r.evidence_hash, "Nothing was recorded and nothing was sent."]);
+        }) }, ["Dry run"]),
+        h("button", { class: "btn", onclick: guard(async function () {
+          var idx = Number(sel.value), body = target();
+          if (!last || !same(last, { index: idx, body: body })) throw new Error("Run the dry run first, with this milestone and this pull request.");
+          var m = s.milestones[idx];
+          if (!(await confirmAction("Release a milestone", ["Milestone #" + idx + ": " + usdc(m.amount_usdc) + " to the contractor " + s.contractor, "Evidence: " + last.evidence_hash, "Dry-run verdict: " + last.verdict,
+            "The decision is recorded in the signed ledger first. If the verdict is release, the agent wallet then sends two transactions: commit, then release. The contract re-checks everything.", "Hold and escalate verdicts are recorded and send nothing."], "Record and release"))) return;
+          say("Recording the decision and sending the release. This can take a minute...");
+          var r = await api(base(idx) + "/release", { method: "POST", body: Object.assign({ evidence_hash: last.evidence_hash }, body) });
+          last = null;
+          var lines = ["Verdict: " + r.verdict + ". " + r.reason, "Decision hash: " + r.reasoning_hash, r.sent ? "Sent: the milestone now reads " + (r.milestone_status_after || "unknown") + "." : "Nothing was sent."];
+          if (r.warning) lines.push(r.warning);
+          say2(lines);
+          if (r.sent) {
+            try {
+              var v = await api("/decisions/" + r.reasoning_hash + "/verify");
+              var oc = v.onchain || {};
+              out.appendChild(h("p", null, ["Record check: hash " + (v.verified ? "matches its stored record" : "does NOT match"), "; on-chain event " + (oc.match === true ? "found" : oc.match === false ? "NOT found" : "not checked") + (oc.chain_tx_hash ? " in " : ""), oc.chain_tx_hash ? txLink(oc.chain_tx_hash) : null]));
+            } catch (er) { out.appendChild(h("p", null, ["The record check could not be read just now."])); }
+          }
+          say(r.sent ? "Released." : "Recorded: " + r.verdict + ".", "ok");
+        }) }, ["Release"])]), out]));
+    return box;
+  }
 
   // ---------- views
   var VIEWS = {
@@ -648,6 +724,27 @@
       if (rename) kids.push(h("h3", null, ["Rename a category"]), rename);
       kids.push(h("h3", null, ["Set a category limit"]), form, h("h3", null, ["Emergency stop"]), pause);
       return h("div", null, kids);
+    },
+
+    escrows: async function () {
+      var wrap = h("div", null, [h("h2", null, ["Escrows"]),
+        h("p", { class: "note" }, ["Milestone escrows for contractor jobs. The agent releases a milestone only when you run the dry run with the pull request that shows the work and then press Release. Anything above an escrow's agent limit can only be released by the approver from their own wallet. A merged pull request shows that code was merged, not that the requirements are met."])]);
+      var addr = h("input", { id: "escrow-address", autocomplete: "off", placeholder: "0x..." });
+      wrap.appendChild(h("div", { class: "panel" }, [
+        h("h3", null, ["Register an escrow"]),
+        h("p", { class: "note" }, ["Register an escrow that is already deployed. It is accepted only if the contract itself names this business's agent wallet as its agent and your wallet as its approver."]),
+        field("Escrow address", addr),
+        h("button", { class: "btn", onclick: guard(async function () {
+          var a = String(addr.value || "").trim();
+          if (!/^0x[0-9a-fA-F]{40}$/.test(a)) throw new Error("Enter the escrow's 0x address.");
+          await api("/admin/escrows", { method: "POST", body: { address: a } });
+          say("Escrow registered.", "ok");
+          await show("escrows");
+        }) }, ["Register"])]));
+      var data = await api("/admin/escrows");
+      if (!data.escrows.length) wrap.appendChild(h("p", { class: "note" }, ["No escrow is registered yet."]));
+      data.escrows.forEach(function (e) { wrap.appendChild(escrowPanel(e)); });
+      return wrap;
     },
 
     activity: async function () {

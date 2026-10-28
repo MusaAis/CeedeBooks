@@ -14,6 +14,7 @@ ceedebooks/
 │   ├── safe_fetch.py       # fetches one allowlisted https JSON document: public addresses only, no redirects, size and time caps (v1.3.2.1)
 │   ├── evidence.py         # a GitHub pull request turned into facts and an evidence hash (v1.3.2.1)
 │   ├── escrow_chain.py     # read-only view of a MilestoneEscrow contract and the registration checks (v1.3.2.1)
+│   ├── escrow_release.py   # the agent's release verdict, decision record and the two transactions (commit, release) for an escrow (v1.3.2.3)
 │   ├── decision_log.py     # canonical-JSON SHA-256 audit log, hash-before-action
 │   ├── contract.py         # reads + Circle-signed writes (incl. the Gateway approve and deposit), wait_for_transaction
 │   ├── payables.py         # three-way match, rules baseline, commit-then-pay, retry guard
@@ -43,6 +44,7 @@ ceedebooks/
 │       ├── test_outcomes.py
 │       ├── test_safe_fetch.py
 │       ├── test_escrow.py
+│       ├── test_escrow_release.py
 │       ├── test_relabel.py
 │       └── test_red_team.py
 ├── backend/

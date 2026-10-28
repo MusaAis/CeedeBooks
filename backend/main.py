@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agent import categories as category_rules
-from agent import anchor, contract, decision_log, escrow_chain, evidence, gateway, ledger, payables, safe_fetch, treasury
+from agent import anchor, contract, decision_log, escrow_chain, escrow_release, evidence, gateway, ledger, payables, safe_fetch, treasury
 from agent.config import config
 from backend import admin_auth, auth, models, outcomes, vendor_auth
 
@@ -83,6 +83,11 @@ class EvidenceCheckIn(_Strict):
     owner: str = Field(pattern=evidence.OWNER_PATTERN)
     repo: str = Field(pattern=evidence.REPO_PATTERN)
     pr_number: int = Field(ge=1, le=evidence.MAX_PR_NUMBER)
+
+
+class MilestoneReleaseIn(EvidenceCheckIn):
+    """The evidence hash the admin saw in the dry run: the release is refused if GitHub now says something else."""
+    evidence_hash: str = Field(pattern=r"^0x[0-9a-f]{64}$")
 
 
 class PurchaseOrderIn(_Strict):
@@ -451,15 +456,24 @@ async def get_decision(reasoning_hash: DecisionHash):
 
 
 async def _onchain_check(decision) -> dict:
-    """Does the stored hash appear in a BudgetEnforcer event of the recorded on-chain transaction?"""
+    """Does the stored hash appear in an event of the recorded on-chain transaction: a BudgetEnforcer event, or for an escrow
+    release the registered escrow's MilestoneReleased event?"""
     tx_hash = decision["chain_tx_hash"]
     if not tx_hash:
         return {"checked": False, "match": None, "detail": "No on-chain transaction recorded for this decision"}
     business = await models.get_business(decision["business_id"])
     if business is None:
         return {"checked": False, "match": None, "chain_tx_hash": tx_hash, "detail": "The business for this decision is not on record"}
+    target = escrow_release.parse_subject(decision["subject"]) if decision["action"] == escrow_release.ACTION_RELEASED else None
+    if target is not None:  # an escrow release: the event is on that escrow contract, which must be registered to this business
+        row = await models.get_escrow_by_address(target[0])
+        if row is None or row["business_id"] != decision["business_id"]:
+            return {"checked": False, "match": None, "chain_tx_hash": tx_hash, "detail": "That escrow is not registered to this business"}
     try:
-        events = await asyncio.to_thread(contract.chain_for(business).reasoning_events, tx_hash)
+        if target is not None:
+            events = await asyncio.to_thread(escrow_chain.escrow_for(target[0]).release_events, tx_hash)
+        else:
+            events = await asyncio.to_thread(contract.chain_for(business).reasoning_events, tx_hash)
     except Exception:
         log.exception("On-chain lookup failed for %s", tx_hash)
         return {"checked": False, "match": None, "chain_tx_hash": tx_hash, "detail": "Could not read the chain right now"}
@@ -1615,6 +1629,104 @@ async def admin_evidence_check(body: EvidenceCheckIn, escrow_id: int = Path(gt=0
         raise HTTPException(502, "GitHub could not be read, so nothing was checked")
     return {"escrow_id": row["id"], **result,
             "note": "A merged pull request shows that code was merged, not that the requirements are met. Nothing was sent to the chain."}
+
+
+# ---- milestone escrows, the agent's release path (Phase H3, v1.3.2.3)
+
+async def _milestone_context(who: auth.Principal, escrow_id: int, index: int, body: EvidenceCheckIn):
+    """Everything a decision needs, read fresh: the escrow row, the business, the GitHub facts and the chain state.
+    Raises HTTPException for anything that is not a decision (nothing is recorded then)."""
+    business = await _writable(who)
+    row = await models.get_escrow(who.business_id, escrow_id)
+    if row is None:
+        raise HTTPException(404, "Escrow not found")
+    if (not auth.request_limiter.allow("evidence-admin:" + who.admin_address.lower(), EVIDENCE_PER_ADMIN_PER_MIN, 60.0)
+            or not auth.request_limiter.allow("evidence-all", EVIDENCE_ALL_PER_HOUR, 3600.0)):
+        raise HTTPException(429, "Too many evidence checks, try again later")
+    try:
+        result = await evidence.github_pr(body.owner, body.repo, body.pr_number)
+    except safe_fetch.FetchRefused as e:
+        raise HTTPException(422, str(e))
+    except safe_fetch.FetchFailed as e:
+        log.warning("milestone evidence failed: %s", e)
+        raise HTTPException(502, "GitHub could not be read, so nothing was decided")
+    snap = await _escrow_snapshot(row["address"], fresh=True)
+    if snap is None:
+        raise HTTPException(503, "The escrow could not be read from the chain, so nothing was decided")
+    try:
+        assessment = escrow_release.assess(snap, index, result["facts"], business)
+    except escrow_release.Refused as e:
+        raise HTTPException(e.status, str(e))
+    return business, row, snap, result, assessment
+
+
+@app.post("/admin/escrows/{escrow_id}/milestones/{index}/decision")
+async def admin_milestone_decision(body: EvidenceCheckIn, escrow_id: int = Path(gt=0), index: int = Path(ge=0, le=49),
+                                   who: auth.Principal = Depends(auth.require_admin)):
+    """A dry run of the agent's decision on one milestone with one pull request as evidence. Writes nothing, sends nothing.
+    Keep the `evidence_hash` it returns: the release call must present it."""
+    _, row, snap, result, assessment = await _milestone_context(who, escrow_id, index, body)
+    return {"escrow_id": row["id"], "milestone": snap["milestones"][index], "verdict": assessment.verdict.value,
+            "reason": assessment.reason, "checks": assessment.checks, **result,
+            "note": "Nothing was recorded and nothing was sent to the chain. A merged pull request shows that code was merged, "
+                    "not that the requirements are met."}
+
+
+@app.post("/admin/escrows/{escrow_id}/milestones/{index}/release")
+async def admin_milestone_release(body: MilestoneReleaseIn, escrow_id: int = Path(gt=0), index: int = Path(ge=0, le=49),
+                                  who: auth.Principal = Depends(auth.require_admin)):
+    """The agent decides on one milestone and, if the verdict is release, commits and releases it from its own wallet.
+    The decision is hashed and chained before any transaction. A hold or an escalation is recorded and sends nothing: above
+    the escrow's agent limit only the approver can release, from their own wallet. The evidence hash must match what GitHub
+    says now. The contract re-checks everything."""
+    business, row, snap, result, assessment = await _milestone_context(who, escrow_id, index, body)
+    if result["evidence_hash"] != body.evidence_hash:
+        raise HTTPException(409, "The pull request's state changed since the dry run; run the decision again")
+    releasing = assessment.verdict == escrow_release.Verdict.RELEASE
+    if releasing and not await models.claim_escrow_release(who.business_id, row["id"], index, who.admin_address, result["evidence_hash"]):
+        raise HTTPException(409, "A release of this milestone is already in progress or done")
+    try:
+        reasoning_hash = await escrow_release.record_decision(business, row["address"], index, snap, assessment, result["facts"],
+                                                              result["evidence_hash"])
+    except Exception as e:
+        if releasing:
+            await models.finish_escrow_release(row["id"], index, "failed")
+        if isinstance(e, ledger.LedgerKeyError):
+            raise HTTPException(503, "The ledger key is not configured, so nothing was decided")
+        raise
+    if not releasing:
+        await _admin_log(who, "escrow_" + assessment.verdict.value, f"{row['address']}:{index}")
+        return {"escrow_id": row["id"], "milestone": index, "verdict": assessment.verdict.value, "reason": assessment.reason,
+                "reasoning_hash": reasoning_hash, "evidence_hash": result["evidence_hash"], "sent": False}
+    try:
+        tx_id = await escrow_release.commit_then_release(business, row["address"], index, result["evidence_hash"], reasoning_hash)
+    except Exception:
+        log.exception("escrow release failed for escrow %s milestone %s", row["id"], index)
+        after = await _escrow_snapshot(row["address"], fresh=True)  # a timeout can hide a release that did land: the chain decides
+        if after is not None and after["milestones"][index]["status"] == "released":
+            await models.finish_escrow_release(row["id"], index, "released", reasoning_hash=reasoning_hash)
+            return {"escrow_id": row["id"], "milestone": index, "verdict": "release", "reason": assessment.reason,
+                    "reasoning_hash": reasoning_hash, "evidence_hash": result["evidence_hash"], "sent": True, "onchain_tx_id": None,
+                    "milestone_status_after": "released",
+                    "warning": "The confirmation was not seen, but the chain shows the milestone released"}
+        await models.finish_escrow_release(row["id"], index, "failed", reasoning_hash=reasoning_hash)
+        _escrow_cache.pop(row["address"].lower(), None)
+        raise HTTPException(502, "The release did not complete; the decision is recorded and flagged. Read the escrow before trying again")
+    await models.finish_escrow_release(row["id"], index, "released", reasoning_hash=reasoning_hash, onchain_tx_id=tx_id)
+    _escrow_cache.pop(row["address"].lower(), None)
+    await _admin_log(who, "escrow_release", f"{row['address']}:{index}")
+    after = await _escrow_snapshot(row["address"], fresh=True)
+    status = None if after is None else after["milestones"][index]["status"]
+    return {"escrow_id": row["id"], "milestone": index, "verdict": "release", "reason": assessment.reason, "reasoning_hash": reasoning_hash,
+            "evidence_hash": result["evidence_hash"], "sent": True, "onchain_tx_id": tx_id, "milestone_status_after": status}
+
+
+@app.get("/admin/escrows/{escrow_id}/releases")
+async def admin_escrow_releases(escrow_id: int = Path(gt=0), who: auth.Principal = Depends(auth.require_admin)):
+    row = await models.get_escrow(who.business_id, escrow_id)
+    if row is None:
+        raise HTTPException(404, "Escrow not found")
+    return {"escrow_id": row["id"], "releases": await models.list_escrow_releases(who.business_id, row["id"])}
 
 
 @app.get("/escrows")

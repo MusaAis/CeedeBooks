@@ -7,12 +7,13 @@ Everything below is checkable on-chain. Nothing here is estimated.
 | What | Evidence |
 |---|---|
 | Contract deployed and verified on Arc Testnet | [`BudgetEnforcer`](https://explorer.testnet.arc.io/address/0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB) |
-| Test suites | 111 Foundry (24 on the v1 contract, 45 on the multi-business contracts, 42 on the escrow contract) + 642 Python tests + 6 Node runs (proof page, admin site, vendor portal), run by CI on every push |
+| Test suites | 111 Foundry (24 on the v1 contract, 45 on the multi-business contracts, 42 on the escrow contract) + 693 Python tests + 6 Node runs (proof page, admin site, vendor portal), run by CI on every push |
 | First self-owned vendor bill paid through the contract | `ceedebooks.xyz` registration, 2.20 USDC, category 1 |
 | Multi-business contracts deployed and verified (v1.2.8) | [`BudgetFactory`](https://explorer.testnet.arc.io/address/0x97b9A3802bA6B258cBeF6070532a265656bb391C), [`LedgerAnchor`](https://explorer.testnet.arc.io/address/0x008217BeC86462E76126F94e50eBe68fb4a41444) |
 | First ledger anchor of the original business (sequence 9) | [`0x24045426...a36639fb`](https://explorer.testnet.arc.io/tx/0x24045426ab28d346ce6e48998dfef1964e5890d64ee04f385cae1011a36639fb); `GET /ledger/verify?business=ceedebooks` compares it with the chain |
 | Red team run live on the original business (Oct 15) | The agent wallet tried to pay a fresh, non-approved address for 1 unit and the contract refused it (at Circle's gas estimation, so no pay transaction reached the chain); the refusal was anchored in ledger sequence 16, [`0x2f75bf9f...0509af`](https://explorer.testnet.arc.io/tx/0x2f75bf9f9aa5702e68c5c031f58f79d56e1c0b68e22567c44d46c3ca4b0509af) (details below) |
 | Gateway deposit from the agent wallet (Oct 15, `manual`) | 3 USDC from the agent wallet into Circle's Gateway Wallet, [`0xa022b539...caba3f`](https://explorer.testnet.arc.io/tx/0xa022b539a506cfb58f1b2fe1f509a00cce6b5b3ccc23c4ebe40a410bebcaba3f); Circle's Gateway API then returned 3 USDC for that wallet (details below) |
+| Escrow release, run live (Oct 28, our own wallets) | The agent wallet committed [`0x73ac7434...a22421f0`](https://explorer.testnet.arc.io/tx/0x73ac7434b489d13da2678cba5552b2f5339bf6c7c7f980eda905e1eea22421f0) and released milestone 0 (0.1 USDC) in [`0xc49c13dd...b83f1f`](https://explorer.testnet.arc.io/tx/0xc49c13ddf6e89980df395a88db87bdb4445d7d1997385988f18b6ab14fb83f1f), block 69485148; `GET /decisions/e720c5eb.../verify` returned an on-chain match. A hold and an escalation were recorded and sent nothing. Escrow decisions are not in the paid, held or escalated counts and are not traction: [record](rollouts/2026-10-28-escrow-release-live.md) |
 | Businesses | Two, both ours: the original and a test business made through the factory (see [Contracts](contracts.md)) |
 | Outside businesses or paying users | None yet |
 

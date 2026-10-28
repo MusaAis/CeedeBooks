@@ -26,7 +26,7 @@ Bytecode check: `forge inspect ... deployedBytecode` from the tagged source and 
 ## What failed, and what was not captured
 
 - **Explorer source verification failed and the contract is marked not verified.** The `--verify` step at deployment ended with `Fail - Unable to verify`; a second `forge verify-contract` run ended the same way; a third was answered `Too many requests` by the explorer's API; a manual submission through the explorer's own page also failed. The cause was not found. The bytecode comparison above is the check that does not depend on the explorer.
-- The contract was never funded and no commit, release, reject, override, withdraw or pause was sent, so none of those has a live run. They are covered by the Foundry tests only.
+- At the time of this record the contract was never funded and no commit, release, reject, override, withdraw or pause had been sent. It was funded and one milestone was released on Oct 28 ([record](2026-10-28-escrow-release-live.md)); a reject, override, withdraw and pause still have no live run and are covered by the Foundry tests only.
 - The block number of the deployment was not captured.
 
 ## What changed afterwards

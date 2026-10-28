@@ -26,6 +26,12 @@ global.document = { getElementById: (id) => (id === "root" ? root : id === "dlg"
 const ADMIN = "0x" + "aa".repeat(20), OTHER = "0x" + "bb".repeat(20);
 const BIZ = process.env.BIZ || null, ACME_CONTRACT = "0x" + "c9".repeat(20);
 if (BIZ) global.location = { search: "?business=" + BIZ };
+let dryMerged = true;
+const ESC = "0x" + "e5".repeat(20);
+let escrowsList = [{ id: 1, address: ESC, chain_ok: true, escrow: { balance_usdc: "1", pending_usdc: "0.8", agent_release_limit_usdc: "0.25", paused: false, contractor: "0x" + "c4".repeat(20),
+  milestones: [{ index: 0, amount_usdc: "0.1", requirements_hash: "0x" + "11".repeat(32), status: "pending", agent_can_release: true },
+               { index: 1, amount_usdc: "0.5", requirements_hash: "0x" + "22".repeat(32), status: "pending", agent_can_release: false },
+               { index: 2, amount_usdc: "0.2", requirements_hash: "0x" + "33".repeat(32), status: "released", agent_can_release: false }] } }];
 let operator = true, stateUrls = [], challengeBodies = [], pauseState = { paused: false, reason: null, by: null }, escalationUrls = [];
 let account = ADMIN, state = { approver: ADMIN, pending_approver: "0x" + "00".repeat(20), contract: ACME_CONTRACT }, calls = [], posts = [], expireSession = false;
 const provider = { request: async ({ method, params }) => {
@@ -50,6 +56,7 @@ global.fetch = async (url, opt = {}) => {
   if (path === "/admin/auth/state") { stateUrls.push(full); return ok(state); }
   if (path === "/admin/auth/challenge") { challengeBodies.push(JSON.parse(opt.body)); return ok({ nonce: "n".repeat(32), message: "sign me" }); }
   if (path === "/admin/auth/verify") { assert.strictEqual(JSON.parse(opt.body).signature.length, 132); return ok({ token: "tok", address: ADMIN }); }
+  if (path.startsWith("/decisions/")) return ok({ verified: true, onchain: { match: true, chain_tx_hash: "0x" + "ab".repeat(32) } });
   if (path.startsWith("/admin/") || path.startsWith("/operator/") || ["/vendors", "/receipts", "/invoices", "/purchase-orders", "/demo/seed"].includes(path)) {
     if (auth !== "Bearer tok" || expireSession) return { ok: false, status: 401, json: async () => ({ detail: "no" }) };
     if (path === "/admin/onboarding") return ok({ steps: [{ key: "pool_funded", label: "Fund your pool", done: false }, { key: "agent_gas", label: "Agent wallet gas", done: null }, { key: "vendor", label: "Add a vendor", done: true }], custody: "We run your agent's wallet." });
@@ -62,6 +69,12 @@ global.fetch = async (url, opt = {}) => {
     if (path === "/operator/businesses/2/archive" && method === "POST") { posts.push({ archived: JSON.parse(opt.body).archived }); return ok({ id: 2 }); }
     if (path === "/operator/businesses/2/external" && method === "POST") { posts.push({ external: JSON.parse(opt.body).external }); return ok({ id: 2 }); }
     if (path === "/admin/overview") return ok({ operator: operator, business: { name: "CeedeBooks", slug: "ceedebooks" }, chain: { chain_ok: true, approver: ADMIN, paused: false, balance_usdc: 108.79, daily_limit_usdc: 100, per_tx_limit_usdc: 20, categories: [{ id: 1, name: "Infrastructure", daily_limit_usdc: 20, remaining_usdc: 20, usable: true }] }, invoices: { escalated: 3 }, vendors: 1, purchase_orders: 0 });
+    if (path === "/admin/escrows" && method === "GET") return ok({ escrows: escrowsList });
+    if (path === "/admin/escrows" && method === "POST") { posts.push({ escrow_registered: JSON.parse(opt.body) }); return ok({ id: 1 }); }
+    if (/^\/admin\/escrows\/1\/milestones\/\d+\/decision$/.test(path)) { posts.push({ dry: path, body: JSON.parse(opt.body) }); return ok({ verdict: "release", reason: "The escrow allows it.", evidence_hash: "0x" + "ee".repeat(32),
+      facts: { merged: dryMerged, repo: "acme/app", pr: 7, author: "dev" } }); }
+    if (/^\/admin\/escrows\/1\/milestones\/\d+\/release$/.test(path)) { posts.push({ release: path, body: JSON.parse(opt.body) }); return ok({ verdict: "release", reason: "The escrow allows it.", reasoning_hash: "f1".repeat(32),
+      sent: true, milestone_status_after: "released", evidence_hash: JSON.parse(opt.body).evidence_hash }); }
     if (path === "/admin/categories" && method === "GET") return ok({ chain_ok: true, categories: [
       { id: 0, name: "Hosting", daily_limit_usdc: 0, remaining_usdc: 0, usable: false },
       { id: 1, name: "Infrastructure", daily_limit_usdc: 20, remaining_usdc: 20, usable: true },
@@ -181,6 +194,59 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
   walk(root, (x) => { if (x.tag === "select" && /Ops/.test(x.textContent)) x.value = "1"; });
   await findBtn(root, "Create PO").listeners.click(); await tick(60);
   assert.deepStrictEqual(posts.find((p) => p.po).po, { po_number: "PO-77", vendor_id: 1, amount_usdc: "12.5", category: 1 });
+  posts.length = 0;
+
+
+  // escrows tab: register, fund from the owner's wallet, dry run, then release only after a dry run with the same inputs
+  await findBtn(root, "Escrows").listeners.click(); await tick();
+  assert.ok(/Escrow 0xe5e5/.test(root.textContent) && /Agent release limit/.test(root.textContent) && /No: approver only/.test(root.textContent), "an escrow shows its limit and which milestones the agent may release");
+  assert.ok(/not that the requirements are met/.test(root.textContent), "the page says what a merged pull request is not");
+  let ein = {}; walk(root, (x) => { if (x.tag === "input" && x.attrs.placeholder) ein[x.attrs.placeholder] = x; });
+  ein["0x..."].value = "nope";
+  await findBtn(root, "Register").listeners.click(); await tick(60);
+  assert.ok(!posts.some((p) => p.escrow_registered) && /Enter the escrow's 0x address/.test(document.body.textContent), "a bad address sends nothing");
+  ein["0x..."].value = ESC;
+  await findBtn(root, "Register").listeners.click(); await tick(60);
+  assert.deepStrictEqual(posts.pop(), { escrow_registered: { address: ESC } });
+  // funding is the owner's own wallet sending a USDC transfer to the escrow, after a confirmation
+  ein = {}; walk(root, (x) => { if (x.tag === "input" && x.attrs.placeholder) ein[x.attrs.placeholder] = x; });
+  const txBeforeEscrow = calls.filter((c) => c.method === "eth_sendTransaction").length;
+  ein["0.5"].value = "0";
+  await findBtn(root, "Add funds").listeners.click(); await tick(60);
+  assert.strictEqual(calls.filter((c) => c.method === "eth_sendTransaction").length, txBeforeEscrow, "a zero amount sends nothing");
+  ein["0.5"].value = "0.3";
+  await findBtn(root, "Add funds").listeners.click(); await tick(200);
+  const fundTx = calls.filter((c) => c.method === "eth_sendTransaction").pop().params[0];
+  assert.strictEqual(fundTx.to, W.CONFIG.usdc); assert.strictEqual(fundTx.data, W.CALLS.usdcTransfer(ESC, 300000n)); assert.strictEqual(fundTx.from, ADMIN);
+  // deciding: release is refused until a dry run with the same inputs has been shown
+  ein = {}; walk(root, (x) => { if (x.tag === "input" && x.attrs.placeholder) ein[x.attrs.placeholder] = x; });
+  const release = () => findBtn(root, "Release");
+  await release().listeners.click(); await tick(60);
+  assert.ok(!posts.some((p) => p.release) && /Enter the repository owner/.test(document.body.textContent), "no release without a target");
+  ein["owner"].value = "acme"; ein["repository"].value = "app"; ein["pull request number"].value = "7";
+  await release().listeners.click(); await tick(60);
+  assert.ok(!posts.some((p) => p.release) && /Run the dry run first/.test(document.body.textContent), "no release before a dry run");
+  await findBtn(root, "Dry run").listeners.click(); await tick(60);
+  assert.deepStrictEqual(posts.pop(), { dry: "/admin/escrows/1/milestones/0/decision", body: { owner: "acme", repo: "app", pr_number: 7 } });
+  assert.ok(/Verdict: release/.test(root.textContent) && /Evidence hash: 0xeeee/.test(root.textContent) && /Nothing was recorded and nothing was sent/.test(root.textContent), "the dry run shows the verdict and the hash and says it wrote nothing");
+  dryMerged = false;
+  await findBtn(root, "Dry run").listeners.click(); await tick(60);
+  assert.ok(/The pull request is not merged/.test(root.textContent), "an unmerged pull request is shown as not merged");
+  dryMerged = true;
+  await findBtn(root, "Dry run").listeners.click(); await tick(60);
+  assert.ok(/The pull request is merged/.test(root.textContent));
+  posts.length = 0;
+  ein["pull request number"].value = "8";                                    // a different pull request than the one that was checked
+  await release().listeners.click(); await tick(60);
+  assert.ok(!posts.some((p) => p.release) && /Run the dry run first/.test(document.body.textContent), "a changed target needs a new dry run");
+  ein["pull request number"].value = "7";
+  const txBeforeRelease = calls.filter((c) => c.method === "eth_sendTransaction").length;
+  await release().listeners.click(); await tick(200);
+  assert.deepStrictEqual(posts.pop(), { release: "/admin/escrows/1/milestones/0/release", body: { evidence_hash: "0x" + "ee".repeat(32), owner: "acme", repo: "app", pr_number: 7 } }, "the release carries the evidence hash the admin was shown");
+  assert.strictEqual(calls.filter((c) => c.method === "eth_sendTransaction").length, txBeforeRelease, "the release is the agent's: the admin's wallet sends nothing");
+  assert.ok(/Sent: the milestone now reads released/.test(root.textContent) && /Decision hash: f1f1/.test(root.textContent) && /hash matches its stored record/.test(root.textContent) && /on-chain event found/.test(root.textContent), "the result and the record check are shown");
+  await release().listeners.click(); await tick(60);
+  assert.ok(!posts.some((p) => p.release), "one dry run allows one release attempt");
   posts.length = 0;
 
   // limits tab: add a category (a server call), rename it, then set its limit with the owner's own wallet using its id
