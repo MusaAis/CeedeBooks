@@ -327,6 +327,75 @@
   }
   function limitText(x) { return x.daily_limit_usdc == null ? "Unknown" : usdc(x.daily_limit_usdc); }
 
+  // The approver's own actions on an escrow. They are sent from the signed-in wallet, never by the agent, and only the escrow's
+  // approver can send them: for anyone else the buttons are not shown. The chain, not this page, decides whether each is allowed.
+  function approverPanel(e, s) {
+    var box = h("div", null, [h("h3", null, ["Approver actions"])]);
+    if (!s.approver || String(s.approver).toLowerCase() !== S.account) {
+      box.appendChild(h("p", { class: "note" }, ["Only this escrow's approver (" + W.short(s.approver || "unknown") + ") can send these. You are signed in with " + W.short(S.account) + "."]));
+      return box;
+    }
+    box.appendChild(h("p", { class: "note" }, ["Sent from your own wallet, never by the agent. They are transactions on the escrow contract and are not written to the activity log: the transaction is the record."]));
+    var finish = async function (msg, hash) { say(msg, "ok", hash); await sleep(2500); await show("escrows"); };
+    // pause or resume
+    box.appendChild(h("div", null, [h("p", { class: "note" }, [s.paused
+        ? "The escrow is paused: the agent can neither release nor reject. You can still release, reject and withdraw."
+        : "Pausing stops the agent from releasing or rejecting. It does not stop you."]),
+      h("button", { class: "btn ghost", onclick: guard(async function () {
+        var pause = !s.paused;
+        if (!(await confirmAction(pause ? "Pause this escrow" : "Resume this escrow", ["Escrow: " + e.address, pause ? "The agent will not be able to release or reject until you resume." : "The agent will be able to release milestones inside its limit again."], pause ? "Pause" : "Resume"))) return;
+        var hash = await sendTx(W.CALLS.setPaused(pause), e.address);
+        await finish(pause ? "Escrow paused." : "Escrow resumed.", hash);
+      }) }, [s.paused ? "Resume the escrow" : "Pause the escrow"])]));
+    // release as the approver (the only way to pay a milestone above the agent's limit) and reject
+    var open = s.milestones.filter(function (m) { return m.status !== "released"; });
+    var pend = s.milestones.filter(function (m) { return m.status === "pending"; });
+    var opt = function (m) { return h("option", { value: String(m.index) }, ["#" + m.index + ", " + usdc(m.amount_usdc) + ", " + m.status]); };
+    if (open.length) {
+      var osel = h("select", { "aria-label": "Milestone to release yourself" }, open.map(opt)); osel.value = String(open[0].index);
+      var ev = h("input", { autocomplete: "off", placeholder: "evidence hash (0x and 64 characters)" });
+      box.appendChild(h("div", null, [h("h4", null, ["Release a milestone yourself"]),
+        h("p", { class: "note" }, ["Pays the contractor now, whatever the agent decided, and works while paused. Use the evidence hash a dry run showed, or any 32-byte key you can point to. A rejected milestone can still be released this way."]),
+        field("Milestone", osel), field("Evidence hash", ev),
+        h("button", { class: "btn", onclick: guard(async function () {
+          var idx = Number(osel.value), m = s.milestones[idx], key = String(ev.value).trim();
+          var data = W.CALLS.escrowOverrideRelease(idx, key);
+          if (!(await confirmAction("Release as the approver", ["Milestone #" + idx + ": " + usdc(m.amount_usdc) + " to the contractor " + s.contractor, "Evidence: " + key, "This pays the milestone now and cannot be undone. The agent is not involved."], "Release now"))) return;
+          var hash = await sendTx(data, e.address);
+          await finish("Milestone released by you.", hash);
+        }) }, ["Release as approver"])]));
+    }
+    if (pend.length) {
+      var rsel = h("select", { "aria-label": "Milestone to reject" }, pend.map(opt)); rsel.value = String(pend[0].index);
+      var why = h("input", { autocomplete: "off", placeholder: "why you are rejecting it" });
+      box.appendChild(h("div", null, [h("h4", null, ["Reject a milestone"]),
+        h("p", { class: "note" }, ["Frees the reserved amount. Only the SHA-256 of your reason goes on-chain, so keep the text. You can still release a rejected milestone later."]),
+        field("Milestone", rsel), field("Reason", why),
+        h("button", { class: "btn ghost", onclick: guard(async function () {
+          var idx = Number(rsel.value), key = await W.reasonHash(why.value);
+          var data = W.CALLS.escrowRejectMilestone(idx, key);
+          if (!(await confirmAction("Reject a milestone", ["Milestone #" + idx + ": " + usdc(s.milestones[idx].amount_usdc), "Reason: " + String(why.value).trim(), "On-chain hash of the reason: " + key, "The amount stops being reserved, so it becomes withdrawable."], "Reject"))) return;
+          var hash = await sendTx(data, e.address);
+          await finish("Milestone rejected.", hash);
+        }) }, ["Reject milestone"])]));
+    }
+    // withdraw: only the unreserved part can leave
+    var wto = h("input", { autocomplete: "off", placeholder: "send to (empty: your wallet)" }), wamt = h("input", { inputmode: "decimal", autocomplete: "off", placeholder: "amount to withdraw" });
+    box.appendChild(h("div", null, [h("h4", null, ["Withdraw unreserved funds"]),
+      h("p", { class: "note" }, ["Withdrawable now: " + usdc(s.withdrawable_usdc) + ". Money reserved for pending milestones cannot be withdrawn."]),
+      field("To", wto), field("Amount in USDC", wamt),
+      h("button", { class: "btn ghost", onclick: guard(async function () {
+        var units = W.usdcToUnits(wamt.value), to = String(wto.value).trim() || S.account;
+        if (units <= 0n) throw new Error("Enter an amount above zero.");
+        if (units > W.usdcToUnits(s.withdrawable_usdc)) throw new Error("That is more than the unreserved balance (" + usdc(s.withdrawable_usdc) + ").");
+        var data = W.CALLS.escrowWithdraw(to, units);
+        if (!(await confirmAction("Withdraw from an escrow", ["Amount: " + String(wamt.value).trim() + " USDC", "To: " + to, "From the escrow: " + e.address], "Withdraw"))) return;
+        var hash = await sendTx(data, e.address);
+        await finish("Funds withdrawn.", hash);
+      }) }, ["Withdraw"])]));
+    return box;
+  }
+
   // ---------- escrows: one panel per registered escrow. The chain is the source of truth; an unreadable chain is said, never shown as zero.
   function escrowPanel(e) {
     var s = e.escrow;
@@ -353,6 +422,7 @@
         await sleep(2500);
         await show("escrows");
       }) }, ["Add funds"])]));
+    box.appendChild(approverPanel(e, s));
     var pending = s.milestones.filter(function (m) { return m.status === "pending"; });
     if (!pending.length) { box.appendChild(h("p", { class: "note" }, ["No milestone is waiting."])); return box; }
     var sel = h("select", { "aria-label": "Milestone" }, pending.map(function (m) { return h("option", { value: String(m.index) }, ["#" + m.index + ", " + usdc(m.amount_usdc)]); }));

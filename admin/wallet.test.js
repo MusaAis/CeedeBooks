@@ -27,6 +27,34 @@ assert.strictEqual(W.CALLS.acceptApprover(), "0x1d4f222c");
   assert.throws(() => W.CALLS.usdcTransfer(A, -1n));
 }
 
+// Escrow approver actions: the selectors are checked against the compiled escrow contract
+{
+  const fs = require("fs"), path = require("path");
+  const artifact = path.join(__dirname, "..", "out", "MilestoneEscrow.sol", "MilestoneEscrow.json");
+  assert.ok(fs.existsSync(artifact), "run forge build first: the selectors are checked against the compiled escrow");
+  const ids = JSON.parse(fs.readFileSync(artifact, "utf8")).methodIdentifiers;
+  assert.strictEqual(W.SEL.escrowOverrideRelease, ids["overrideRelease(uint256,bytes32)"]);
+  assert.strictEqual(W.SEL.escrowRejectMilestone, ids["rejectMilestone(uint256,bytes32)"]);
+  assert.strictEqual(W.SEL.escrowWithdraw, ids["withdraw(address,uint256)"]);
+  assert.strictEqual(W.SEL.setPaused, ids["setPaused(bool)"]);
+  assert.strictEqual(W.CALLS.escrowOverrideRelease(1, K), "0xccf38f78" + w("1") + "12".repeat(32));
+  assert.strictEqual(W.CALLS.escrowRejectMilestone(2, K), "0xc5b130e8" + w("2") + "12".repeat(32));
+  assert.strictEqual(W.CALLS.escrowWithdraw(A, 100000n), "0xf3fef3a3" + w("ab".repeat(20)) + w((100000).toString(16)));
+  const Z = "0x" + "00".repeat(32);
+  assert.throws(() => W.CALLS.escrowOverrideRelease(0, Z));
+  assert.throws(() => W.CALLS.escrowRejectMilestone(0, Z));
+  assert.throws(() => W.CALLS.escrowOverrideRelease(0, "0x12"));
+  assert.throws(() => W.CALLS.escrowOverrideRelease(-1, K));
+  assert.throws(() => W.CALLS.escrowWithdraw(A, 0n));
+  assert.throws(() => W.CALLS.escrowWithdraw("0x" + "00".repeat(20), 1n));
+  assert.throws(() => W.CALLS.escrowWithdraw("0x123", 1n));
+}
+(async () => {
+  assert.strictEqual(await W.reasonHash("scope changed"), "0x" + require("crypto").createHash("sha256").update("scope changed").digest("hex"));
+  assert.strictEqual(await W.reasonHash("  scope changed "), await W.reasonHash("scope changed"));
+  await assert.rejects(() => W.reasonHash("   "));
+})().catch((e) => { console.error(e); process.exit(1); });
+
 assert.throws(() => W.CALLS.setVendor("0x123", true));                 // bad address
 assert.throws(() => W.CALLS.setCategoryDailyLimit(256, 1n));           // uint8 overflow
 assert.throws(() => W.CALLS.setCategoryDailyLimit(1, -1n));            // negative

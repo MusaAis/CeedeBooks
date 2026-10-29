@@ -25,7 +25,11 @@
     rejectEscalation: "7163a16e",     // rejectEscalation(bytes32)
     reopenEscalation: "c5cf0d03",     // reopenEscalation(bytes32), multi-business contract only
     acceptApprover: "1d4f222c",       // acceptApprover()
-    erc20Transfer: "a9059cbb"         // transfer(address,uint256), on the USDC token
+    erc20Transfer: "a9059cbb",        // transfer(address,uint256), on the USDC token
+    // MilestoneEscrow, approver actions (setPaused(bool) above has the same selector on the escrow)
+    escrowOverrideRelease: "ccf38f78", // overrideRelease(uint256,bytes32)
+    escrowRejectMilestone: "c5b130e8", // rejectMilestone(uint256,bytes32)
+    escrowWithdraw: "f3fef3a3"         // withdraw(address,uint256)
   };
 
   function address(a) {
@@ -61,6 +65,20 @@
     usdcTransfer: function (to, units) {
       if (BigInt(units) <= 0n) throw new Error("Enter an amount above zero.");
       return "0x" + SEL.erc20Transfer + address(to) + uint(units, 256);
+    },
+    // The approver pays a milestone itself (the only way to pay one above the agent's limit). The page never sends an all-zero hash.
+    escrowOverrideRelease: function (index, evidenceHash) {
+      if (/^0x0{64}$/i.test(evidenceHash)) throw new Error("Enter an evidence hash; a zero hash records nothing.");
+      return "0x" + SEL.escrowOverrideRelease + uint(index, 256) + bytes32(evidenceHash);
+    },
+    escrowRejectMilestone: function (index, reasoningHash) {
+      if (/^0x0{64}$/i.test(reasoningHash)) throw new Error("Enter a reason; a zero hash records nothing.");
+      return "0x" + SEL.escrowRejectMilestone + uint(index, 256) + bytes32(reasoningHash);
+    },
+    escrowWithdraw: function (to, units) {
+      if (BigInt(units) <= 0n) throw new Error("Enter an amount above zero.");
+      if (/^0x0{40}$/i.test(to)) throw new Error("That is the zero address.");
+      return "0x" + SEL.escrowWithdraw + address(to) + uint(units, 256);
     }
   };
 
@@ -69,7 +87,16 @@
     return "0x" + Array.prototype.map.call(new TextEncoder().encode(text), function (b) { return b.toString(16).padStart(2, "0"); }).join("");
   }
 
-  var api = { CONFIG: CONFIG, SEL: SEL, CALLS: CALLS, usdcToUnits: usdcToUnits, short: short, utf8Hex: utf8Hex };
+  // SHA-256 of a typed reason, as a 0x 32-byte key: what a rejection puts on-chain (the text itself stays with the person who wrote it).
+  async function reasonHash(text) {
+    var t = String(text).trim();
+    if (!t) throw new Error("Enter the reason.");
+    var subtle = (typeof crypto !== "undefined" && crypto.subtle) ? crypto.subtle : require("crypto").webcrypto.subtle;
+    var d = new Uint8Array(await subtle.digest("SHA-256", new TextEncoder().encode(t)));
+    return "0x" + Array.prototype.map.call(d, function (b) { return b.toString(16).padStart(2, "0"); }).join("");
+  }
+
+  var api = { CONFIG: CONFIG, SEL: SEL, CALLS: CALLS, usdcToUnits: usdcToUnits, short: short, utf8Hex: utf8Hex, reasonHash: reasonHash };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   root.CeedeWallet = api;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -222,6 +222,16 @@ No contract change and no new environment variable. The database gains two invoi
 
 To go back: stop the service and check out v1.2.10.1. The new columns and table are ignored by the old code. `ADMIN_PAUSED` and `ADMIN_RESUMED` ledger entries, if you made any, stay in the chain and still verify.
 
+## Upgrading to v1.3.2.4 (the approver's actions on an escrow, admin site only)
+
+No backend, contract, schema or environment change: nothing to back up, no pytest run and no service restart. Only the admin site's files change.
+
+1. Extract the files, then check them: `node admin/wallet.test.js && node admin/admin.test.js && BIZ=acme node admin/admin.test.js` (expect `WALLET_TESTS_OK`, then `ADMIN_SMOKE_OK` twice; the wallet test needs `forge build` to have been run once).
+2. Re-copy the admin site: `sudo cp admin/index.html admin/admin.css admin/wallet.js admin/admin.js /var/www/ceedebooks-admin/` and hard-refresh `admin.ceedebooks.xyz`.
+3. Open the Escrows tab with the escrow's approver wallet: each escrow card now shows Approver actions (pause, release as approver, reject, withdraw). With any other wallet it shows who the approver is and no buttons. Do not press any of them without your explicit go-ahead: each sends a real transaction from your wallet. The first live run (pause, withdraw, reject, release as approver, resume, one at a time) is in `docs/rollouts/2026-10-29-escrow-approver-actions-live.md`.
+
+To go back: re-copy the admin files from v1.3.2.3. Nothing else changed.
+
 ## Upgrading to v1.3.2.3 (the agent's release path for an escrow)
 
 No contract change and no new environment variable. The database gains an `escrow_releases` table on the first start; nothing existing changes. The routes only act for a registered escrow whose agent is the business's agent wallet, and nothing runs by itself: a release happens only when a signed-in admin calls the release route.

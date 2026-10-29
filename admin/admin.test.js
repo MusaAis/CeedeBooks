@@ -28,7 +28,7 @@ const BIZ = process.env.BIZ || null, ACME_CONTRACT = "0x" + "c9".repeat(20);
 if (BIZ) global.location = { search: "?business=" + BIZ };
 let dryMerged = true;
 const ESC = "0x" + "e5".repeat(20);
-let escrowsList = [{ id: 1, address: ESC, chain_ok: true, escrow: { balance_usdc: "1", pending_usdc: "0.8", agent_release_limit_usdc: "0.25", paused: false, contractor: "0x" + "c4".repeat(20),
+let escrowsList = [{ id: 1, address: ESC, chain_ok: true, escrow: { approver: ADMIN, balance_usdc: "1", pending_usdc: "0.8", withdrawable_usdc: "0.2", agent_release_limit_usdc: "0.25", paused: false, contractor: "0x" + "c4".repeat(20),
   milestones: [{ index: 0, amount_usdc: "0.1", requirements_hash: "0x" + "11".repeat(32), status: "pending", agent_can_release: true },
                { index: 1, amount_usdc: "0.5", requirements_hash: "0x" + "22".repeat(32), status: "pending", agent_can_release: false },
                { index: 2, amount_usdc: "0.2", requirements_hash: "0x" + "33".repeat(32), status: "released", agent_can_release: false }] } }];
@@ -247,6 +247,73 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
   assert.ok(/Sent: the milestone now reads released/.test(root.textContent) && /Decision hash: f1f1/.test(root.textContent) && /hash matches its stored record/.test(root.textContent) && /on-chain event found/.test(root.textContent), "the result and the record check are shown");
   await release().listeners.click(); await tick(60);
   assert.ok(!posts.some((p) => p.release), "one dry run allows one release attempt");
+  posts.length = 0;
+
+  // approver actions: transactions from the owner's own wallet to the escrow, after a confirmation; the server is not involved
+  await tick(2700);                                   // let the redraw that follows the funding finish first
+  const txs = () => calls.filter((c) => c.method === "eth_sendTransaction");
+  const sel = (label) => { let hit = null; walk(root, (x) => { if (x.tag === "select" && x.attrs["aria-label"] === label) hit = x; }); return hit; };
+  const inp = (ph) => { let hit = null; walk(root, (x) => { if (x.tag === "input" && x.attrs.placeholder === ph) hit = x; }); return hit; };
+  const apvTx = (n) => txs().length === n;
+  const postsBeforeApprover = posts.length;
+  assert.ok(/Approver actions/.test(root.textContent) && /Withdrawable now: 0.2 USDC/.test(root.textContent) && /not written to the activity log/.test(root.textContent), "the approver sees the actions and what they do not do");
+  let n0 = txs().length;
+  await findBtn(root, "Pause the escrow").listeners.click(); await tick(200);
+  assert.ok(apvTx(n0 + 1)); assert.deepStrictEqual(txs().pop().params[0], { from: ADMIN, to: ESC, data: W.CALLS.setPaused(true) });
+  // release as the approver: an evidence hash is required, and it goes to the escrow, not to the agent
+  n0 = txs().length;
+  sel("Milestone to release yourself").value = "1";
+  inp("evidence hash (0x and 64 characters)").value = "";
+  await findBtn(root, "Release as approver").listeners.click(); await tick(60);
+  assert.ok(apvTx(n0) && /valid 32-byte key/.test(document.body.textContent), "no evidence hash, no transaction");
+  inp("evidence hash (0x and 64 characters)").value = "0x" + "00".repeat(32);
+  await findBtn(root, "Release as approver").listeners.click(); await tick(60);
+  assert.ok(apvTx(n0) && /zero hash records nothing/.test(document.body.textContent), "a zero hash is refused");
+  inp("evidence hash (0x and 64 characters)").value = "0x" + "ab".repeat(32);
+  await findBtn(root, "Release as approver").listeners.click(); await tick(200);
+  assert.ok(apvTx(n0 + 1)); assert.deepStrictEqual(txs().pop().params[0], { from: ADMIN, to: ESC, data: W.CALLS.escrowOverrideRelease(1, "0x" + "ab".repeat(32)) });
+  // reject: the typed reason is hashed, and the transaction carries that hash
+  n0 = txs().length;
+  sel("Milestone to reject").value = "1";
+  inp("why you are rejecting it").value = "  ";
+  await findBtn(root, "Reject milestone").listeners.click(); await tick(60);
+  assert.ok(apvTx(n0) && /Enter the reason/.test(document.body.textContent), "no reason, no transaction");
+  inp("why you are rejecting it").value = "scope changed";
+  await findBtn(root, "Reject milestone").listeners.click(); await tick(200);
+  const wantHash = "0x" + require("crypto").createHash("sha256").update("scope changed").digest("hex");
+  assert.ok(apvTx(n0 + 1)); assert.deepStrictEqual(txs().pop().params[0], { from: ADMIN, to: ESC, data: W.CALLS.escrowRejectMilestone(1, wantHash) });
+  // withdraw: never more than the unreserved balance; empty destination means the signed-in wallet
+  n0 = txs().length;
+  inp("amount to withdraw").value = "0.3";
+  await findBtn(root, "Withdraw").listeners.click(); await tick(60);
+  assert.ok(apvTx(n0) && /more than the unreserved balance/.test(document.body.textContent), "more than the unreserved part is refused before the wallet");
+  inp("amount to withdraw").value = "0.2";
+  inp("send to (empty: your wallet)").value = "0x123";
+  await findBtn(root, "Withdraw").listeners.click(); await tick(60);
+  assert.ok(apvTx(n0) && /not a valid wallet address/.test(document.body.textContent), "a bad destination sends nothing");
+  inp("send to (empty: your wallet)").value = OTHER;
+  inp("amount to withdraw").value = "0.1";
+  await findBtn(root, "Withdraw").listeners.click(); await tick(200);
+  assert.ok(apvTx(n0 + 1)); assert.deepStrictEqual(txs().pop().params[0], { from: ADMIN, to: ESC, data: W.CALLS.escrowWithdraw(OTHER, 100000n) });
+  inp("send to (empty: your wallet)").value = "";
+  inp("amount to withdraw").value = "0.2";
+  await findBtn(root, "Withdraw").listeners.click(); await tick(200);
+  assert.ok(apvTx(n0 + 2)); assert.deepStrictEqual(txs().pop().params[0], { from: ADMIN, to: ESC, data: W.CALLS.escrowWithdraw(ADMIN, 200000n) });
+  assert.strictEqual(posts.length, postsBeforeApprover, "approver actions are wallet transactions: nothing is posted to the server");
+  await tick(2700);                                                         // the redraws that follow each action
+  // a paused escrow offers Resume; someone who is not its approver sees no buttons at all
+  escrowsList[0].escrow.paused = true;
+  await findBtn(root, "Escrows").listeners.click(); await tick();
+  n0 = txs().length;
+  assert.ok(!findBtn(root, "Pause the escrow") && /PAUSED/.test(root.textContent));
+  await findBtn(root, "Resume the escrow").listeners.click(); await tick(200);
+  assert.ok(apvTx(n0 + 1)); assert.strictEqual(txs().pop().params[0].data, W.CALLS.setPaused(false));
+  await tick(2700);
+  escrowsList[0].escrow.paused = false; escrowsList[0].escrow.approver = OTHER;
+  await findBtn(root, "Escrows").listeners.click(); await tick();
+  assert.ok(!findBtn(root, "Pause the escrow") && !findBtn(root, "Withdraw") && !findBtn(root, "Release as approver") && !findBtn(root, "Reject milestone") && /Only this escrow's approver/.test(root.textContent), "not the approver: no approver buttons");
+  escrowsList[0].escrow.approver = ADMIN;
+  await findBtn(root, "Escrows").listeners.click(); await tick();
   posts.length = 0;
 
   // limits tab: add a category (a server call), rename it, then set its limit with the owner's own wallet using its id
