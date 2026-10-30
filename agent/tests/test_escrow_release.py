@@ -654,3 +654,101 @@ def test_a_release_record_naming_another_businesss_escrow_is_not_confirmed_by_it
     asyncio.run(move())
     out = client.get(f"/decisions/{b['reasoning_hash']}/verify").json()["onchain"]
     assert out["checked"] is False and out["match"] is None
+
+
+# ---- H5 (v1.3.2.5): the public list of an escrow's decisions, no key
+
+def _insert_audit(business_id, action, subject, ts, n):
+    import sqlite3
+    db = sqlite3.connect(config.db_path)
+    try:
+        db.execute("INSERT INTO audit_log (action, subject, reasoning, amount_usdc, model_used, timestamp, hash_input, reasoning_hash, business_id) "
+                   "VALUES (?, ?, 'text that must not be listed', 0.1, 'rules', ?, 'x', ?, ?)", (action, subject, ts, f"{n:064x}", business_id))
+        db.commit()
+    finally:
+        db.close()
+
+
+def _three_decisions(client, monkeypatch):
+    """A hold, then a release of milestone 0, then an escalation of milestone 1, all through the real routes."""
+    h, eid, esc, wire = _setup(client, monkeypatch)
+    _github(monkeypatch, {"merged": False})
+    hold = _release(client, h, eid, evidence_hash=_dry(client, h, eid).json()["evidence_hash"]).json()
+    _github(monkeypatch)
+    rel = _release(client, h, eid, evidence_hash=_dry(client, h, eid).json()["evidence_hash"]).json()
+    esca = _release(client, h, eid, index=1, evidence_hash=_dry(client, h, eid, 1).json()["evidence_hash"]).json()
+    assert (hold["verdict"], rel["verdict"], esca["verdict"]) == ("hold", "release", "escalate")
+    return hold, rel, esca
+
+
+def test_the_public_list_shows_each_decision_newest_first_without_the_reasoning_and_needs_no_key(client, monkeypatch):
+    hold, rel, esca = _three_decisions(client, monkeypatch)
+    r = client.get(f"/escrows/{ESC}/decisions")
+    assert r.status_code == 200, r.text
+    b = r.json()
+    assert b["address"] == ESC and b["business"] == "ceedebooks"
+    assert [(d["action"], d["milestone"]) for d in b["decisions"]] == [("ESCROW_ESCALATED", 1), ("ESCROW_RELEASED", 0), ("ESCROW_HELD", 0)]
+    assert [d["reasoning_hash"] for d in b["decisions"]] == [esca["reasoning_hash"], rel["reasoning_hash"], hold["reasoning_hash"]]
+    assert [d["amount_usdc"] for d in b["decisions"]] == [0.5, 0.1, 0.1]
+    assert [d["chain_tx_hash"] for d in b["decisions"]] == [None, "0x" + "9" * 64, None]
+    assert all(set(d) == {"reasoning_hash", "action", "milestone", "amount_usdc", "timestamp", "chain_tx_hash"} for d in b["decisions"])
+    assert "Verdict" not in r.text and "reasoning\"" not in r.text
+    assert client.get(f"/escrows/{ESC.upper().replace('0X', '0x')}/decisions").status_code == 200   # the address is matched in any case
+
+
+def test_the_limit_is_applied_and_bounded(client, monkeypatch):
+    _three_decisions(client, monkeypatch)
+    assert len(client.get(f"/escrows/{ESC}/decisions?limit=2").json()["decisions"]) == 2
+    assert [d["milestone"] for d in client.get(f"/escrows/{ESC}/decisions?limit=1").json()["decisions"]] == [1]
+    for bad in ("0", "51", "-1", "abc"):
+        assert client.get(f"/escrows/{ESC}/decisions?limit={bad}").status_code == 422
+
+
+def test_an_unregistered_or_malformed_address_is_not_found_or_invalid(client, monkeypatch):
+    _three_decisions(client, monkeypatch)
+    assert client.get("/escrows/" + "0x" + "99" * 20 + "/decisions").status_code == 404
+    assert client.get("/escrows/0x123/decisions").status_code == 422
+    assert client.get("/escrows/" + "0x" + "zz" * 20 + "/decisions").status_code == 422
+
+
+def test_an_archived_business_does_not_expose_its_escrows_decisions(client, monkeypatch):
+    _three_decisions(client, monkeypatch)
+
+    async def archive():
+        async with aiosqlite.connect(config.db_path) as db:
+            await db.execute("UPDATE businesses SET status = 'archived' WHERE id = 1")
+            await db.commit()
+    asyncio.run(archive())
+    assert client.get(f"/escrows/{ESC}/decisions").status_code == 404
+
+
+def test_only_the_registering_businesss_escrow_decisions_are_listed_and_nothing_else(client, monkeypatch):
+    _three_decisions(client, monkeypatch)
+
+    async def add_acme():
+        async with aiosqlite.connect(config.db_path) as db:
+            await db.execute(
+                "INSERT INTO businesses (name, slug, enforcer_address, approver_address, agent_address, contract_version, status, created_at) "
+                "VALUES ('Acme', 'acme', ?, ?, ?, 2, 'active', 0)", (ACME, ADMIN_2.address, ACME_AGENT))
+            await db.commit()
+    asyncio.run(add_acme())
+    sub = f"escrow:{ESC}:milestone:0"
+    _insert_audit(2, "ESCROW_RELEASED", sub, 5, 101)                               # another business's record naming this escrow
+    _insert_audit(1, "PAID", sub, 6, 102)                                           # not an escrow action
+    _insert_audit(1, "ESCROW_HELD", f"escrow:{ESC}:milestone:abc", 7, 103)          # a subject that is not a milestone
+    _insert_audit(1, "ESCROW_HELD", f"escrow:{ESC}:milestone:0 extra", 8, 104)
+    _insert_audit(1, "ESCROW_HELD", f"escrow:{'0x' + 'e2' * 20}:milestone:0", 9, 105)  # another escrow
+    _insert_audit(1, "ESCROW_HELD", f"xescrow:{ESC}:milestone:0", 10, 106)
+    got = client.get(f"/escrows/{ESC}/decisions").json()["decisions"]
+    assert [(d["action"], d["milestone"]) for d in got] == [("ESCROW_ESCALATED", 1), ("ESCROW_RELEASED", 0), ("ESCROW_HELD", 0)]
+    assert not any(d["reasoning_hash"] in {f"{n:064x}" for n in range(101, 107)} for d in got)
+
+
+def test_a_second_escrow_of_the_same_business_has_its_own_list(client, monkeypatch):
+    _three_decisions(client, monkeypatch)
+    other = "0x" + "e2" * 20
+    fake(other)
+    h = _bearer(client)
+    assert client.post("/admin/escrows", json={"address": other}, headers=h).status_code == 200
+    assert client.get(f"/escrows/{other}/decisions").json()["decisions"] == []
+    assert len(client.get(f"/escrows/{ESC}/decisions").json()["decisions"]) == 3

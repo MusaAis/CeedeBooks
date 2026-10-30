@@ -18,6 +18,7 @@ Testnet USDC. The business in every record is the builder's own, so none of this
 | Oct 27 | [Escrow reads and the GitHub evidence check](2026-10-27-escrow-reads-and-evidence.md) | v1.3.2.1 | the reference escrow read through the API's code; merged pull request 937 of forge-std turned into facts and hash `0xe614b119...c5978e`; two missing pull requests failed |
 | Oct 28 | [The agent's escrow release path, first live run](2026-10-28-escrow-release-live.md) | v1.3.2.3 | commit `0x73ac7434...a22421f0`, release `0xc49c13dd...b83f1f` (0.1 USDC, block 69485148); a hold and an escalation recorded, nothing sent; all our own wallets |
 | Oct 29 | [The approver's escrow actions, first live run](2026-10-29-escrow-approver-actions-live.md) | v1.3.2.4 | pause `0x722515b4...56d0e8d7`, withdraw `0x058fd250...45ec1bfd`, reject `0xe078db71...664537d1`, approver release of 0.5 USDC `0x904a13bd...8adfaee6`, resume `0xe6fa3e83...31d58917`; all our own wallets |
+| Oct 30 | [Proof-page view of escrows, first live check](2026-10-30-proof-page-escrows.md) | v1.3.2.5 | `GET /escrows/0x9752...dd5/decisions` returned three decisions; Verify on the release failed on the page, was fixed, then passed (block 69485148) |
 
 ## Shipped but with no live run recorded here
 

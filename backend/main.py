@@ -1737,6 +1737,24 @@ async def public_escrows(business: Optional[Slug] = Query(default=None)):
     return {"escrows": [{"address": r["address"], "business": r["business_slug"]} for r in rows]}
 
 
+@app.get("/escrows/{address}/decisions")
+async def public_escrow_decisions(address: str = Path(pattern=r"^0x[a-fA-F0-9]{40}$"), limit: int = Query(default=20, ge=1, le=50)):
+    """The agent's recorded decisions on this registered escrow, newest first: hash, verdict, milestone, amount, time and the
+    transaction when one was sent. No reasoning text (fetch one by hash). Only the registering business's own records are listed."""
+    row = await models.get_escrow_by_address(address)
+    if row is None:
+        raise HTTPException(404, "Escrow not found")
+    rows = await decision_log.for_subject_prefix(row["business_id"], escrow_release.ESCROW_ACTIONS, f"escrow:{row['address']}:milestone:", limit)
+    out = []
+    for r in rows:
+        target = escrow_release.parse_subject(r["subject"])
+        if target is None:
+            continue
+        out.append({"reasoning_hash": r["reasoning_hash"], "action": r["action"], "milestone": target[1], "amount_usdc": r["amount_usdc"],
+                    "timestamp": r["timestamp"], "chain_tx_hash": r["chain_tx_hash"]})
+    return {"address": row["address"], "business": row["business_slug"], "decisions": out}
+
+
 @app.get("/escrows/{address}")
 async def public_escrow(address: str = Path(pattern=r"^0x[a-fA-F0-9]{40}$")):
     row = await models.get_escrow_by_address(address)

@@ -100,6 +100,15 @@
   </div>
 </section>
 
+<section class="sec" id="escrows" aria-labelledby="esc-title" hidden>
+  <div class="wrap">
+    <h2 id="esc-title" class="h2">Milestone escrows</h2>
+    <p class="sub">An escrow holds USDC for a contractor and pays it out milestone by milestone. The state below is read from the chain when you open the page. The agent can release a small milestone once a pull request is merged; anything larger, or anything the agent holds back, waits for the approver.</p>
+    <div id="esc-list" class="feed" aria-live="polite"></div>
+    <p class="note">Escrow decisions are checked with the same Verify button, but they are not counted in the paid, held or escalated totals, the outcomes or the traction figures. A merged pull request is not proof that the work was done well. The approver's own actions (release, reject, pause, withdraw) are transactions, so they appear on the escrow's explorer page, not in this list.</p>
+  </div>
+</section>
+
 <section class="sec" id="how" aria-labelledby="how-title">
   <div class="wrap">
     <h2 id="how-title" class="h2">How a payment is decided</h2>

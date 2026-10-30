@@ -248,5 +248,53 @@ const zero = "0x" + "00".repeat(32);
   assert.ok(!(await V.checkRecord({ ...r4, hash_input: r4.hash_input.replace('"comparison":', '"comparisonX":') }, r4.reasoning_hash)).hashMatches);
   const h4 = JSON.parse(r4.hash_input); delete h4.comparison;
   assert.ok(!(await V.checkRecord({ ...r4, hash_input: JSON.stringify(h4) }, r4.reasoning_hash)).hashMatches);
+
+  // ---- escrow view (v1.3.2.5)
+  {
+    const A = "0x" + "9a".repeat(20), EX = V.CONFIG.explorer, h = "ab".repeat(32), tx = "0x" + "cd".repeat(32);
+    const snap = { address: A, agent: "0x" + "11".repeat(20), approver: "0x" + "22".repeat(20), contractor: "0x" + "33".repeat(20), paused: false,
+      agent_release_limit_usdc: "0.25", balance_usdc: "4.8", pending_usdc: "0", withdrawable_usdc: "4.8",
+      milestones: [{ index: 0, amount_usdc: "0.1", status: "released", agent_can_release: false }, { index: 1, amount_usdc: "0.2", status: "pending", agent_can_release: true }] };
+    const esc = { address: A, business: "acme", chain_ok: true, escrow: snap };
+    const dec = { decisions: [{ reasoning_hash: h, action: "ESCROW_RELEASED", milestone: 0, amount_usdc: 0.1, timestamp: 1761660000, chain_tx_hash: tx },
+                              { reasoning_hash: h, action: "ESCROW_HELD", milestone: 1, amount_usdc: 0.2, timestamp: 1761650000, chain_tx_hash: null },
+                              { reasoning_hash: h, action: "SOMETHING_ELSE", milestone: 2, amount_usdc: 1, timestamp: 1, chain_tx_hash: null }] };
+    const v = V.escrowView(esc, dec, { id: 1, external: false }, EX);
+    assert.ok(v.readable && v.state === "Active" && v.figures.balance === "4.8" && v.figures.reserved === "0" && v.figures.limit === "0.25");
+    assert.strictEqual(v.kind, "Builder's own");
+    assert.deepStrictEqual(v.milestones.map((m) => m.status), ["released", "pending"]);
+    assert.ok(v.milestones[1].agentCanRelease && !v.milestones[0].agentCanRelease);
+    assert.deepStrictEqual(v.roles.map((r) => r.label), ["Agent", "Approver", "Contractor"]);
+    assert.strictEqual(v.roles[0].url, EX + "/address/" + snap.agent);
+    assert.strictEqual(v.decisions[0].txUrl, EX + "/tx/" + tx);
+    assert.strictEqual(v.decisions[1].txUrl, null);
+    assert.deepStrictEqual(v.decisions.map((d) => d.verdict), ["released", "held", "unknown"]);
+    assert.strictEqual(V.escrowView(esc, dec, { id: 2, external: true }, EX).kind, "Outside business");
+    assert.strictEqual(V.escrowView(esc, dec, { id: 2, external: false }, EX).kind, "Builder's own");
+    assert.strictEqual(V.escrowView(esc, dec, null, EX).kind, "");
+    assert.strictEqual(V.escrowView({ ...esc, escrow: { ...snap, paused: true } }, dec, null, EX).state, "Paused");
+    const dead = V.escrowView({ address: A, business: "acme", chain_ok: false, escrow: null }, dec, null, EX);   // the chain could not be read: no figures are invented
+    assert.ok(!dead.readable && dead.state === "unreadable" && dead.figures === null && dead.milestones.length === 0 && dead.decisions.length === 3);
+    assert.deepStrictEqual(V.escrowView(esc, null, null, EX).decisions, []);
+  }
+
+  // ---- the in-browser check of an escrow release (v1.3.2.5): the event is MilestoneReleased on the escrow named in the subject
+  {
+    const A = "0x" + "9a".repeat(20), hh = "ab".repeat(32);
+    const top0 = "0x3ea05e6778794071ec8295b67050811c132dc3ba231e7fb92f55d970eeb7f5ae";
+    assert.deepStrictEqual(V.escrowTarget({ action: "ESCROW_RELEASED", subject: "escrow:" + A.toUpperCase().replace("0X", "0x") + ":milestone:2" }), { address: A, milestone: 2 });
+    assert.strictEqual(V.escrowTarget({ action: "ESCROW_HELD", subject: "escrow:" + A + ":milestone:0" }), null);       // only a release has an event
+    assert.strictEqual(V.escrowTarget({ action: "ESCROW_RELEASED", subject: "INV-1" }), null);
+    assert.strictEqual(V.escrowTarget({ action: "ESCROW_RELEASED", subject: "escrow:0x12:milestone:0" }), null);
+    const rc = (addr, t0, t2, status) => ({ blockNumber: "0x2a", status: status || "0x1", logs: [{ address: addr, topics: [t0, zero, t2] }] });
+    const hit = V.findEscrowRelease(rc(A, top0, pad(hh)), hh, A);
+    assert.ok(hit.found && hit.success && hit.block === 42 && hit.event === "MilestoneReleased");
+    assert.ok(!V.findEscrowRelease(rc("0x" + "bb".repeat(20), top0, pad(hh)), hh, A).found);         // another contract's event is not the escrow's
+    assert.ok(!V.findEscrowRelease(rc(A, top0, pad("cd".repeat(32))), hh, A).found);                  // another decision's hash
+    assert.ok(!V.findEscrowRelease(rc(A, "0x" + "11".repeat(32), pad(hh)), hh, A).found);             // not a MilestoneReleased event
+    assert.ok(!V.findEscrowRelease(rc(A, top0, pad(hh), "0x0"), hh, A).success);                      // a reverted transaction is not a success
+    assert.ok(!V.findEscrowRelease(null, hh, A).found);
+    assert.ok(!V.findEvent(rc(A, top0, pad(hh)), hh, A).found);                                       // the budget-contract lookup alone never matches it (the bug seen live)
+  }
   console.log("JS_TESTS_OK");
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -49,10 +49,23 @@
       try {
         var got = await V.readReceipt(rec.chain_tx_hash, window.fetch.bind(window));
         var known = await V.isKnownBusiness(local.enforcer, window.fetch.bind(window));
-        var ev = known ? V.findEvent(got.receipt, hash, local.enforcer) : { found: false };
+        var target = V.escrowTarget(rec);
+        var ev = { found: false }, escrowOk = true;
+        if (known && target) {
+          // The release event is on the escrow, so the escrow must be one registered to this business (the server's list; the event itself is read from the chain).
+          var reg = (await getJson("/escrows")).escrows;
+          var owner = (await getJson("/businesses")).businesses.filter(function (b) { return b.id === rec.business_id; })[0];
+          escrowOk = !!owner && reg.some(function (r) { return r.address.toLowerCase() === target.address && r.business === owner.slug; });
+          if (escrowOk) ev = V.findEscrowRelease(got.receipt, hash, target.address);
+        } else if (known) {
+          ev = V.findEvent(got.receipt, hash, local.enforcer);
+        }
         if (!known) {
           chain = "bad";
           steps.push({ s: "bad", t: "The contract named in this record was not created by the CeedeBooks factory, so its events are not trusted.", link: tx });
+        } else if (!escrowOk) {
+          chain = "bad";
+          steps.push({ s: "bad", t: "The escrow named in this record is not registered to this business, so its events are not trusted.", link: tx });
         } else if (ev.found && ev.success) {
           chain = "ok";
           steps.push({ s: "ok", t: "Found on-chain. A " + ev.event + " event in block " + ev.block + " carries the same hash. Read directly from " + new URL(got.rpc).host + ".", link: tx });
@@ -201,6 +214,57 @@
       $("outcomes-apart").textContent = v.apart.length ? "Shown apart, not counted above: " + v.apart.join("; ") + "." : "";
     } catch (e) {
       $("outcomes-outside").textContent = "The outcome figures could not be loaded just now.";
+    }
+  }
+
+  // ---------- escrows
+  async function loadEscrows() {
+    var sec = $("escrows"), box = $("esc-list");
+    try {
+      var list = (await getJson("/escrows")).escrows;
+      if (!list.length) { sec.hidden = true; return; }
+      var bizRows = [];
+      try { bizRows = (await getJson("/businesses")).businesses; } catch (e) { /* the kind is simply left out */ }
+      sec.hidden = false;
+      box.textContent = "";
+      for (var i = 0; i < list.length; i++) {
+        var pair = await Promise.all([getJson("/escrows/" + list[i].address), getJson("/escrows/" + list[i].address + "/decisions?limit=10")]);
+        var biz = bizRows.filter(function (b) { return b.slug === list[i].business; })[0] || null;
+        var v = V.escrowView(pair[0], pair[1], biz, C.explorer);
+        var card = el("div", "item esc");
+        card.appendChild(el("span", "chip " + (v.state === "Active" ? "paid" : v.state === "Paused" ? "held" : "own"), v.state));
+        var t = el("div", "t");
+        var head = el("strong", null, v.business + (v.kind ? " (" + v.kind.toLowerCase() + ")" : ""));
+        t.appendChild(head);
+        var line = el("span", null, "Escrow "); line.appendChild(anchor(shortHash(v.address), v.addressUrl)); t.appendChild(line);
+        if (v.figures) t.appendChild(el("span", null, "Balance " + usdc(v.figures.balance) + ", reserved " + usdc(v.figures.reserved) + ", the agent releases up to " + usdc(v.figures.limit)));
+        else t.appendChild(el("span", null, "The chain could not be read just now, so no figures are shown."));
+        v.milestones.forEach(function (m) {
+          t.appendChild(el("span", null, "Milestone " + m.index + ": " + usdc(m.amount) + ", " + m.status + (m.status === "pending" && !m.agentCanRelease ? ", needs the approver" : "")));
+        });
+        v.roles.forEach(function (r) { var s = el("span", null, r.label + " "); s.appendChild(anchor(shortHash(r.address), r.url)); t.appendChild(s); });
+        card.appendChild(t);
+        box.appendChild(card);
+        if (!v.decisions.length) { box.appendChild(el("p", "note", "No recorded agent decisions on this escrow yet.")); continue; }
+        v.decisions.forEach(function (d) {
+          var row = el("div", "item");
+          row.appendChild(el("span", "chip " + (d.verdict === "released" ? "paid" : d.verdict), d.verdict.toUpperCase()));
+          var dt = el("div", "t");
+          dt.appendChild(el("strong", null, "Milestone " + d.milestone));
+          var meta = el("span", null, usdc(d.amount) + ", " + when(d.timestamp) + (d.txUrl ? ", " : ", no transaction"));
+          if (d.txUrl) meta.appendChild(anchor("transaction", d.txUrl));
+          dt.appendChild(meta);
+          row.appendChild(dt);
+          var btn = el("button", "mini", "Verify");
+          btn.type = "button";
+          btn.addEventListener("click", function () { $("hash").value = d.hash; runVerify(); $("verify").scrollIntoView({ behavior: reduce ? "auto" : "smooth" }); });
+          row.appendChild(btn);
+          box.appendChild(row);
+        });
+      }
+    } catch (e) {
+      sec.hidden = false;
+      box.textContent = "The escrows could not be loaded just now.";
     }
   }
 
@@ -355,6 +419,7 @@
   loadOutcomes();
   loadFeed();
   loadBusinesses();
+  loadEscrows();
   // A link from the vendor portal (#check=<64 hex>) opens straight onto that decision's check.
   var deep = /^#check=([0-9a-f]{64})$/.exec(location.hash || "");
   if (deep) { $("hash").value = deep[1]; $("verify").scrollIntoView(); runVerify(); }

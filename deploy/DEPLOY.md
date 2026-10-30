@@ -222,6 +222,17 @@ No contract change and no new environment variable. The database gains two invoi
 
 To go back: stop the service and check out v1.2.10.1. The new columns and table are ignored by the old code. `ADMIN_PAUSED` and `ADMIN_RESUMED` ledger entries, if you made any, stay in the chain and still verify.
 
+## Upgrading to v1.3.2.5 (the public view of escrows on the proof page)
+
+One new public API route and new proof-page files. No contract, schema or environment change, nothing to back up.
+
+1. Extract the files, run `pytest agent/tests/` with the CI placeholder variables (699 tests, about 1 minute here, longer on a small server) and `node site/verify.test.js` (expect `JS_TESTS_OK`).
+2. Restart the API for the new route: `sudo systemctl restart ceedebooks-api` and wait about 15 seconds.
+3. Re-copy the proof page: `sudo cp site/index.html site/styles.css site/app.js site/verify.js /var/www/ceedebooks/` and hard-refresh `ceedebooks.xyz`. The page-wide Content-Security-Policy needs no change: it only calls the API and the public RPC.
+4. Check the route: `curl -s https://api.ceedebooks.xyz/escrows/0x9752F995739C8A171AbD24944925Eaf4d2971dd5/decisions` lists the three recorded decisions (a release, a hold and an escalation), and `curl -s -o /dev/null -w '%{http_code}' https://api.ceedebooks.xyz/escrows/0x0000000000000000000000000000000000000001/decisions` answers 404. On the proof page a **Milestone escrows** section appears with the escrow's state and the decisions; press Verify on the release (milestone 0): all four steps pass and the verdict reads Verified. A held or escalated decision reads "recorded off-chain only", which is correct: nothing was sent.
+
+To go back: re-copy the proof-page files and restart from v1.3.2.4. The new route disappears and nothing else changes.
+
 ## Upgrading to v1.3.2.4 (the approver's actions on an escrow, admin site only)
 
 No backend, contract, schema or environment change: nothing to back up, no pytest run and no service restart. Only the admin site's files change.

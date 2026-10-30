@@ -7,7 +7,7 @@ Everything below is checkable on-chain. Nothing here is estimated.
 | What | Evidence |
 |---|---|
 | Contract deployed and verified on Arc Testnet | [`BudgetEnforcer`](https://explorer.testnet.arc.io/address/0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB) |
-| Test suites | 111 Foundry (24 on the v1 contract, 45 on the multi-business contracts, 42 on the escrow contract) + 693 Python tests + 6 Node runs (proof page, admin site, vendor portal), run by CI on every push |
+| Test suites | 111 Foundry (24 on the v1 contract, 45 on the multi-business contracts, 42 on the escrow contract) + 699 Python tests + 6 Node runs (proof page, admin site, vendor portal), run by CI on every push |
 | First self-owned vendor bill paid through the contract | `ceedebooks.xyz` registration, 2.20 USDC, category 1 |
 | Multi-business contracts deployed and verified (v1.2.8) | [`BudgetFactory`](https://explorer.testnet.arc.io/address/0x97b9A3802bA6B258cBeF6070532a265656bb391C), [`LedgerAnchor`](https://explorer.testnet.arc.io/address/0x008217BeC86462E76126F94e50eBe68fb4a41444) |
 | First ledger anchor of the original business (sequence 9) | [`0x24045426...a36639fb`](https://explorer.testnet.arc.io/tx/0x24045426ab28d346ce6e48998dfef1964e5890d64ee04f385cae1011a36639fb); `GET /ledger/verify?business=ceedebooks` compares it with the chain |

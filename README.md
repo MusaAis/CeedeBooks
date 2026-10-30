@@ -4,7 +4,7 @@
 ![CI](https://github.com/MusaAis/CeedeBooks/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Foundry tests](https://img.shields.io/badge/forge%20tests-111%2F111%20passing-brightgreen)
-![Python tests](https://img.shields.io/badge/pytest-693%2F693%20passing-brightgreen)
+![Python tests](https://img.shields.io/badge/pytest-699%2F699%20passing-brightgreen)
 ![Network](https://img.shields.io/badge/Arc-Testnet-informational)
 
 *"Ceede" means money in Pulaar/Fulfulde.*
@@ -13,7 +13,7 @@ An autonomous accounts-payable agent for African SMEs on Arc: it validates and p
 
 Built for the **Tameion Agents Hackathon** (Canteen × Circle × Arc), Sep 27 – Oct 17, 2026.
 
-**Status: v1.3.2.4**, Phase H piece 4: the approver's own actions on a milestone escrow in the admin site (pause and resume, release a milestone yourself, reject, withdraw), sent from the approver's wallet and never by the agent. Run live once on Oct 29 from the admin site: a pause, a 0.1 USDC withdraw, a rejection, a release of the 0.5 USDC milestone that is above the agent's limit, and a resume ([record](docs/rollouts/2026-10-29-escrow-approver-actions-live.md)). Before it, v1.3.2.3 (Phase H piece 3): the agent's release path for a milestone escrow. On an admin's request the agent decides with code only, records the decision (hashed, chained and signed) and, if the verdict is release, commits and then releases from its own wallet; anything above the escrow's agent limit is left to the approver. Run live once on Oct 28: one hold, one escalation and one release of 0.1 USDC from the agent wallet ([record](docs/rollouts/2026-10-28-escrow-release-live.md)). Earlier: v1.3.2.2 (docs split), v1.3.2.1 (read-only escrow routes, GitHub evidence dry run), v1.3.2 (the contract). The admin site has an Escrows tab for both. Next: a proof-page view of escrows. See the [roadmap](docs/roadmap.md).
+**Status: v1.3.2.5**, Phase H piece 5, which completes Phase H: an **Escrows** section on the public proof page, read-only. For each registered escrow it shows the state read from the chain (balance, reserved, the agent's limit, paused or active, each milestone and its status, the agent, approver and contractor addresses with explorer links), whether the business is the builder's own or an outside one, and the agent's recorded decisions on it, each with a Verify button; it sends nothing and asks for no wallet. A new public route, `GET /escrows/{address}/decisions`, lists those decisions. Checked live on Oct 30: the route returned the three recorded decisions and the page showed the escrow's state. Pressing Verify on the release failed, because the page's in-browser check only knew the business contract's events and not the escrow's; v1.3.2.5 fixes that, and after the fix the release verified on the real page (all four steps passed, block 69485148) while the held and escalated decisions correctly read "recorded off-chain only" ([record](docs/rollouts/2026-10-30-proof-page-escrows.md)). Before it, v1.3.2.4 (Phase H piece 4): the approver's own actions on a milestone escrow in the admin site (pause and resume, release a milestone yourself, reject, withdraw), sent from the approver's wallet and never by the agent. Run live once on Oct 29 from the admin site: a pause, a 0.1 USDC withdraw, a rejection, a release of the 0.5 USDC milestone that is above the agent's limit, and a resume ([record](docs/rollouts/2026-10-29-escrow-approver-actions-live.md)). Before it, v1.3.2.3 (Phase H piece 3): the agent's release path for a milestone escrow. On an admin's request the agent decides with code only, records the decision (hashed, chained and signed) and, if the verdict is release, commits and then releases from its own wallet; anything above the escrow's agent limit is left to the approver. Run live once on Oct 28: one hold, one escalation and one release of 0.1 USDC from the agent wallet ([record](docs/rollouts/2026-10-28-escrow-release-live.md)). Earlier: v1.3.2.2 (docs split), v1.3.2.1 (read-only escrow routes, GitHub evidence dry run), v1.3.2 (the contract). The admin site has an Escrows tab for both. Phase H (milestone escrow) is complete with this release; what comes next is on the [roadmap](docs/roadmap.md).
 
 > **Read this first.** Everything runs on Arc Testnet with test USDC. Two businesses exist and both are ours: no outside business or paying user yet, and every payment so far is self-owned. The `MilestoneEscrow` contract is a reference deployment: no outside engagement, and it holds only our own testnet funds; the agent's release path has been run live once, on milestone 0 with a stand-in merged pull request, and the approver's own pause, withdraw, reject, release and resume were each run live once on Oct 29 (all our own wallets; the milestones' work is a stand-in, not delivered work); its source is not verified on the explorer. Idle-cash yield is planned, not built. Limits and guarantees: [trust model](docs/trust-model.md).
 
@@ -63,11 +63,11 @@ Every row links to the explorer or to a public API route, so none of it has to b
 
 The hackathon is judged on what changed from its start, so here is the starting point and the end, both taken from the git history (`git log`), not from memory.
 
-| | Sep 27, 2026 | Now (v1.3.2.4) |
+| | Sep 27, 2026 | Now (v1.3.2.5) |
 |---|---|---|
-| Repository | One commit, `dcf1f2a` "Initial commit", containing only the MIT `LICENSE` | 45 commits and 35 tagged releases, `v1.2.0` to `v1.3.2.4` |
+| Repository | One commit, `dcf1f2a` "Initial commit", containing only the MIT `LICENSE` | 46 commits and 36 tagged releases, `v1.2.0` to `v1.3.2.5` |
 | Code and contracts | None | `BudgetEnforcer` (Sep 29), then the multi-business contracts (`BudgetEnforcerV2`, `BudgetFactory`, `LedgerAnchor`, Oct 4) and the `MilestoneEscrow` contract (Oct 24); the Python engine, API, proof page, admin site and vendor portal described above |
-| Tests | None | 111 Foundry, 693 Python, 6 Node runs |
+| Tests | None | 111 Foundry, 699 Python, 6 Node runs |
 | Live system | None | An API, a public proof page, a wallet-signed admin site and a vendor portal on Arc Testnet |
 | Users | None | None outside the project: no outside business or paying user. The business that uses it is our own |
 | Real payments | None | One real vendor bill of ours (the domain, 2.20 USDC, paid by card and reimbursed through the contract, labelled `manual`); everything else is self-owned test or shadow activity, shown apart on the proof page |
@@ -124,7 +124,7 @@ set -a; source .env; set +a
 uvicorn backend.main:app   # one worker only
 ```
 
-Use the Canteen RPC (`arc-canteen rpc-url`) for `ARC_TESTNET_RPC_URL`, since testnet traction is counted through it. The Circle wallet and contract deployment steps are in [setup and deploy](docs/setup-and-deploy.md). CI runs 111 Foundry tests, 693 Python tests and 6 Node runs on every push; how to run each is in [testing](docs/testing.md).
+Use the Canteen RPC (`arc-canteen rpc-url`) for `ARC_TESTNET_RPC_URL`, since testnet traction is counted through it. The Circle wallet and contract deployment steps are in [setup and deploy](docs/setup-and-deploy.md). CI runs 111 Foundry tests, 699 Python tests and 6 Node runs on every push; how to run each is in [testing](docs/testing.md).
 
 ## Documentation
 

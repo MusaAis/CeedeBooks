@@ -94,6 +94,28 @@
     return { found: false };
   }
 
+  // An escrow release is not an event of the business's budget contract: it is MilestoneReleased(index, reasoningHash, ...) emitted by the
+  // escrow named in the record's subject ("escrow:<address>:milestone:<n>"). These two are pure so the page and the tests share them.
+  var ESCROW_RELEASED_TOPIC = "0x3ea05e6778794071ec8295b67050811c132dc3ba231e7fb92f55d970eeb7f5ae";
+  function escrowTarget(rec) {
+    if (!rec || rec.action !== "ESCROW_RELEASED") return null;
+    var m = /^escrow:(0x[0-9a-fA-F]{40}):milestone:(\d+)$/.exec(String(rec.subject || ""));
+    return m ? { address: m[1].toLowerCase(), milestone: parseInt(m[2], 10) } : null;
+  }
+  function findEscrowRelease(receipt, hash, escrowAddress) {
+    if (!receipt || !Array.isArray(receipt.logs)) return { found: false };
+    var addr = String(escrowAddress || "").toLowerCase();
+    for (var i = 0; i < receipt.logs.length; i++) {
+      var log = receipt.logs[i];
+      if (String(log.address).toLowerCase() !== addr || !log.topics || log.topics.length < 3) continue;
+      if (String(log.topics[0]).toLowerCase() !== ESCROW_RELEASED_TOPIC) continue;
+      if (String(log.topics[2]).toLowerCase() === "0x" + hash) {
+        return { found: true, event: "MilestoneReleased", block: parseInt(receipt.blockNumber, 16), success: receipt.status === "0x1" };
+      }
+    }
+    return { found: false };
+  }
+
   async function rpcCall(url, method, params, fetchImpl) {
     var res = await fetchImpl(url, {
       method: "POST",
@@ -159,6 +181,31 @@
         contract: b.contract, agent: b.agent_address || null, version: b.contract_version
       };
     });
+  }
+
+  // What one escrow looks like on the proof page. `esc` is GET /escrows/{address}, `dec` is GET /escrows/{address}/decisions,
+  // `biz` is that business's row from /businesses (or null). When the chain could not be read nothing is guessed: the state is "unreadable".
+  var ESCROW_VERDICT = { ESCROW_RELEASED: "released", ESCROW_HELD: "held", ESCROW_ESCALATED: "escalated" };
+  function escrowView(esc, dec, biz, explorer) {
+    var snap = esc && esc.escrow;
+    var kind = !biz ? "" : (biz.id === 1 || !biz.external ? "Builder's own" : "Outside business");
+    var out = { address: esc.address, business: esc.business, kind: kind, addressUrl: explorer + "/address/" + esc.address,
+                readable: !!(esc.chain_ok && snap), state: "unreadable", figures: null, milestones: [], roles: [], decisions: [] };
+    if (out.readable) {
+      out.state = snap.paused ? "Paused" : "Active";
+      out.figures = { balance: snap.balance_usdc, reserved: snap.pending_usdc, limit: snap.agent_release_limit_usdc };
+      out.milestones = (snap.milestones || []).map(function (m) {
+        return { index: m.index, amount: m.amount_usdc, status: String(m.status).toLowerCase(), agentCanRelease: !!m.agent_can_release };
+      });
+      out.roles = [["Agent", snap.agent], ["Approver", snap.approver], ["Contractor", snap.contractor]].map(function (r) {
+        return { label: r[0], address: r[1], url: explorer + "/address/" + r[1] };
+      });
+    }
+    out.decisions = ((dec && dec.decisions) || []).map(function (d) {
+      return { hash: d.reasoning_hash, verdict: ESCROW_VERDICT[d.action] || "unknown", milestone: d.milestone, amount: d.amount_usdc,
+               timestamp: d.timestamp, txUrl: d.chain_tx_hash ? explorer + "/tx/" + d.chain_tx_hash : null };
+    });
+    return out;
   }
 
   // Manual and demo invoices are never traction: the card names them in one line beside the figures, or says nothing when there are none.
@@ -335,7 +382,7 @@
   }
 
   var api = {
-    tractionView: tractionView, outcomesView: outcomesView, CONFIG: CONFIG, TOPICS: TOPICS, normalizeHash: normalizeHash, isTxHash: isTxHash, sha256Hex: sha256Hex,
+    tractionView: tractionView, outcomesView: outcomesView, escrowView: escrowView, escrowTarget: escrowTarget, findEscrowRelease: findEscrowRelease, CONFIG: CONFIG, TOPICS: TOPICS, normalizeHash: normalizeHash, isTxHash: isTxHash, sha256Hex: sha256Hex,
     checkRecord: checkRecord, findEvent: findEvent, readReceipt: readReceipt, isKnownBusiness: isKnownBusiness, businessRows: businessRows,
     SELECTORS: SELECTORS, checkChain: checkChain, compareAnchor: compareAnchor, readAnchor: readAnchor, verifyWholeChain: verifyWholeChain
   };

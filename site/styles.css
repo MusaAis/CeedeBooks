@@ -135,3 +135,4 @@ a.evi:hover{border-color:var(--cobalt);transform:translateY(-2px)}
 .chip.shadow,.chip.shadow_pending,.chip.shadow_paid{background:var(--amber-bg);color:var(--amber)}.chip.own{background:var(--frost);color:var(--mut)}.chip.outside{background:var(--green-bg);color:var(--green)}
 .addrs{display:flex;flex-wrap:wrap;gap:.2rem .9rem;color:var(--mut);font-size:.88rem}
 .chain-h{margin-top:2rem}
+.item.esc{grid-template-columns:auto 1fr}.item.esc .t span{overflow-wrap:anywhere}#escrows[hidden]{display:none}

@@ -218,6 +218,18 @@ async def recent(limit: int = 20, business_id: Optional[int] = None) -> list:
             return [{**dict(row), **({"is_demo": bool(row["is_demo"])} if "is_demo" in row.keys() else {})} for row in await cursor.fetchall()]
 
 
+async def for_subject_prefix(business_id: int, actions: tuple, prefix: str, limit: int = 20) -> list:
+    """Newest first: one business's entries with one of these actions whose subject starts with `prefix` (exact, no wildcards).
+    The public read of an escrow's decisions; it never returns the reasoning text."""
+    marks = ",".join("?" for _ in actions)
+    sql = ("SELECT reasoning_hash, action, subject, amount_usdc, timestamp, chain_tx_hash FROM audit_log "
+           f"WHERE business_id = ? AND action IN ({marks}) AND substr(subject, 1, ?) = ? ORDER BY id DESC LIMIT ?")
+    async with aiosqlite.connect(config.db_path) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(sql, (business_id, *actions, len(prefix), prefix, limit)) as cursor:
+            return [dict(row) for row in await cursor.fetchall()]
+
+
 async def stats(business_id: Optional[int] = None) -> dict:
     """Counts of live agent decisions. Manual entries (model_used = 'manual') are reported separately, never as agent decisions.
     Shadow decisions (a real bill mirrored as a testnet payment, v1.2.8.3) and demo-run decisions (v1.3.1.1) are left out: shadow
