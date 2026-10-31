@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agent import categories as category_rules
-from agent import anchor, contract, decision_log, escrow_chain, escrow_release, evidence, gateway, ledger, payables, safe_fetch, treasury
+from agent import anchor, contract, decision_log, earned, escrow_chain, escrow_release, evidence, gateway, ledger, payables, safe_fetch, treasury
 from agent.config import config
 from backend import admin_auth, auth, models, outcomes, vendor_auth
 
@@ -918,6 +918,7 @@ async def admin_shadow_approve(invoice_id: int, who: auth.Principal = Depends(au
         await models.release_shadow_approval(who.business_id, invoice_id)
         raise HTTPException(502, "The payment was not completed. Nothing is recorded as paid; you can approve again")
     await models.save_verdict(who.business_id, invoice_id, pending_hash, "agree", who.admin_address)
+    await _earned_check(who.business_id, invoice["vendor_id"])
     await _admin_log(who, "shadow_approve", f"invoice {invoice_id}")
     return {"ok": True, "status": "paid", "reasoning_hash": paid_hash}
 
@@ -932,6 +933,7 @@ async def admin_shadow_reject(invoice_id: int, who: auth.Principal = Depends(aut
         raise HTTPException(409, "This invoice is not waiting for your approval")
     await models.save_verdict(who.business_id, invoice_id, pending_hash, "disagree", who.admin_address)
     await models.update_invoice_status(who.business_id, invoice_id, "rejected")
+    await _earned_check(who.business_id, invoice["vendor_id"])
     await _admin_log(who, "shadow_reject", f"invoice {invoice_id}")
     return {"ok": True, "status": "rejected"}
 
@@ -950,8 +952,57 @@ async def admin_decision_verdict(reasoning_hash: DecisionHash, body: VerdictIn, 
         await models.save_verdict(who.business_id, invoice["id"], reasoning_hash, body.verdict, who.admin_address)
     except sqlite3.IntegrityError:
         raise HTTPException(409, "A verdict is already recorded for this decision and cannot be changed")
+    await _earned_check(who.business_id, invoice["vendor_id"])
     await _admin_log(who, "verdict_" + body.verdict, f"invoice {invoice['id']}")
     return {"ok": True, "verdict": body.verdict}
+
+
+# ---- earned vendors (Phase R, v1.3.3): the rule and the record. Nothing here pays anything.
+
+async def _earned_check(business_id: int, vendor_id: int) -> Optional[str]:
+    """After a verdict: write a graduation or a revocation if the vendor's streak calls for one. The verdict is already final,
+    so a failure here (no usable ledger key, for example) is logged and the record is retried on the next verdict."""
+    try:
+        business, vendor = await models.get_business(business_id), await models.get_vendor(business_id, vendor_id)
+        return await earned.evaluate_vendor(business, dict(vendor)) if business and vendor else None
+    except Exception:
+        log.exception("Earned-vendor record for vendor %s of business %s could not be written", vendor_id, business_id)
+        return None
+
+
+async def _earned_view(business: dict) -> dict:
+    vendors = []
+    for v in await models.list_vendors(business["id"]):
+        state = await earned.vendor_state(business["id"], v["id"])
+        vendors.append({"id": v["id"], "name": v["name"], "streak": state["streak"], "graduated": state["graduated"],
+                        "record_hash": state["record_hash"], "record_at": state["record_at"]})
+    return {"earn_after": int(business["earn_after"]), "min": earned.MIN_EARN_AFTER, "max": earned.MAX_EARN_AFTER, "vendors": vendors}
+
+
+class EarnedSettingsIn(_Strict):
+    earn_after: Annotated[int, Field(strict=True, ge=earned.MIN_EARN_AFTER, le=earned.MAX_EARN_AFTER)]
+
+
+@app.get("/admin/earned-vendors")
+async def admin_earned_vendors(who: auth.Principal = Depends(auth.require_admin)):
+    """The owner's threshold and each vendor's streak and graduated state, read from the verdicts and the ledger records."""
+    return await _earned_view(await models.get_business(who.business_id))
+
+
+@app.post("/admin/earned-vendors/settings")
+async def admin_earned_settings(body: EarnedSettingsIn, who: auth.Principal = Depends(auth.require_admin)):
+    """Sets how many agreed shadow pay decisions in a row a vendor needs. A lower number can graduate vendors at once; each
+    graduation is a ledger record. A higher number never takes a graduation away: only a disagreement does."""
+    business = await _writable(who)
+    await models.set_earn_after(who.business_id, body.earn_after)
+    business = await models.get_business(who.business_id)
+    written = []
+    for v in await models.list_vendors(who.business_id):
+        action = await _earned_check(who.business_id, v["id"])
+        if action:
+            written.append({"vendor_id": v["id"], "action": action})
+    await _admin_log(who, "earn_after_set", str(body.earn_after))
+    return {**await _earned_view(business), "written": written}
 
 
 @app.post("/admin/actions")

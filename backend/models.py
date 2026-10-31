@@ -247,6 +247,8 @@ async def _migrate(db) -> None:
         await db.execute("DROP TABLE invoices")
         await db.execute("ALTER TABLE invoices_new RENAME TO invoices")
     await db.execute("DROP INDEX IF EXISTS ux_application_pending_wallet")  # was unique per wallet, now per business
+    if "earn_after" not in await _columns(db, "businesses"):  # v1.3.3: the owner's streak for earning a vendor's graduation
+        await db.execute("ALTER TABLE businesses ADD COLUMN earn_after INTEGER NOT NULL DEFAULT 5")
     for column, ddl in (("mode", "TEXT NOT NULL DEFAULT 'live'"), ("real_amount", "TEXT"), ("real_currency", "TEXT"),  # v1.2.8.3
                         ("submitted_by", "TEXT"), ("held_because", "TEXT"),  # v1.3.0
                         ("settled_at", "REAL")):  # v1.3.1
@@ -325,6 +327,12 @@ async def get_business(business_id: int) -> Optional[dict]:
 async def get_business_by_slug(slug: str) -> Optional[dict]:
     row = await _one("SELECT * FROM businesses WHERE slug = ?", (slug,))
     return dict(row) if row else None
+
+
+async def set_earn_after(business_id: int, earn_after: int) -> None:
+    async with aiosqlite.connect(config.db_path) as db:
+        await db.execute("UPDATE businesses SET earn_after = ? WHERE id = ?", (earn_after, business_id))
+        await db.commit()
 
 
 async def list_businesses(status: Optional[str] = None) -> list:

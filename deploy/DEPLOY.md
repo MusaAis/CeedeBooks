@@ -222,11 +222,23 @@ No contract change and no new environment variable. The database gains two invoi
 
 To go back: stop the service and check out v1.2.10.1. The new columns and table are ignored by the old code. `ADMIN_PAUSED` and `ADMIN_RESUMED` ledger entries, if you made any, stay in the chain and still verify.
 
+## Upgrading to v1.3.3 (earned vendors: the rule and the record)
+
+New API routes, a new column (`businesses.earn_after`, added on first start with the default 5), and changed admin and proof-page files. No contract or environment change. Nothing pays by itself in this release.
+
+1. Back up: `mkdir -p ~/backups && cp ceedebooks.db ~/backups/ceedebooks.db.pre-1.3.3` (from `~/ceedebooks`; outside the repo folder).
+2. Extract the files, run `pytest agent/tests/` with the CI placeholder variables (717 tests) and the Node suites one at a time: `node site/verify.test.js` (expect `JS_TESTS_OK`), `node admin/admin.test.js` and `BIZ=acme node admin/admin.test.js` (expect `ADMIN_SMOKE_OK` twice).
+3. Restart the API: `sudo systemctl restart ceedebooks-api` and wait 15 seconds. Check: `curl -s https://api.ceedebooks.xyz/businesses` answers.
+4. Re-copy the admin site and the proof page: `sudo cp admin/index.html admin/admin.css admin/wallet.js admin/admin.js /var/www/ceedebooks-admin/` and `sudo cp site/index.html site/styles.css site/app.js site/verify.js /var/www/ceedebooks/`, then hard-refresh both.
+5. Live check on our own test business (it needs no payment): in the admin Vendors tab set the number to a value one of your vendors already meets (the panel shows each vendor's streak), press Save, and confirm a `VENDOR_GRADUATED` record appears in the proof page feed, `GET /decisions/<hash>/verify` returns `verified: true`, `GET /ledger/verify?business=ceedebooks` still returns `ok`, and `/stats` is unchanged. Set the number back to 5 afterwards (a graduation already written stays). The first run, with the numbers read, is in the Oct 31 rollout record.
+
+To go back: restore the previous files and restart. The `earn_after` column is harmless to older code. Graduation records already written stay in the signed ledger (they cannot be removed) and older code simply lists them as decisions.
+
 ## Upgrading to v1.3.2.5 (the public view of escrows on the proof page)
 
 One new public API route and new proof-page files. No contract, schema or environment change, nothing to back up.
 
-1. Extract the files, run `pytest agent/tests/` with the CI placeholder variables (699 tests, about 1 minute here, longer on a small server) and `node site/verify.test.js` (expect `JS_TESTS_OK`).
+1. Extract the files, run `pytest agent/tests/` with the CI placeholder variables (699 tests at that release, about 1 minute here, longer on a small server) and `node site/verify.test.js` (expect `JS_TESTS_OK`).
 2. Restart the API for the new route: `sudo systemctl restart ceedebooks-api` and wait about 15 seconds.
 3. Re-copy the proof page: `sudo cp site/index.html site/styles.css site/app.js site/verify.js /var/www/ceedebooks/` and hard-refresh `ceedebooks.xyz`. The page-wide Content-Security-Policy needs no change: it only calls the API and the public RPC.
 4. Check the route: `curl -s https://api.ceedebooks.xyz/escrows/0x9752F995739C8A171AbD24944925Eaf4d2971dd5/decisions` lists the three recorded decisions (a release, a hold and an escalation), and `curl -s -o /dev/null -w '%{http_code}' https://api.ceedebooks.xyz/escrows/0x0000000000000000000000000000000000000001/decisions` answers 404. On the proof page a **Milestone escrows** section appears with the escrow's state and the decisions; press Verify on the release (milestone 0): all four steps pass and the verdict reads Verified. A held or escalated decision reads "recorded off-chain only", which is correct: nothing was sent.

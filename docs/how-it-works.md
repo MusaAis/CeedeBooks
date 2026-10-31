@@ -28,4 +28,6 @@ A business that does not want to move real money can still be judged on real dec
 
 **Honest labels.** Shadow decisions are real decisions on real bills, but the payment is a testnet mirror: no real money moved. The real amount and currency are shown publicly on the business's proof card. Shadow figures are never added to live figures: `/stats` and `GET /businesses/{slug}/traction` report them apart, the agreement rate always shows how many verdicts it rests on and is null with none, and a shadow-approved payment is not counted as an agent payment in the live numbers. A business is labelled outside only when the operator confirms it.
 
+**Earned vendors (v1.3.3).** Each approved shadow pay decision on a vendor counts toward a streak; a rejection, or an "I would not" verdict on that vendor, resets it. When the streak reaches the owner's number N (default 5), the code writes a graduation record into the signed ledger with the invoices counted; a later disagreement writes a revocation. Agreeing with the agent's hold or escalation neither counts nor resets. A record changes nothing about how invoices are decided or paid.
+
 **Not in shadow mode:** no bank or ERP connection, no PDF or email intake, no exchange-rate oracle.

@@ -296,5 +296,12 @@ const zero = "0x" + "00".repeat(32);
     assert.ok(!V.findEscrowRelease(null, hh, A).found);
     assert.ok(!V.findEvent(rc(A, top0, pad(hh)), hh, A).found);                                       // the budget-contract lookup alone never matches it (the bug seen live)
   }
+
+  // ---- vendor trust records (v1.3.3): VENDOR_GRADUATED has no transaction; it verifies as an off-chain record, made by the real Python code
+  const vg = {"action": "VENDOR_GRADUATED", "subject": "vendor:7", "reasoning": "Vendor Lagos Hosting (id 7, wallet 0xc3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3) graduated: the owner approved its last 2 shadow pay decisions in a row (G-1, G-2), which meets the threshold of 2 the owner set. This record changes no limit and pays nothing; the contract's limits and every check still apply to each payment.", "amount_usdc": 0, "model_used": "rules", "timestamp": 1761900000.5, "hash_input": "{\"action\":\"VENDOR_GRADUATED\",\"amount_usdc\":0,\"business_id\":2,\"enforcer_address\":\"0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"hash_version\":2,\"model_used\":\"rules\",\"reasoning\":\"Vendor Lagos Hosting (id 7, wallet 0xc3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3) graduated: the owner approved its last 2 shadow pay decisions in a row (G-1, G-2), which meets the threshold of 2 the owner set. This record changes no limit and pays nothing; the contract's limits and every check still apply to each payment.\",\"subject\":\"vendor:7\",\"timestamp\":1761900000.5}", "reasoning_hash": "e0f9713aa2650662c35cf392daa976a64b79efd6014dae3dbfec2810fd2e5185", "business_id": 2, "hash_version": 2, "contract_address": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "contract_version": 2};
+  const okv = await V.checkRecord(vg, vg.reasoning_hash);
+  assert.ok(okv.hashMatches && okv.fieldsMatch && okv.version === 2, JSON.stringify(okv));
+  assert.ok(!(await V.checkRecord({ ...vg, reasoning: vg.reasoning + " " }, vg.reasoning_hash)).fieldsMatch);
+  assert.ok(!(await V.checkRecord({ ...vg, action: "VENDOR_REVOKED" }, vg.reasoning_hash)).fieldsMatch);
   console.log("JS_TESTS_OK");
 })().catch((e) => { console.error(e); process.exit(1); });

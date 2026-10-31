@@ -146,7 +146,7 @@
     out.appendChild(box);
     var rec = result.rec;
     var card = el("div", "rec");
-    card.appendChild(el("div", "meta", rec.action.replace("INVOICE_", "") + " for " + rec.subject + ", " + usdc(rec.amount_usdc) + ", " +
+    card.appendChild(el("div", "meta", rec.action.replace("INVOICE_", "").replace("VENDOR_", "") + " for " + rec.subject + ", " + usdc(rec.amount_usdc) + ", " +
       (rec.model_used === "manual" ? "manual entry, not an agent decision" : "decided by " + rec.model_used) + ", " + when(rec.timestamp)));
     card.appendChild(el("p", null, rec.reasoning));
     if (rec.hash_version === 3 && rec.rules_action) {
@@ -276,12 +276,13 @@
       box.textContent = "";
       if (!list.length) { box.textContent = "No decisions yet."; return; }
       list.forEach(function (d) {
-        var kind = d.action.replace("INVOICE_", "").toLowerCase();
+        var trust = d.action === "VENDOR_GRADUATED" || d.action === "VENDOR_REVOKED";
+        var kind = trust ? d.action.replace("VENDOR_", "").toLowerCase() : d.action.replace("INVOICE_", "").toLowerCase();
         var row = el("div", "item");
         row.appendChild(el("span", "chip " + kind, kind.toUpperCase()));
         var t = el("div", "t");
         t.appendChild(el("strong", null, d.subject));
-        t.appendChild(el("span", null, usdc(d.amount_usdc) + ", " + (d.is_demo ? "demo data, not counted" : d.model_used === "manual" ? "manual entry" : "agent decision") + ", " + when(d.timestamp) + (d.chain_tx_hash ? ", on-chain" : ", off-chain only")));
+        t.appendChild(el("span", null, usdc(d.amount_usdc) + ", " + (trust ? "vendor trust record, no payment" : d.is_demo ? "demo data, not counted" : d.model_used === "manual" ? "manual entry" : "agent decision") + ", " + when(d.timestamp) + (d.chain_tx_hash ? ", on-chain" : ", off-chain only")));
         row.appendChild(t);
         var btn = el("button", "mini", "Verify");
         btn.type = "button";

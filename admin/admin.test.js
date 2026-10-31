@@ -84,6 +84,7 @@ global.fetch = async (url, opt = {}) => {
     if (/^\/admin\/invoices\/\d+\/escalation$/.test(path)) { escalationUrls.push(full); return ok({ invoice_key: "0x" + "9a".repeat(32), can_reopen: true, submitted_by_you: false }); }
     if (/^\/admin\/invoices\/\d+\/rerun$/.test(path) && method === "POST") { posts.push({ rerun: path }); return ok({ ok: true }); }
     if (path === "/purchase-orders" && method === "POST") { posts.push({ po: JSON.parse(opt.body) }); return ok({ id: 9 }); }
+    if (path === "/admin/earned-vendors") return ok({ earn_after: 5, min: 2, max: 50, vendors: [{ id: 1, name: "Ops", streak: 3, graduated: false, record_hash: null, record_at: null }] });
     if (path === "/admin/vendors") return ok({ vendors: [{ id: 1, name: "Ops", wallet_address: "0x" + "d7".repeat(20), approved_onchain: false }] });
     if (path === "/admin/invoices") return ok({ invoices: [
       { id: 11, invoice_number: "SH-1", vendor_name: "Lagos Hosting", amount_usdc: 0.5, status: "awaiting_owner", mode: "shadow", real_amount: "1200.50", real_currency: "NGN", reasoning_hash: "a1".repeat(32), verdict: null },
@@ -129,8 +130,9 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
   // vendors tab: approve on-chain
   let tabs = []; walk(root, (x) => { if (x.attrs && x.attrs["data-tab"] === "vendors") tabs.push(x); });
-  await tabs[0].listeners.click(); await tick();
+  await tabs[0].listeners.click(); await tick()
   assert.ok(/Not approved/.test(root.textContent));
+  assert.ok(/Earned vendors/.test(root.textContent) && /3 of 5/.test(root.textContent) && /Not yet/.test(root.textContent) && /pays nothing/.test(root.textContent), "the vendors tab shows the earned-vendor streak and says a graduation pays nothing");
   let labels = []; walk(root, (x) => { if (x.tag === "td" && x.attrs && x.attrs["data-label"]) labels.push(x.attrs["data-label"]); });
   assert.ok(["Name", "Wallet", "Status"].every((l) => labels.includes(l)), "table cells carry their column label for the phone card layout");
   assert.ok(!labels.includes(""), "the unlabelled action column gets no empty label");
@@ -430,7 +432,7 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
 
   // a session the server ends sends the admin back to the gate
   expireSession = true;
-  await tabs[0].listeners.click(); await tick();
+  await tabs[0].listeners.click(); await tick()
   assert.ok(/session ended/i.test(root.textContent) && /Connect wallet/.test(root.textContent) && !/Pool balance/.test(root.textContent));
   // a wallet that is not the admin sees nothing but a refusal
   account = OTHER;

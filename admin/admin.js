@@ -590,7 +590,24 @@
         }) }, [v.approved_onchain ? "Revoke" : "Approve on-chain"]);
         return [String(v.id), v.name, h("span", { class: "mono" }, [v.wallet_address]), state, act];
       });
-      return h("div", null, [h("h2", null, ["Vendors"]), form, h("h3", null, ["Registered vendors"]), table(["ID", "Name", "Wallet", "Status", ""], rows)]);
+      var earn = await api("/admin/earned-vendors");
+      var n = h("input", { id: "earn-after", inputmode: "numeric", value: String(earn.earn_after), maxlength: "2" });
+      var earnRows = earn.vendors.map(function (v) {
+        return [v.name, String(v.streak) + " of " + earn.earn_after, v.graduated ? "Graduated" : "Not yet"];
+      });
+      var earnPanel = h("div", { class: "panel" }, [
+        h("h3", null, ["Earned vendors"]),
+        h("p", { class: "note" }, ["A vendor graduates after you approve this many of the agent's shadow pay decisions on it in a row. One disagreement (a rejected pay, or an \"I would not\" verdict) ends it and the count starts again. A graduation is a ledger record only: it pays nothing and changes no limit. Lowering the number can graduate vendors at once; raising it never takes a graduation away."]),
+        h("div", { class: "row" }, [field("Agreed decisions in a row (" + earn.min + " to " + earn.max + ")", n),
+          h("button", { class: "btn sm", onclick: guard(async function () {
+            var v = Number(String(n.value).trim());
+            if (!/^\d+$/.test(String(n.value).trim()) || v < earn.min || v > earn.max) throw new Error("Enter a whole number from " + earn.min + " to " + earn.max + ".");
+            var r = await api("/admin/earned-vendors/settings", { method: "POST", body: { earn_after: v } });
+            say(r.written.length ? "Saved. " + r.written.length + " ledger record(s) written." : "Saved.", "ok");
+            await show("vendors");
+          }) }, ["Save"])]),
+        earnRows.length ? table(["Vendor", "Streak", "State"], earnRows) : h("p", { class: "note" }, ["No vendors yet."])]);
+      return h("div", null, [h("h2", null, ["Vendors"]), form, h("h3", null, ["Registered vendors"]), table(["ID", "Name", "Wallet", "Status", ""], rows), earnPanel]);
     },
 
     pos: async function () {
