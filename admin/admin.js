@@ -593,7 +593,32 @@
       var earn = await api("/admin/earned-vendors");
       var n = h("input", { id: "earn-after", inputmode: "numeric", value: String(earn.earn_after), maxlength: "2" });
       var earnRows = earn.vendors.map(function (v) {
-        return [v.name, String(v.streak) + " of " + earn.earn_after, v.graduated ? "Graduated" : "Not yet"];
+        var ap = v.autopay || { on: false }, ctl;
+        if (ap.on) {
+          ctl = h("span", null, [chip("autopay on, up to " + ap.max_usdc + " USDC", "ok"), " ",
+            h("button", { class: "btn ghost sm", onclick: guard(async function () {
+              if (!(await confirmAction("Turn autopay off", [v.name + ": the agent goes back to waiting for your approval on every invoice.", "This writes one ledger record. It sends no transaction."], "Turn off"))) return;
+              await api("/admin/autopay/" + v.id + "/off", { method: "POST" });
+              say("Autopay is off for " + v.name + ".", "ok");
+              await show("vendors");
+            }) }, ["Turn off"])]);
+        } else if (v.graduated) {
+          var cap = h("input", { class: "cap", inputmode: "decimal", placeholder: "1.00", maxlength: "12", "aria-label": "Autopay cap in USDC for " + v.name });
+          ctl = h("span", null, [cap, " ", h("button", { class: "btn ghost sm", onclick: guard(async function () {
+            var amount = String(cap.value).trim();
+            W.usdcToUnits(amount);  // checks the shape only; the server checks the rest
+            var ch = await api("/admin/autopay/challenge", { method: "POST", body: { vendor_id: v.id, max_usdc: amount } });
+            if (!(await confirmAction("Turn autopay on", ["Read the message your wallet will show:", ch.message,
+              "Signing sends no transaction. The agent still runs every check on each invoice, and these payments stay in shadow mode."], "Sign and turn on"))) return;
+            var sig = await S.provider.request({ method: "personal_sign", params: [W.utf8Hex(ch.message), S.account] });
+            await api("/admin/autopay/on", { method: "POST", body: { nonce: ch.nonce, signature: sig } });
+            say("Autopay is on for " + v.name + ".", "ok");
+            await show("vendors");
+          }) }, ["Turn autopay on"])]);
+        } else {
+          ctl = "";
+        }
+        return [v.name, String(v.streak) + " of " + earn.earn_after, v.graduated ? "Graduated" : "Not yet", ctl];
       });
       var earnPanel = h("div", { class: "panel" }, [
         h("h3", null, ["Earned vendors"]),
@@ -606,7 +631,8 @@
             say(r.written.length ? "Saved. " + r.written.length + " ledger record(s) written." : "Saved.", "ok");
             await show("vendors");
           }) }, ["Save"])]),
-        earnRows.length ? table(["Vendor", "Streak", "State"], earnRows) : h("p", { class: "note" }, ["No vendors yet."])]);
+        h("p", { class: "note" }, ["Autopay is a per-vendor switch you sign with your wallet. While it is on, the agent pays that graduated vendor's next shadow invoice without waiting for you, up to the cap you set and only if every check passes. A hold, an escalation, a refusal by the contract or a disagreement from you turns it off. These payments stay testnet mirrors labelled auto and never move the public figures."]),
+        earnRows.length ? table(["Vendor", "Streak", "State", "Autopay"], earnRows) : h("p", { class: "note" }, ["No vendors yet."])]);
       return h("div", null, [h("h2", null, ["Vendors"]), form, h("h3", null, ["Registered vendors"]), table(["ID", "Name", "Wallet", "Status", ""], rows), earnPanel]);
     },
 
@@ -708,6 +734,14 @@
               [i.invoice_number + " from " + i.vendor_name, "Nothing is paid. You also record that you would not have done the same."], "disagree");
           }) }, ["Reject"]));
         }
+        if (shadowRow && i.status === "paid" && i.auto && !i.verdict && i.reasoning_hash) {
+          [["agree", "I agree"], ["disagree", "I would not"]].forEach(function (v) {
+            acts.push(h("button", { class: "btn ghost sm", onclick: guard(function () {
+              return judge("/admin/decisions/" + i.reasoning_hash + "/verdict", "Record your verdict",
+                [i.invoice_number + ": the agent paid this one by autopay.", v[0] === "agree" ? "You record that you agree with the payment." : "You record that you would not have paid it. Autopay for this vendor ends.", "A verdict cannot be changed."], v[0]);
+            }) }, [v[1]]));
+          });
+        }
         if (shadowRow && (i.status === "held" || i.status === "escalated") && !i.verdict && i.reasoning_hash) {
           [["agree", "I would do the same"], ["disagree", "I would not"]].forEach(function (v) {
             acts.push(h("button", { class: "btn ghost sm", onclick: guard(function () {
@@ -747,10 +781,10 @@
             }) }, [verb === "approve" ? "Approve and pay" : "Reject"]));
           });
         }
-        var kind = shadowRow ? chip("shadow", "warn") : (i.origin === "demo" ? chip("demo", "warn") : "");
+        var kind = shadowRow ? [chip("shadow", "warn")].concat(i.auto ? [chip("auto", "ok")] : []) : (i.origin === "demo" ? chip("demo", "warn") : "");
         var status = [chip(i.status === "held" && i.held_because === "paused" ? "held: payments paused" : (labels[i.status] || i.status), kinds[i.status] || "warn")];
         if (i.verdict) status.push(chip(i.verdict === "agree" ? "you agreed" : "you disagreed", i.verdict === "agree" ? "ok" : "bad"));
-        return [i.invoice_number, i.vendor_name, usdc(i.amount_usdc), shadowRow ? i.real_amount + " " + i.real_currency : "", h("span", null, [kind].concat(status)),
+        return [i.invoice_number, i.vendor_name, usdc(i.amount_usdc), shadowRow ? i.real_amount + " " + i.real_currency : "", h("span", null, (Array.isArray(kind) ? kind : [kind]).concat(status)),
           h("span", { class: "mono" }, [i.reasoning_hash ? W.short(i.reasoning_hash) : ""]), h("div", { class: "actions" }, acts)];
       });
       return h("div", null, [h("h2", null, ["Invoices"]), h("h3", null, ["Try the demo"]), demo, h("h3", null, ["Submit a shadow invoice"]), shadow,

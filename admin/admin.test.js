@@ -84,7 +84,12 @@ global.fetch = async (url, opt = {}) => {
     if (/^\/admin\/invoices\/\d+\/escalation$/.test(path)) { escalationUrls.push(full); return ok({ invoice_key: "0x" + "9a".repeat(32), can_reopen: true, submitted_by_you: false }); }
     if (/^\/admin\/invoices\/\d+\/rerun$/.test(path) && method === "POST") { posts.push({ rerun: path }); return ok({ ok: true }); }
     if (path === "/purchase-orders" && method === "POST") { posts.push({ po: JSON.parse(opt.body) }); return ok({ id: 9 }); }
-    if (path === "/admin/earned-vendors") return ok({ earn_after: 5, min: 2, max: 50, vendors: [{ id: 1, name: "Ops", streak: 3, graduated: false, record_hash: null, record_at: null }] });
+    if (path === "/admin/earned-vendors") return ok({ earn_after: 5, min: 2, max: 50, vendors: [{ id: 1, name: "Ops", streak: 3, graduated: false, record_hash: null, record_at: null, autopay: { on: false } },
+      { id: 2, name: "Grad Co", streak: 5, graduated: true, record_hash: "aa".repeat(32), record_at: "t", autopay: { on: false } },
+      { id: 3, name: "Auto Co", streak: 7, graduated: true, record_hash: "bb".repeat(32), record_at: "t", autopay: { on: true, max_usdc: "0.75", record_hash: "cc".repeat(32) } }] });
+    if (path === "/admin/autopay/challenge" && method === "POST") { posts.push({ apChallenge: JSON.parse(opt.body) }); return ok({ nonce: "n".repeat(32), message: "CeedeBooks autopay: Grad Co up to 0.75 USDC" }); }
+    if (path === "/admin/autopay/on" && method === "POST") { posts.push({ apOn: JSON.parse(opt.body) }); return ok({ ok: true }); }
+    if (/^\/admin\/autopay\/\d+\/off$/.test(path) && method === "POST") { posts.push({ apOff: path }); return ok({ ok: true, was_on: true }); }
     if (path === "/admin/vendors") return ok({ vendors: [{ id: 1, name: "Ops", wallet_address: "0x" + "d7".repeat(20), approved_onchain: false }] });
     if (path === "/admin/invoices") return ok({ invoices: [
       { id: 11, invoice_number: "SH-1", vendor_name: "Lagos Hosting", amount_usdc: 0.5, status: "awaiting_owner", mode: "shadow", real_amount: "1200.50", real_currency: "NGN", reasoning_hash: "a1".repeat(32), verdict: null },
@@ -93,7 +98,8 @@ global.fetch = async (url, opt = {}) => {
       { id: 14, invoice_number: "ESC-MINE", vendor_name: "Ops", amount_usdc: 3, status: "escalated", mode: "live", real_amount: null, real_currency: null, reasoning_hash: "d4".repeat(32), verdict: null, submitted_by_you: true },
       { id: 15, invoice_number: "ESC-KEY", vendor_name: "Ops", amount_usdc: 4, status: "escalated", mode: "live", real_amount: null, real_currency: null, reasoning_hash: "e5".repeat(32), verdict: null, submitted_by_you: false },
       { id: 16, invoice_number: "HELD-P", vendor_name: "Ops", amount_usdc: 1, status: "held", held_because: "paused", mode: "live", real_amount: null, real_currency: null, reasoning_hash: "f6".repeat(32), verdict: null },
-      { id: 13, invoice_number: "LV-1", vendor_name: "Ops", amount_usdc: 2, status: "paid", mode: "live", real_amount: null, real_currency: null, reasoning_hash: "c3".repeat(32), verdict: null }] });
+      { id: 13, invoice_number: "LV-1", vendor_name: "Ops", amount_usdc: 2, status: "paid", mode: "live", real_amount: null, real_currency: null, reasoning_hash: "c3".repeat(32), verdict: null },
+      { id: 18, invoice_number: "AUTO-1", vendor_name: "Auto Co", amount_usdc: 0.5, status: "paid", mode: "shadow", auto: 1, real_amount: "10", real_currency: "NGN", reasoning_hash: "d9".repeat(32), verdict: null }] });
     if (path === "/admin/purchase-orders") return ok({ purchase_orders: [{ id: 5, po_number: "PO-5", vendor_id: 1, vendor_name: "Lagos Hosting", amount_usdc: 0.5, category: 1, received: 1 }] });
     if (path === "/demo/seed" && method === "POST") { posts.push({ demo: true }); return ok({ run: 1, label: "demo", invoices: [{ invoice_number: "DEMO-1-A", decision: "escalate" }, { invoice_number: "DEMO-1-B", decision: "escalate" }] }); }
     if (path === "/invoices" && method === "POST") { posts.push({ invoice: JSON.parse(opt.body) }); return ok({ invoice_id: 20, decision: "await_owner" }); }
@@ -133,6 +139,26 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
   await tabs[0].listeners.click(); await tick()
   assert.ok(/Not approved/.test(root.textContent));
   assert.ok(/Earned vendors/.test(root.textContent) && /3 of 5/.test(root.textContent) && /Not yet/.test(root.textContent) && /pays nothing/.test(root.textContent), "the vendors tab shows the earned-vendor streak and says a graduation pays nothing");
+  assert.ok(/autopay on, up to 0.75 USDC/.test(root.textContent) && /Turn autopay on/.test(root.textContent) && /Turn off/.test(root.textContent), "a graduated vendor offers the switch; a switched-on one shows its cap and a way to turn it off");
+  {
+    const txBefore = calls.filter((c) => c.method === "eth_sendTransaction").length;
+    let capIn = null; walk(root, (x) => { if (x.tag === "input" && x.attrs && x.attrs.placeholder === "1.00") capIn = x; });
+    capIn.value = "abc";
+    await findBtn(root, "Turn autopay on").listeners.click(); await tick(60);
+    assert.ok(!posts.some((p) => p.apChallenge), "a cap that is not an amount asks the server for nothing");
+    capIn.value = "0.75";
+    posts.length = 0;
+    await findBtn(root, "Turn autopay on").listeners.click(); await tick(60);
+    assert.deepStrictEqual(posts.map((p) => Object.keys(p)[0]), ["apChallenge", "apOn"]);
+    assert.deepStrictEqual(posts[0].apChallenge, { vendor_id: 2, max_usdc: "0.75" });
+    assert.deepStrictEqual(posts[1].apOn, { nonce: "n".repeat(32), signature: "0x" + "11".repeat(65) });
+    assert.ok(calls.some((c) => c.method === "personal_sign" && c.params[0] === W.utf8Hex("CeedeBooks autopay: Grad Co up to 0.75 USDC")), "the wallet signs exactly the message the server wrote");
+    posts.length = 0;
+    await findBtn(root, "Turn off").listeners.click(); await tick(60);
+    assert.deepStrictEqual(posts, [{ apOff: "/admin/autopay/3/off" }]);
+    assert.strictEqual(calls.filter((c) => c.method === "eth_sendTransaction").length, txBefore, "autopay sends no wallet transaction");
+    posts.length = 0;
+  }
   let labels = []; walk(root, (x) => { if (x.tag === "td" && x.attrs && x.attrs["data-label"]) labels.push(x.attrs["data-label"]); });
   assert.ok(["Name", "Wallet", "Status"].every((l) => labels.includes(l)), "table cells carry their column label for the phone card layout");
   assert.ok(!labels.includes(""), "the unlabelled action column gets no empty label");
@@ -146,6 +172,7 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
   // invoices tab: shadow mode. Approve and reject are server calls with a confirmation, never a wallet transaction.
   let invTab = []; walk(root, (x) => { if (x.attrs && x.attrs["data-tab"] === "invoices") invTab.push(x); });
   await invTab[0].listeners.click(); await tick();
+  assert.ok(/auto/.test(root.textContent) && /I agree/.test(root.textContent), "an autopaid shadow invoice is marked auto and can be reviewed afterwards");
   assert.ok(/1200.50 NGN/.test(root.textContent) && /waiting for you/.test(root.textContent) && /shadow/.test(root.textContent), "a shadow row shows the real bill and that it waits for the owner");
   // the demo: one button, a confirmation first, one server call, no wallet transaction; demo rows say so
   assert.ok(/Try the demo/.test(root.textContent) && /never counted as traction/.test(root.textContent), "the demo panel says it is never traction");
@@ -164,6 +191,9 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
   assert.deepStrictEqual(posts.filter((p) => p.verdict).map((p) => p.body), [{ verdict: "agree" }, { verdict: "disagree" }]);
   assert.ok(posts.filter((p) => p.verdict).every((p) => p.verdict === "/admin/decisions/" + "b2".repeat(32) + "/verdict"), "the verdict goes to the held decision's hash");
   assert.strictEqual(calls.filter((c) => c.method === "eth_sendTransaction").length, txBeforeShadow, "shadow approval needs no wallet transaction");
+  posts.length = 0;
+  await findBtn(root, "I agree").listeners.click(); await tick(60);
+  assert.deepStrictEqual(posts.filter((p) => p.verdict).map((p) => p.verdict), ["/admin/decisions/" + "d9".repeat(32) + "/verdict"], "a verdict on an autopaid invoice goes to its own decision hash");
   let inputs = {}; walk(root, (x) => { if (x.tag === "input" && x.attrs.placeholder) inputs[x.attrs.placeholder] = x; });
   let poSelect = null; walk(root, (x) => { if (x.tag === "select" && /PO-5/.test(x.textContent)) poSelect = x; });
   poSelect.value = "5"; poSelect.listeners.change();                       // choosing the order fills the amount in, visibly, and it stays editable

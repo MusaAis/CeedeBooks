@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-from agent import contract, decision_log, figures, second_opinion
+from agent import autopay, contract, decision_log, figures, second_opinion
 from agent.config import config
 from agent.llm import escalation_reasoning
 from backend import models
@@ -30,6 +30,7 @@ class Decision(str, Enum):
     HOLD = "hold"
     ESCALATE = "escalate"
     AWAIT_OWNER = "await_owner"  # shadow mode: the rules say pay, the owner has not approved yet
+    AUTO_PAID = "auto_paid"  # shadow mode: the rules say pay and the owner's autopay switch for this vendor applied
 
 
 @dataclass
@@ -246,11 +247,32 @@ async def process_invoice(invoice: Invoice, treasury_runway_days: float, busines
     if invoice.mode == "shadow":
         # The agent decided to pay, but this is a real bill the owner still pays their own way: park it for the owner.
         # Off-chain only: nothing is committed, escalated or sent, and it is not counted as paid or refused.
+        # Exception (v1.3.3.1): the owner's signed autopay switch for this graduated vendor. Anything unreadable parks it.
+        try:
+            switch = await autopay.eligible(invoice.business_id, invoice.vendor_wallet, invoice.amount_usdc)
+        except Exception:
+            log.exception("Autopay eligibility could not be read for invoice %s; waiting for the owner", invoice.invoice_number)
+            switch = None
         pending_hash = await decision_log.log_decision(
-            "INVOICE_SHADOW_PENDING", invoice.invoice_number, reason + shadow_note(invoice) + " Waiting for the owner to approve.",
+            "INVOICE_SHADOW_PENDING", invoice.invoice_number,
+            reason + shadow_note(invoice) + (" The owner's autopay switch applies to this vendor." if switch else " Waiting for the owner to approve."),
             model_used="rules", amount=invoice.amount_usdc, business=business, comparison=comparison,
         )
         await models.update_invoice_status(invoice.business_id, invoice.id, "awaiting_owner", reasoning_hash=pending_hash)
+        if switch is not None and await models.claim_shadow_approval(invoice.business_id, invoice.id):
+            try:
+                await pay_approved_shadow(invoice, pending_hash, business, autopay_record=switch["reasoning_hash"])
+                return Decision.AUTO_PAID
+            except PaymentsPaused:  # the owner's own stop: the invoice waits, the switch stays
+                await models.release_shadow_approval(invoice.business_id, invoice.id)
+            except RuntimeError:  # the chain refused it (limits, vendor, a revert): the switch goes off, the owner decides
+                await models.release_shadow_approval(invoice.business_id, invoice.id)
+                vendor = await models.get_vendor_by_wallet(invoice.business_id, invoice.vendor_wallet)
+                if vendor is not None:
+                    await autopay.turn_off(business, vendor["id"], "contract_refused", invoice.invoice_number)
+            except Exception:
+                log.exception("Autopay payment of %s failed; it waits for the owner", invoice.invoice_number)
+                await models.release_shadow_approval(invoice.business_id, invoice.id)
         return Decision.AWAIT_OWNER
 
     try:
@@ -296,7 +318,7 @@ async def _commit_then_pay(
     return reasoning_hash_hex
 
 
-async def pay_approved_shadow(invoice: Invoice, pending_hash: str, business: dict) -> str:
+async def pay_approved_shadow(invoice: Invoice, pending_hash: str, business: dict, autopay_record: Optional[str] = None) -> str:
     """The owner approved a parked shadow decision: pay it now through the normal commit-then-pay. The contract still
     enforces vendor approval, limits, pause and once-only payment, so approval can never exceed what the owner configured.
     Raises if the chain refuses; the caller puts the invoice back to awaiting_owner."""
@@ -307,5 +329,11 @@ async def pay_approved_shadow(invoice: Invoice, pending_hash: str, business: dic
     if chain.is_paid(contract.invoice_key(invoice.vendor_wallet, invoice_number_b32)):
         await models.update_invoice_status(invoice.business_id, invoice.id, "paid")
         return pending_hash
-    reason = f"Owner approved shadow decision {pending_hash[:12]}." + shadow_note(invoice)
-    return await _commit_then_pay(invoice, "INVOICE_SHADOW_PAID", reason, chain, business, amount_units, doc_hash, invoice_number_b32)
+    if autopay_record:
+        reason = f"Autopay: the owner's switch for this vendor (record {autopay_record[:12]}) applied to shadow decision {pending_hash[:12]}." + shadow_note(invoice)
+    else:
+        reason = f"Owner approved shadow decision {pending_hash[:12]}." + shadow_note(invoice)
+    paid = await _commit_then_pay(invoice, "INVOICE_SHADOW_PAID", reason, chain, business, amount_units, doc_hash, invoice_number_b32)
+    if autopay_record:
+        await models.mark_invoice_auto(invoice.business_id, invoice.id)
+    return paid

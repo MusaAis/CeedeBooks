@@ -20,6 +20,7 @@ Testnet USDC. The business in every record is the builder's own, so none of this
 | Oct 29 | [The approver's escrow actions, first live run](2026-10-29-escrow-approver-actions-live.md) | v1.3.2.4 | pause `0x722515b4...56d0e8d7`, withdraw `0x058fd250...45ec1bfd`, reject `0xe078db71...664537d1`, approver release of 0.5 USDC `0x904a13bd...8adfaee6`, resume `0xe6fa3e83...31d58917`; all our own wallets |
 | Oct 30 | [Proof-page view of escrows, first live check](2026-10-30-proof-page-escrows.md) | v1.3.2.5 | `GET /escrows/0x9752...dd5/decisions` returned three decisions; Verify on the release failed on the page, was fixed, then passed (block 69485148) |
 | Oct 31 | [Earned vendors, first live run: one graduation](2026-10-31-earned-vendors-graduation-live.md) | v1.3.3 | `VENDOR_GRADUATED` hash `4dc3a786...28d1`, ledger sequence 26, no payment; revocation not run live |
+| Nov 7 | [Autopay for an earned vendor, first live run](2026-11-07-autopay-live.md) | v1.3.3.1 | `VENDOR_AUTOPAY_ON` `724dc1b7...d859`, payment `0x2d07a50b...e3cb1e` (0.01 USDC, shadow, `auto`, block 71109657), `VENDOR_AUTOPAY_OFF` `51a9be1d...7d02`; `/stats` unchanged; turn-offs by a hold, escalation, refusal or disagreement not run live |
 
 ## Shipped but with no live run recorded here
 

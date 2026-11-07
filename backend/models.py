@@ -154,6 +154,21 @@ CREATE TABLE IF NOT EXISTS admin_actions (
     created_at REAL NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS autopay_switches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    business_id INTEGER NOT NULL,
+    vendor_id INTEGER NOT NULL,
+    wallet_address TEXT NOT NULL,
+    max_usdc TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    signer TEXT NOT NULL,
+    message_hash TEXT NOT NULL,
+    signature TEXT NOT NULL,
+    reasoning_hash TEXT NOT NULL,
+    switched_on_at REAL NOT NULL,
+    UNIQUE (business_id, vendor_id)
+);
+
 CREATE TABLE IF NOT EXISTS escrows (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     business_id INTEGER NOT NULL,
@@ -251,7 +266,7 @@ async def _migrate(db) -> None:
         await db.execute("ALTER TABLE businesses ADD COLUMN earn_after INTEGER NOT NULL DEFAULT 5")
     for column, ddl in (("mode", "TEXT NOT NULL DEFAULT 'live'"), ("real_amount", "TEXT"), ("real_currency", "TEXT"),  # v1.2.8.3
                         ("submitted_by", "TEXT"), ("held_because", "TEXT"),  # v1.3.0
-                        ("settled_at", "REAL")):  # v1.3.1
+                        ("settled_at", "REAL"), ("auto", "INTEGER NOT NULL DEFAULT 0")):  # v1.3.1; v1.3.3.1: paid by the owner's autopay switch
         if column not in await _columns(db, "invoices"):
             await db.execute(f"ALTER TABLE invoices ADD COLUMN {column} {ddl}")
 
@@ -534,7 +549,7 @@ async def list_purchase_orders(business_id: int, limit: int = 100) -> list:
 async def list_invoices(business_id: int, limit: int = 50) -> list:
     return await _all(
         """SELECT i.id, i.invoice_number, i.vendor_id, v.name AS vendor_name, i.amount_usdc, i.category,
-                  i.status, i.reasoning_hash, i.created_at, i.mode, i.real_amount, i.real_currency, i.submitted_by, i.held_because, i.origin, d.verdict
+                  i.status, i.reasoning_hash, i.created_at, i.mode, i.real_amount, i.real_currency, i.submitted_by, i.held_because, i.origin, i.auto, d.verdict
            FROM invoices i JOIN vendors v ON v.id = i.vendor_id AND v.business_id = i.business_id
            LEFT JOIN decision_verdicts d ON d.invoice_id = i.id AND d.business_id = i.business_id
            WHERE i.business_id = ? ORDER BY i.id DESC LIMIT ?""",
@@ -896,6 +911,45 @@ async def last_pause_event(business_id: int) -> Optional[aiosqlite.Row]:
     return await _one("SELECT * FROM pause_log WHERE business_id = ? ORDER BY id DESC LIMIT 1", (business_id,))
 
 
+# ---- autopay switches (v1.3.3.1): one row per vendor, written only after the owner's wallet signed for it
+
+async def get_autopay(business_id: int, vendor_id: int) -> Optional[dict]:
+    row = await _one("SELECT * FROM autopay_switches WHERE business_id = ? AND vendor_id = ?", (business_id, vendor_id))
+    return dict(row) if row else None
+
+
+async def list_autopay(business_id: int) -> list:
+    return await _all("SELECT * FROM autopay_switches WHERE business_id = ? ORDER BY vendor_id", (business_id,))
+
+
+async def set_autopay_on(business_id: int, vendor_id: int, wallet: str, max_usdc: str, signer: str, message_hash: str,
+                         signature: str, reasoning_hash: str) -> None:
+    async with aiosqlite.connect(config.db_path) as db:
+        await db.execute(
+            "INSERT INTO autopay_switches (business_id, vendor_id, wallet_address, max_usdc, active, signer, message_hash, signature, "
+            "reasoning_hash, switched_on_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?) ON CONFLICT (business_id, vendor_id) DO UPDATE SET "
+            "wallet_address = excluded.wallet_address, max_usdc = excluded.max_usdc, active = 1, signer = excluded.signer, "
+            "message_hash = excluded.message_hash, signature = excluded.signature, reasoning_hash = excluded.reasoning_hash, "
+            "switched_on_at = excluded.switched_on_at",
+            (business_id, vendor_id, wallet.lower(), max_usdc, signer.lower(), message_hash, signature, reasoning_hash, time.time()))
+        await db.commit()
+
+
+async def set_autopay_off(business_id: int, vendor_id: int) -> bool:
+    """True if the switch was on and is now off (so the caller writes the record exactly once)."""
+    async with aiosqlite.connect(config.db_path) as db:
+        cur = await db.execute("UPDATE autopay_switches SET active = 0 WHERE business_id = ? AND vendor_id = ? AND active = 1",
+                               (business_id, vendor_id))
+        await db.commit()
+        return cur.rowcount == 1
+
+
+async def mark_invoice_auto(business_id: int, invoice_id: int) -> None:
+    async with aiosqlite.connect(config.db_path) as db:
+        await db.execute("UPDATE invoices SET auto = 1 WHERE id = ? AND business_id = ?", (invoice_id, business_id))
+        await db.commit()
+
+
 async def claim_shadow_approval(business_id: int, invoice_id: int) -> bool:
     """awaiting_owner -> approving, atomically, so two clicks can never start two payments."""
     async with aiosqlite.connect(config.db_path) as db:
@@ -943,7 +997,9 @@ async def shadow_stats(business_id: Optional[int] = None) -> dict:
         f"SELECT verdict, COUNT(*) AS n FROM decision_verdicts WHERE 1 = 1 {where} GROUP BY verdict", args)}
     agree, disagree = votes.get("agree", 0), votes.get("disagree", 0)
     n = agree + disagree
+    auto = await _one(f"SELECT COUNT(*) AS n, COALESCE(SUM(amount_usdc), 0) AS usdc FROM invoices WHERE mode = 'shadow' AND status = 'paid' AND auto = 1 {where}", args)
     return {
+        "auto_paid": auto["n"], "auto_mirrored_usdc": round(float(auto["usdc"]), 6),
         "paid": paid["n"], "held": by.get("held", {"n": 0})["n"], "escalated": by.get("escalated", {"n": 0})["n"],
         "awaiting_owner": by.get("awaiting_owner", {"n": 0})["n"] + by.get("approving", {"n": 0})["n"],
         "rejected": by.get("rejected", {"n": 0})["n"],
@@ -975,7 +1031,7 @@ async def latest_paid(business_id: int, limit: int = 10) -> list:
     """The newest paid decisions of the agent's own traffic (live or shadow) with what a judge needs to check them. Manual and
     demo payments are left out: they are not traction. No contacts, no private fields."""
     return await _all(
-        """SELECT i.invoice_number, i.amount_usdc, i.mode, i.origin, i.real_amount, i.real_currency, i.reasoning_hash,
+        """SELECT i.invoice_number, i.amount_usdc, i.mode, i.origin, i.auto, i.real_amount, i.real_currency, i.reasoning_hash,
                   a.chain_tx_hash, a.timestamp
            FROM invoices i LEFT JOIN audit_log a ON a.reasoning_hash = i.reasoning_hash
            WHERE i.business_id = ? AND i.status = 'paid' AND i.origin = 'agent' ORDER BY i.id DESC LIMIT ?""",

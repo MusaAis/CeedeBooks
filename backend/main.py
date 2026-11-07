@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agent import categories as category_rules
-from agent import anchor, contract, decision_log, earned, escrow_chain, escrow_release, evidence, gateway, ledger, payables, safe_fetch, treasury
+from agent import anchor, autopay, contract, decision_log, earned, escrow_chain, escrow_release, evidence, gateway, ledger, payables, safe_fetch, treasury
 from agent.config import config
 from backend import admin_auth, auth, models, outcomes, vendor_auth
 
@@ -372,6 +372,7 @@ async def submit_invoice(body: InvoiceIn, who: auth.Principal = Depends(auth.req
         log.exception("Invoice %s processing failed", body.invoice_number)
         await models.update_invoice_status(who.business_id, invoice_id, "error")
         raise HTTPException(500, "Processing failed; the failure was logged")
+    await _autopay_after_decision(business, body.vendor_id, invoice_id, body.invoice_number, decision)
     return {"invoice_id": invoice_id, "decision": decision.value}
 
 
@@ -946,8 +947,8 @@ async def admin_decision_verdict(reasoning_hash: DecisionHash, body: VerdictIn, 
     invoice = await models.get_invoice_by_decision(who.business_id, reasoning_hash)
     if invoice is None or invoice["mode"] != "shadow":
         raise HTTPException(404, "No shadow decision with that hash in your business")
-    if invoice["status"] not in ("held", "escalated"):
-        raise HTTPException(409, "Only a held or escalated decision takes a verdict here; approve or reject a waiting one")
+    if invoice["status"] not in ("held", "escalated") and not (invoice["status"] == "paid" and invoice["auto"]):
+        raise HTTPException(409, "Only a held, escalated or autopaid decision takes a verdict here; approve or reject a waiting one")
     try:
         await models.save_verdict(who.business_id, invoice["id"], reasoning_hash, body.verdict, who.admin_address)
     except sqlite3.IntegrityError:
@@ -957,14 +958,34 @@ async def admin_decision_verdict(reasoning_hash: DecisionHash, body: VerdictIn, 
     return {"ok": True, "verdict": body.verdict}
 
 
-# ---- earned vendors (Phase R, v1.3.3): the rule and the record. Nothing here pays anything.
+# ---- earned vendors (Phase R, v1.3.3): the rule and the record. Autopay (v1.3.3.1) is below.
+
+async def _autopay_after_decision(business: dict, vendor_id: int, invoice_id: int, invoice_number: str, decision) -> None:
+    """A hold or an escalation on an autopay vendor's invoice turns its switch off at once. A hold because the owner paused payments
+    is the owner's own stop, not a verdict on the vendor, so it leaves the switch on. A failure here is logged, never raised."""
+    if decision not in (payables.Decision.HOLD, payables.Decision.ESCALATE):
+        return
+    try:
+        row = await models.get_invoice(business["id"], invoice_id)
+        if row is not None and row["held_because"] == "paused":
+            return
+        await autopay.turn_off(business, vendor_id, "held" if decision == payables.Decision.HOLD else "escalated", invoice_number)
+    except Exception:
+        log.exception("Autopay could not be checked after the decision on %s", invoice_number)
+
 
 async def _earned_check(business_id: int, vendor_id: int) -> Optional[str]:
     """After a verdict: write a graduation or a revocation if the vendor's streak calls for one. The verdict is already final,
     so a failure here (no usable ledger key, for example) is logged and the record is retried on the next verdict."""
     try:
         business, vendor = await models.get_business(business_id), await models.get_vendor(business_id, vendor_id)
-        return await earned.evaluate_vendor(business, dict(vendor)) if business and vendor else None
+        if not (business and vendor):
+            return None
+        action = await earned.evaluate_vendor(business, dict(vendor))
+        switch = await models.get_autopay(business_id, vendor_id)
+        if switch and switch["active"] and not (await earned.vendor_state(business_id, vendor_id))["graduated"]:
+            await autopay.turn_off(business, vendor_id, "graduation_lost")  # a disagreement ended the graduation: autopay ends with it
+        return action
     except Exception:
         log.exception("Earned-vendor record for vendor %s of business %s could not be written", vendor_id, business_id)
         return None
@@ -974,13 +995,78 @@ async def _earned_view(business: dict) -> dict:
     vendors = []
     for v in await models.list_vendors(business["id"]):
         state = await earned.vendor_state(business["id"], v["id"])
+        switch = await models.get_autopay(business["id"], v["id"])
+        on = bool(switch and switch["active"])
         vendors.append({"id": v["id"], "name": v["name"], "streak": state["streak"], "graduated": state["graduated"],
-                        "record_hash": state["record_hash"], "record_at": state["record_at"]})
+                        "record_hash": state["record_hash"], "record_at": state["record_at"],
+                        "autopay": {"on": on, "max_usdc": switch["max_usdc"] if on else None, "record_hash": switch["reasoning_hash"] if on else None}})
     return {"earn_after": int(business["earn_after"]), "min": earned.MIN_EARN_AFTER, "max": earned.MAX_EARN_AFTER, "vendors": vendors}
 
 
 class EarnedSettingsIn(_Strict):
     earn_after: Annotated[int, Field(strict=True, ge=earned.MIN_EARN_AFTER, le=earned.MAX_EARN_AFTER)]
+
+
+class AutopayChallengeIn(_Strict):
+    vendor_id: int = Field(ge=1)
+    max_usdc: Amount
+
+
+class AutopayOnIn(_Strict):
+    nonce: str = Field(min_length=32, max_length=32)
+    signature: str = Field(min_length=132, max_length=132)
+
+
+@app.post("/admin/autopay/challenge")
+async def admin_autopay_challenge(body: AutopayChallengeIn, who: auth.Principal = Depends(auth.require_admin)):
+    """The message to sign to switch autopay on for one graduated vendor, with a cap per payment. Nothing changes yet."""
+    business = await _writable(who)
+    vendor = await models.get_vendor(who.business_id, body.vendor_id)
+    if vendor is None:
+        raise HTTPException(404, "Vendor not found")
+    if not (await earned.vendor_state(who.business_id, body.vendor_id))["graduated"]:
+        raise HTTPException(409, "Only a graduated vendor can have autopay")
+    return admin_auth.make_autopay_challenge(who.admin_address, business, dict(vendor), _plain_decimal(body.max_usdc))
+
+
+@app.post("/admin/autopay/on")
+async def admin_autopay_on(body: AutopayOnIn, who: auth.Principal = Depends(auth.require_admin)):
+    """Switch autopay on with the owner's wallet signature. The signature must be the signed-in admin's and the business's
+    current on-chain approver's. The ledger record is written first; without a usable ledger key nothing is switched on."""
+    business = await _writable(who)
+    signed = await admin_auth.verify_autopay(body.nonce, body.signature, who.admin_address, who.business_id)
+    if signed is None:
+        raise HTTPException(403, "That signature is not valid for this business's admin, or it expired")
+    vendor = await models.get_vendor(who.business_id, signed["vendor_id"])
+    if vendor is None or vendor["wallet_address"].lower() != signed["wallet"].lower():
+        raise HTTPException(409, "The vendor changed since you were asked to sign; start again")
+    if not (await earned.vendor_state(who.business_id, vendor["id"]))["graduated"]:
+        raise HTTPException(409, "Only a graduated vendor can have autopay")
+    msg_hash = autopay.message_hash(signed["message"])
+    try:
+        record = await decision_log.log_decision(
+            autopay.ACTION_ON, earned.subject_for(vendor["id"]),
+            autopay.on_text(vendor["name"], vendor["id"], vendor["wallet_address"], signed["signer"], signed["max_usdc"], msg_hash),
+            model_used="rules", business=business)
+    except Exception:
+        log.exception("Autopay-on record could not be written")
+        raise HTTPException(503, "The ledger could not take the record; autopay was not switched on")
+    await models.set_autopay_on(who.business_id, vendor["id"], vendor["wallet_address"], signed["max_usdc"], signed["signer"], msg_hash,
+                                body.signature, record)
+    await _admin_log(who, "autopay_on", f"vendor {vendor['id']}")
+    return {"ok": True, "vendor_id": vendor["id"], "max_usdc": signed["max_usdc"], "record_hash": record}
+
+
+@app.post("/admin/autopay/{vendor_id}/off")
+async def admin_autopay_off(vendor_id: int, who: auth.Principal = Depends(auth.require_admin)):
+    """Off needs only the admin session, not a signature: turning it off can never be the risky direction."""
+    business = await _writable(who)
+    if await models.get_vendor(who.business_id, vendor_id) is None:
+        raise HTTPException(404, "Vendor not found")
+    was_on = await autopay.turn_off(business, vendor_id, "owner")
+    if was_on:
+        await _admin_log(who, "autopay_off", f"vendor {vendor_id}")
+    return {"ok": True, "was_on": was_on}
 
 
 @app.get("/admin/earned-vendors")
@@ -1119,6 +1205,7 @@ async def _rerun_invoice(business: dict, invoice: sqlite3.Row) -> dict:
         log.exception("Re-run of invoice %s failed", invoice["id"])
         await models.update_invoice_status(business["id"], invoice["id"], "error")
         return {"rerun": "error"}
+    await _autopay_after_decision(business, vendor["id"], invoice["id"], invoice["invoice_number"], decision)
     return {"rerun": "done", "decision": decision.value}
 
 
@@ -1491,7 +1578,7 @@ async def business_traction(slug: Slug):
         "not_traction": await models.apart_counts(business["id"]),
         "shadow": await models.shadow_stats(business["id"]),
         "latest_paid": [
-            {"invoice": r["invoice_number"], "mode": r["mode"], "origin": r["origin"], "usdc": r["amount_usdc"],
+            {"invoice": r["invoice_number"], "mode": r["mode"], "origin": r["origin"], "auto": bool(r["auto"]), "usdc": r["amount_usdc"],
              "real_amount": r["real_amount"], "real_currency": r["real_currency"],
              "reasoning_hash": r["reasoning_hash"], "tx_hash": r["chain_tx_hash"], "time": r["timestamp"],
              "tx_url": f"{EXPLORER_URL}/tx/{r['chain_tx_hash']}" if r["chain_tx_hash"] else None}

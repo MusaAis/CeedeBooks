@@ -201,7 +201,8 @@ async def recent(limit: int = 20, business_id: Optional[int] = None) -> list:
     """Newest first. business_id=None is the public aggregate; a number scopes it to one business."""
     sql = ("SELECT reasoning_hash, action, subject, model_used, amount_usdc, timestamp, chain_tx_hash, business_id{demo} FROM audit_log "
            "{where}ORDER BY id DESC LIMIT ?")
-    demo = (", reasoning_hash IN (SELECT reasoning_hash FROM invoices WHERE origin = 'demo' AND reasoning_hash IS NOT NULL) AS is_demo")
+    demo = (", reasoning_hash IN (SELECT reasoning_hash FROM invoices WHERE origin = 'demo' AND reasoning_hash IS NOT NULL) AS is_demo"
+            ", reasoning_hash IN (SELECT reasoning_hash FROM invoices WHERE auto = 1 AND status = 'paid' AND reasoning_hash IS NOT NULL) AS is_auto")
     async with aiosqlite.connect(config.db_path) as db:
         db.row_factory = aiosqlite.Row
         try:
@@ -215,7 +216,8 @@ async def recent(limit: int = 20, business_id: Optional[int] = None) -> list:
             else:
                 cursor = await db.execute(sql.format(demo="", where=""), (limit,))
         async with cursor:
-            return [{**dict(row), **({"is_demo": bool(row["is_demo"])} if "is_demo" in row.keys() else {})} for row in await cursor.fetchall()]
+            return [{**dict(row), **({"is_demo": bool(row["is_demo"]), "is_auto": bool(row["is_auto"])} if "is_demo" in row.keys() else {})}
+                    for row in await cursor.fetchall()]
 
 
 async def for_subject_prefix(business_id: int, actions: tuple, prefix: str, limit: int = 20) -> list:

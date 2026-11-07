@@ -30,4 +30,6 @@ A business that does not want to move real money can still be judged on real dec
 
 **Earned vendors (v1.3.3).** Each approved shadow pay decision on a vendor counts toward a streak; a rejection, or an "I would not" verdict on that vendor, resets it. When the streak reaches the owner's number N (default 5), the code writes a graduation record into the signed ledger with the invoices counted; a later disagreement writes a revocation. Agreeing with the agent's hold or escalation neither counts nor resets. A record changes nothing about how invoices are decided or paid.
 
+**Autopay (v1.3.3.1).** For a graduated vendor the owner can sign a switch with their wallet: a message naming the vendor, its wallet and a cap per payment, which sends no transaction. While it is on, a shadow invoice from that vendor that the agent would park for the owner is instead paid by the agent, through the same commit-then-pay path as the owner's click, so the match, the rules, the pause and the contract's own limits all still apply. If the agent holds or escalates, the contract refuses, or the owner disagrees, the switch goes off and the ledger records why. The payment stays a labelled shadow mirror (`auto`) and moves no live figure.
+
 **Not in shadow mode:** no bank or ERP connection, no PDF or email intake, no exchange-rate oracle.

@@ -15,6 +15,7 @@ ceedebooks/
 │   ├── evidence.py         # a GitHub pull request turned into facts and an evidence hash (v1.3.2.1)
 │   ├── escrow_chain.py     # read-only view of a MilestoneEscrow contract and the registration checks (v1.3.2.1)
 │   ├── earned.py           # earned vendors: the streak rule, graduation and revocation records (they pay nothing)
+│   ├── autopay.py          # the owner's per-vendor autopay switch: eligibility checks and the on and off records
 │   ├── escrow_release.py   # the agent's release verdict, decision record and the two transactions (commit, release) for an escrow (v1.3.2.3)
 │   ├── decision_log.py     # canonical-JSON SHA-256 audit log, hash-before-action
 │   ├── contract.py         # reads + Circle-signed writes (incl. the Gateway approve and deposit), wait_for_transaction
@@ -46,6 +47,7 @@ ceedebooks/
 │       ├── test_safe_fetch.py
 │       ├── test_escrow.py
 │       ├── test_earned.py
+│       ├── test_autopay.py
 │       ├── test_escrow_release.py
 │       ├── test_relabel.py
 │       └── test_red_team.py

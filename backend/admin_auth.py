@@ -38,6 +38,7 @@ _SIG_RE = re.compile(r"^0x[a-fA-F0-9]{130}$")
 _NONCE_RE = re.compile(r"^[0-9a-f]{32}$")
 
 _challenges: dict = {}  # nonce -> {address, business_id, message, expires}
+_autopay_challenges: dict = {}  # nonce -> {address, business_id, vendor_id, wallet, max_usdc, message, expires}
 _sessions: dict = {}    # sha256(token) -> {address, business_id, issued, seen}
 _approver_cache: dict = {}  # business id -> (approver, read at)
 _public_approver_cache: dict = {}  # same, for the public listing only: it never feeds sign-in
@@ -46,6 +47,7 @@ _pause_cache: dict = {}  # business id -> (paused, read at); public banner only,
 
 def reset() -> None:
     _challenges.clear()
+    _autopay_challenges.clear()
     _sessions.clear()
     _approver_cache.clear()
     _public_approver_cache.clear()
@@ -134,6 +136,55 @@ def make_challenge(address: str, business: dict) -> dict:
     )
     _challenges[nonce] = {"address": address.lower(), "business_id": business["id"], "message": message, "expires": now + CHALLENGE_TTL}
     return {"nonce": nonce, "message": message}
+
+
+def make_autopay_challenge(address: str, business: dict, vendor: dict, max_usdc: str) -> dict:
+    """The message the owner's wallet signs to switch autopay on for one vendor. It names the vendor, its wallet and the cap, and
+    says what the agent may then do. Single use, five minutes."""
+    now = time.time()
+    _purge(now)
+    for nonce in [n for n, c in _autopay_challenges.items() if c["expires"] <= now]:
+        del _autopay_challenges[nonce]
+    while len(_autopay_challenges) >= MAX_CHALLENGES:
+        del _autopay_challenges[next(iter(_autopay_challenges))]
+    nonce = secrets.token_hex(16)
+    issued = datetime.fromtimestamp(now, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    expires = datetime.fromtimestamp(now + CHALLENGE_TTL, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    message = (
+        f"{domain()} asks you to switch ON autopay for one vendor of the business \"{business['slug']}\".\n\n"
+        f"Vendor: {vendor['name']} (id {vendor['id']}), wallet {vendor['wallet_address']}\n"
+        f"Cap: {max_usdc} USDC per payment\n\n"
+        f"The agent may then pay this vendor's shadow invoices itself, without your click, only while the vendor stays graduated and "
+        f"every check passes: the three-way match, the rules, the contract's own limits and the pause state. A hold, an escalation, "
+        f"a refused payment or your disagreement turns it off. You can turn it off at any time. This signs a message only: it sends "
+        f"no transaction and costs nothing.\n\n"
+        f"Account: {address}\nNonce: {nonce}\nIssued At: {issued}\nExpiration Time: {expires}"
+    )
+    _autopay_challenges[nonce] = {"address": address.lower(), "business_id": business["id"], "vendor_id": vendor["id"],
+                                  "wallet": vendor["wallet_address"], "max_usdc": max_usdc, "message": message, "expires": now + CHALLENGE_TTL}
+    return {"nonce": nonce, "message": message}
+
+
+async def verify_autopay(nonce: str, signature: str, session_address: str, business_id: int) -> Optional[dict]:
+    """Single use. The signature must recover to the signed-in admin AND to the business's current on-chain approver; the
+    challenge must be for this business. Returns what was signed, or None."""
+    if not _NONCE_RE.match(nonce or "") or not _SIG_RE.match(signature or ""):
+        return None
+    now = time.time()
+    challenge = _autopay_challenges.pop(nonce, None)
+    if challenge is None or challenge["expires"] <= now or challenge["business_id"] != business_id:
+        return None
+    try:
+        recovered = Account.recover_message(encode_defunct(text=challenge["message"]), signature=signature).lower()
+    except Exception:
+        return None
+    if recovered != challenge["address"] or recovered != session_address.lower():
+        return None
+    business = await models.get_business(business_id)
+    approver = await current_approver(business) if business else None
+    if approver is None or recovered != approver:
+        return None
+    return {**challenge, "signer": recovered}
 
 
 async def verify(nonce: str, signature: str) -> Optional[dict]:

@@ -276,13 +276,13 @@
       box.textContent = "";
       if (!list.length) { box.textContent = "No decisions yet."; return; }
       list.forEach(function (d) {
-        var trust = d.action === "VENDOR_GRADUATED" || d.action === "VENDOR_REVOKED";
+        var trust = d.action.indexOf("VENDOR_") === 0;  // graduation, revocation and the owner's autopay switch: records, no payment
         var kind = trust ? d.action.replace("VENDOR_", "").toLowerCase() : d.action.replace("INVOICE_", "").toLowerCase();
         var row = el("div", "item");
-        row.appendChild(el("span", "chip " + kind, kind.toUpperCase()));
+        row.appendChild(el("span", "chip " + kind, kind.replace(/_/g, " ").toUpperCase() + (d.is_auto ? " (AUTO)" : "")));
         var t = el("div", "t");
         t.appendChild(el("strong", null, d.subject));
-        t.appendChild(el("span", null, usdc(d.amount_usdc) + ", " + (trust ? "vendor trust record, no payment" : d.is_demo ? "demo data, not counted" : d.model_used === "manual" ? "manual entry" : "agent decision") + ", " + when(d.timestamp) + (d.chain_tx_hash ? ", on-chain" : ", off-chain only")));
+        t.appendChild(el("span", null, usdc(d.amount_usdc) + ", " + (trust ? "vendor trust record, no payment" : d.is_demo ? "demo data, not counted" : d.is_auto ? "autopay by the owner's switch, shadow, not counted" : d.model_used === "manual" ? "manual entry" : "agent decision") + ", " + when(d.timestamp) + (d.chain_tx_hash ? ", on-chain" : ", off-chain only")));
         row.appendChild(t);
         var btn = el("button", "mini", "Verify");
         btn.type = "button";
