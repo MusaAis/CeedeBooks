@@ -63,6 +63,10 @@ Reviewing applications: the admin site has an **Applications** tab. Accepting on
 The portal loads its typeface (Bricolage Grotesque, the same as the proof page) from Google Fonts, so its Content-Security-Policy allows `fonts.googleapis.com` and `fonts.gstatic.com`. If you set the portal up before that line existed, update the live config in place (do not copy the repo file over it: certbot has edited the live one):
 `sudo sed -i "s#style-src 'self'; img-src#style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src#" /etc/nginx/sites-available/ceedebooks-portal && sudo nginx -t && sudo systemctl reload nginx`
 
+## Upgrading to v1.3.3.3 (README and docs only)
+
+Nothing to deploy: no code, route, schema, contract or environment change. `git pull` is enough; no restart is needed.
+
 ## Upgrading to v1.3.3.2 (vendor trust on the proof page and in the admin site; docs corrections)
 
 One new public read-only API route (`GET /businesses/{slug}/vendor-trust`), a new module (`agent/vendor_trust.py`), extra fields in the answer of `GET /admin/earned-vendors`, and changed admin and proof-page files. No schema, contract, environment, hash-format or ledger change: the route writes nothing. The release also corrects documentation and comments; no behaviour changes besides the new route and the new fields.

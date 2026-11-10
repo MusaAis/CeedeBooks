@@ -12,6 +12,9 @@ The [README](../README.md) is the short front page. The detail lives here, one s
 | [`contracts.md`](contracts.md) | What each contract does, the businesses and the approver |
 | [`api.md`](api.md) | Every route, who may call it, hardening |
 | [`traction.md`](traction.md) | Evidence behind the counts, live runs in detail, spend categories |
+| [`status.md`](status.md) | The latest releases in full, and the plain statement of what is and is not live |
+| [`evidence.md`](evidence.md) | Every live proof with its transaction or route |
+| [`HACKATHON.md`](HACKATHON.md) | What changed from Sep 27 to now, from the git history |
 | [`roadmap.md`](roadmap.md) | Phase by phase status |
 | [`testing.md`](testing.md) | How to run each suite and what each covers |
 | [`setup-and-deploy.md`](setup-and-deploy.md) | Circle wallet and contract deployment |
@@ -25,7 +28,7 @@ The [README](../README.md) is the short front page. The detail lives here, one s
 Every release updates, in the same commit:
 
 1. `CHANGELOG.md`: a new entry at the top.
-2. The README: the Status line, the test counts in the badges and the "Since Sep 27" numbers.
+2. The README's status row and test-count badges, then `status.md`, `evidence.md` (a new live run) and the numbers in `HACKATHON.md`.
 3. Only the docs files the release touched: a new route goes in `api.md`, a new file in `project-structure.md`, a new phase row in `roadmap.md`, a new bug in `known-issues.md`, a new contract in `contracts.md`.
 4. `deploy/DEPLOY.md`: an upgrade section at the top of the upgrade list (a one-line section for a docs-only release).
 5. `rollouts/`: a record for anything run live.

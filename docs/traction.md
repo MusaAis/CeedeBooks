@@ -1,6 +1,6 @@
 # Traction
 
-Everything below is checkable on-chain; nothing is estimated. The short table with links is in the [README](../README.md#evidence-you-can-check) and each live run has a record in [`rollouts/`](rollouts/README.md).
+Everything below is checkable on-chain; nothing is estimated. The short table with links is in the [evidence page](evidence.md) and each live run has a record in [`rollouts/`](rollouts/README.md).
 
 | What | Evidence |
 |---|---|

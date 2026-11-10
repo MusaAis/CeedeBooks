@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 380" width="900" height="380" role="img" aria-labelledby="t d" font-family="Helvetica, Arial, sans-serif">
+  <title id="t">How CeedeBooks works</title>
+  <desc id="d">An invoice goes to the agent, which matches it and writes a signed decision. The decision hash is committed on-chain, then the BudgetEnforcer contract pays or refuses. The ledger head is anchored on-chain and anyone can verify it on the proof page.</desc>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+  </defs>
+  <rect width="900" height="380" rx="14" fill="#ffffff" stroke="#cbd5e1"/>
+  <g font-size="13" fill="#0f172a" text-anchor="middle">
+    <rect x="30" y="40" width="150" height="70" rx="10" fill="#f1f5f9" stroke="#64748b"/>
+    <text x="105" y="70" font-weight="bold">1. Invoice</text><text x="105" y="90">PO and receipt</text>
+
+    <rect x="255" y="40" width="190" height="70" rx="10" fill="#e0f2fe" stroke="#0369a1"/>
+    <text x="350" y="64" font-weight="bold">2. Agent</text><text x="350" y="82">three-way match, rules</text><text x="350" y="98">pay, hold or escalate</text>
+
+    <rect x="520" y="40" width="170" height="70" rx="10" fill="#fef3c7" stroke="#b45309"/>
+    <text x="605" y="64" font-weight="bold">3. Decision logged</text><text x="605" y="82">hashed, chained,</text><text x="605" y="98">signed, committed</text>
+
+    <rect x="740" y="40" width="130" height="70" rx="10" fill="#dcfce7" stroke="#15803d"/>
+    <text x="805" y="70" font-weight="bold">4. BudgetEnforcer</text><text x="805" y="90">contract decides</text>
+
+    <rect x="740" y="170" width="130" height="70" rx="10" fill="#f1f5f9" stroke="#64748b"/>
+    <text x="805" y="196" font-weight="bold">USDC to an</text><text x="805" y="214">approved vendor</text><text x="805" y="230">or a refusal</text>
+
+    <rect x="30" y="170" width="150" height="70" rx="10" fill="#ede9fe" stroke="#6d28d9"/>
+    <text x="105" y="196" font-weight="bold">Owner wallet</text><text x="105" y="214">sets vendors, limits,</text><text x="105" y="230">pause, approvals</text>
+
+    <rect x="520" y="170" width="170" height="70" rx="10" fill="#fef3c7" stroke="#b45309"/>
+    <text x="605" y="196" font-weight="bold">LedgerAnchor</text><text x="605" y="214">newest ledger head</text><text x="605" y="230">recorded on-chain</text>
+
+    <rect x="255" y="300" width="440" height="56" rx="10" fill="#ffffff" stroke="#0369a1" stroke-width="2"/>
+    <text x="475" y="324" font-weight="bold">Proof page: anyone can verify</text><text x="475" y="342">the browser recomputes each hash and compares it with the chain</text>
+  </g>
+  <g stroke="#475569" stroke-width="2" fill="none" marker-end="url(#a)">
+    <path d="M180 75H255"/><path d="M445 75H520"/><path d="M690 75H740"/><path d="M805 110V170"/>
+    <path d="M605 110V170"/>
+    <path d="M105 170V140H770V110" stroke-dasharray="6 5"/>
+    <path d="M605 240V300"/><path d="M805 240V328H695"/>
+  </g>
+  <g font-size="11" fill="#475569" text-anchor="middle">
+    <text x="330" y="132">the owner sets the limits; the contract enforces them, not a prompt</text>
+    <text x="615" y="160" text-anchor="start">head anchored</text>
+  </g>
+</svg>

@@ -88,6 +88,8 @@ ceedebooks/
 │   ├── features.md, how-it-works.md, traction.md, architecture.md, trust-model.md
 │   ├── roadmap.md, contracts.md, api.md, project-structure.md, testing.md
 │   ├── setup-and-deploy.md, known-issues.md
+│   ├── status.md, evidence.md, HACKATHON.md
+│   ├── assets/architecture.svg   # the README diagram
 │   └── rollouts/           # one record per thing run live, and an index
 ├── deploy/
 │   ├── DEPLOY.md           # server steps, one upgrade section per release

@@ -2,6 +2,11 @@
 
 Every release, newest first: what was built, what was tested, what was not run. The short status is in the [README](README.md); the full record of what ran live is in [`docs/rollouts/`](docs/rollouts/README.md).
 
+**v1.3.3.3: README rebuilt as a short front page (documentation only; nothing to deploy)**
+- The README is now a front page: pitch, diagram, what is live, a quick start that needs no wallet, verified results, where the sponsor technology is used, security, setup and a documentation index. The long status text moved to `docs/status.md`, the evidence table to `docs/evidence.md` and the Sep 27 comparison to `docs/HACKATHON.md`, with every link and figure kept. New diagram: `docs/assets/architecture.svg`.
+- `.env.example` again names the Canteen RPC endpoint for `ARC_TESTNET_RPC_URL`.
+- Docs checker clean; no code, contract, route, schema or environment change.
+
 **v1.3.3.2: Phase R, piece 3, vendor trust on the proof page and in the admin site, with documentation corrections (built and tested; read only, nothing to run live)**
 - New `agent/vendor_trust.py` and a public route `GET /businesses/{slug}/vendor-trust` (active businesses only, 404 otherwise). For each vendor that has a streak or a trust record it returns the streak against the owner's threshold, `graduated`, the number of graduations and revocations, the last revocation, the autopay state (`on`, the per-payment cap, the hash of the switch-on record, and `paid`, how many shadow invoices autopay paid) and the 10 newest records (`VENDOR_GRADUATED`, `VENDOR_REVOKED`, `VENDOR_AUTOPAY_ON`, `VENDOR_AUTOPAY_OFF`, each with its time and hash). No wallet, signer or signature is included. The route reads the audit log and the invoice table and writes nothing: no payment, no ledger entry, and no public figure (`/stats`, `/outcomes`, `/businesses/{slug}/traction`) moves.
 - `GET /admin/earned-vendors` now returns the same fields for every vendor (it keeps every field it had; `autopay` gains `paid`). The Vendors tab of the admin site shows a Revocations column, the number of autopaid payments and a "Trust records" list with each record's short hash. The proof page has a "Vendor trust" block under "Businesses using it" with one row per vendor, each record with a "Check it" button that fills the verifier with its hash; it shows the home business unless another is picked.
