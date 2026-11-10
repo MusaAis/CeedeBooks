@@ -1,4 +1,4 @@
-"""Figures written by code (rule 18). Every number a narrative shows comes from render_figures(); model text may only
+"""Figures written by code, never by the model. Every number a narrative shows comes from render_figures(); model text may only
 name a figure with a placeholder such as {amount}, and fill() refuses text that carries a digit of its own."""
 import re
 from typing import Optional

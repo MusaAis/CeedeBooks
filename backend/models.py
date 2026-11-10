@@ -1011,7 +1011,7 @@ async def shadow_stats(business_id: Optional[int] = None) -> dict:
 
 async def live_counts(business_id: int, origin: str = "agent") -> dict:
     """Live (non-shadow) invoice outcomes for one business and one origin, from the invoices table. The default is the agent's
-    own traffic, the only thing that is headline traction (rule 14); `manual` and `demo` are read apart with `apart_counts`."""
+    own traffic, the only thing that is headline traction (`demo` and `manual` never count as agent traffic); `manual` and `demo` are read apart with `apart_counts`."""
     rows = await _all(
         "SELECT status, COUNT(*) AS n, COALESCE(SUM(amount_usdc), 0) AS usdc FROM invoices "
         "WHERE mode = 'live' AND business_id = ? AND origin = ? GROUP BY status",
@@ -1039,7 +1039,7 @@ async def latest_paid(business_id: int, limit: int = 10) -> list:
     )
 
 
-# ---- relabelling test runs (scripts/relabel_origin.py): rule 14, a payment to a wallet the owner controls is `demo`, not `agent`
+# ---- relabelling test runs (scripts/relabel_origin.py): a payment to a wallet the owner controls is `demo`, not `agent`
 
 async def list_relabel_candidates(business_id: int, prefix: str, wallets: Optional[list] = None) -> list:
     """Live invoices of this business still labelled `agent` whose number starts with `prefix`, newest last. With `wallets`,

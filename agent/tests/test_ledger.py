@@ -293,7 +293,7 @@ def test_without_a_usable_key_nothing_is_logged(monkeypatch, bad_key):
 
 
 def test_without_a_key_an_invoice_is_not_paid(chain, monkeypatch):
-    """Rule 17: if the ledger cannot be written, the payment does not go out."""
+    """Fail closed: if the ledger cannot be written, the payment does not go out."""
     monkeypatch.setattr(payables.contract, "invoice_key", lambda v, i: b"\x01" * 32)
     vendor = asyncio.run(models.save_vendor(1, "V", "0xVENDOR"))
     po = asyncio.run(models.save_purchase_order(1, "PO-1", vendor, 10.0, 0))

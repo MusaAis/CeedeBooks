@@ -95,6 +95,28 @@ const zero = "0x" + "00".repeat(32);
   await assert.rejects(V.readReceipt("0x" + "1".repeat(64), fake({ "https://a": "down", "https://b": "down", "https://c": { chain: "0x4cef52", receipt: null } }), rpcs),
     (e) => e.details.length === 3);
   // the per-business card: live and shadow stay apart, and the rate always carries its n
+  // the vendor-trust block (R3): streak against the threshold, graduated state, autopay state and revocations; records, never payments
+  {
+    const tv = V.vendorTrustView({ earn_after: 5, vendors: [
+      { id: 1, name: "Grad Co", streak: 5, graduated: true, graduations: 1, revocations: 0, last_revocation: null,
+        autopay: { on: true, max_usdc: "0.75", paid: 1 }, records: [{ action: "VENDOR_AUTOPAY_ON", at: 1, reasoning_hash: "aa".repeat(32) }, { action: "VENDOR_GRADUATED", at: 0, reasoning_hash: "bb".repeat(32) }] },
+      { id: 2, name: "Lost Co", streak: 1, graduated: false, graduations: 1, revocations: 2, last_revocation: { action: "VENDOR_REVOKED", at: 3, reasoning_hash: "cc".repeat(32) },
+        autopay: { on: false, max_usdc: null, paid: 2 }, records: [{ action: "VENDOR_REVOKED", at: 3, reasoning_hash: "cc".repeat(32) }] },
+      { id: 3, name: "New Co", streak: 2, graduated: false, graduations: 0, revocations: 0, last_revocation: null, autopay: { on: false, paid: 0 }, records: [] }] });
+    assert.strictEqual(tv.empty, false);
+    assert.strictEqual(tv.threshold, "The owner set the threshold at 5 agreed pay decisions in a row.");
+    const [g, l, n] = tv.vendors;
+    assert.deepStrictEqual([g.streak, g.state, g.revocations], ["5 of 5 agreed in a row", "Graduated", "No revocations"]);
+    assert.strictEqual(g.autopay, "Autopay on, up to 0.75 USDC per payment, 1 payment made by it");
+    assert.deepStrictEqual(g.records.map((r) => r.label), ["Autopay switched on", "Graduated"]);
+    assert.strictEqual(g.records[0].hash, "aa".repeat(32));
+    assert.deepStrictEqual([l.state, l.revocations, l.autopay], ["Graduation revoked, earning it again", "2 revocations", "Autopay off, 2 payments were made by it"]);
+    assert.deepStrictEqual([n.state, n.streak, n.autopay], ["Not yet graduated", "2 of 5 agreed in a row", "Autopay off"]);
+    assert.strictEqual(V.vendorTrustView({ earn_after: 3, vendors: [] }).empty, true);
+    assert.strictEqual(V.vendorTrustView({ earn_after: 2, vendors: [{ id: 1, name: "X", streak: 0, graduated: false, revocations: 0, autopay: { on: false, paid: 1 }, records: [] }] }).vendors[0].autopay, "Autopay off, 1 payment was made by it");
+    assert.strictEqual(V.vendorTrustView({ earn_after: 2, vendors: [{ id: 1, name: "X", streak: 1, graduated: true, revocations: 1, autopay: { on: false, paid: 1 }, records: [] }] }).vendors[0].revocations, "1 revocation");
+    assert.ok(!/payment figure|paid \d/.test(JSON.stringify(tv.threshold)), "the block carries no payment figure of its own");
+  }
   const view = V.tractionView({ business: { kind: "outside" }, live: { paid: 1, held: 0, escalated: 2, volume_usdc: 3 },
     shadow: { paid: 2, held: 1, escalated: 0, awaiting_owner: 1, mirrored_usdc: 1, real_totals: { NGN: "4500.50" }, agreement: { agree: 3, disagree: 1, n: 4, rate: 0.75 } },
     latest_paid: [{ invoice: "SH-1", mode: "shadow", real_amount: "4500.50", real_currency: "NGN", reasoning_hash: "ab".repeat(32), tx_hash: "0x" + "cd".repeat(32) },

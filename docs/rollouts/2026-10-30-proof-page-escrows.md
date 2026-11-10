@@ -5,7 +5,7 @@
 ## What was run
 
 1. The new files were extracted on the server, the API restarted and the proof-page files copied. The first two `curl` calls ran inside the 15 seconds the API needs to start and answered 502 from nginx; the service log shows it started cleanly (active at 23:55:44 UTC on Oct 29).
-2. `curl https://api.ceedebooks.xyz/escrows/0x9752F995739C8A171AbD24944925Eaf4d2971dd5/decisions` returned three decisions, newest first: `ESCROW_RELEASED` milestone 0 (0.1 USDC, transaction `0xc49c13dd...b83f1f`, hash `e720c5eb...23a895`), `ESCROW_ESCALATED` milestone 2 (0.5 USDC, no transaction) and `ESCROW_HELD` milestone 0 (0.1 USDC, no transaction). An unregistered address answered 404.
+2. `curl https://api.ceedebooks.xyz/escrows/0x9752F995739C8A171AbD24944925EaF4d2971dd5/decisions` returned three decisions, newest first: `ESCROW_RELEASED` milestone 0 (0.1 USDC, transaction `0xc49c13dd...b83f1f`, hash `e720c5eb...23a895`), `ESCROW_ESCALATED` milestone 2 (0.5 USDC, no transaction) and `ESCROW_HELD` milestone 0 (0.1 USDC, no transaction). An unregistered address answered 404.
 3. The full Python suite ran on the server with the CI placeholder variables: **699 passed** in 4 minutes 59 seconds.
 4. The page showed the section: Active, "ceedebooks (builder's own)", balance 4.80 USDC, reserved 0.00 USDC, the agent releasing up to 0.25 USDC, milestone 0 released, milestone 1 rejected, milestone 2 released, and the agent, approver and contractor addresses as explorer links, then the three decisions and the note that escrow decisions are not counted in the totals.
 

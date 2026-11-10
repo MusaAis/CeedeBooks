@@ -38,6 +38,8 @@ jobs:
           cache-dependency-path: agent/requirements.txt
       - run: pip install -r agent/requirements.txt
       - run: python -m pytest agent/tests -q
+      - name: docs check
+        run: python scripts/check_docs.py
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

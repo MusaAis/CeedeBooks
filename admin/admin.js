@@ -618,7 +618,16 @@
         } else {
           ctl = "";
         }
-        return [v.name, String(v.streak) + " of " + earn.earn_after, v.graduated ? "Graduated" : "Not yet", ctl];
+        var revoked = v.revocations ? v.revocations + (v.revocations === 1 ? " revocation" : " revocations") : "None";
+        var paidBy = ap.paid ? " (" + ap.paid + (ap.paid === 1 ? " payment" : " payments") + " made by it)" : "";
+        return [v.name, String(v.streak) + " of " + earn.earn_after, v.graduated ? "Graduated" : (v.revocations ? "Not graduated now" : "Not yet"), revoked, ctl, paidBy];
+      });
+      var trustLabels = { VENDOR_GRADUATED: "Graduated", VENDOR_REVOKED: "Graduation revoked", VENDOR_AUTOPAY_ON: "Autopay switched on", VENDOR_AUTOPAY_OFF: "Autopay switched off" };
+      var historyRows = [];
+      earn.vendors.forEach(function (v) {
+        (v.records || []).forEach(function (r) {
+          historyRows.push([v.name, trustLabels[r.action] || r.action, when(r.at), h("span", { class: "mono" }, [r.reasoning_hash.slice(0, 12)])]);
+        });
       });
       var earnPanel = h("div", { class: "panel" }, [
         h("h3", null, ["Earned vendors"]),
@@ -632,7 +641,10 @@
             await show("vendors");
           }) }, ["Save"])]),
         h("p", { class: "note" }, ["Autopay is a per-vendor switch you sign with your wallet. While it is on, the agent pays that graduated vendor's next shadow invoice without waiting for you, up to the cap you set and only if every check passes. A hold, an escalation, a refusal by the contract or a disagreement from you turns it off. These payments stay testnet mirrors labelled auto and never move the public figures."]),
-        earnRows.length ? table(["Vendor", "Streak", "State", "Autopay"], earnRows) : h("p", { class: "note" }, ["No vendors yet."])]);
+        earnRows.length ? table(["Vendor", "Streak", "State", "Revocations", "Autopay", ""], earnRows) : h("p", { class: "note" }, ["No vendors yet."]),
+        h("h3", null, ["Trust records"]),
+        h("p", { class: "note" }, ["Each graduation, revocation and autopay switch is one signed ledger record (newest first, up to 10 per vendor). The same records are public on the proof page, where anyone can verify them."]),
+        historyRows.length ? table(["Vendor", "Record", "Time", "Hash"], historyRows) : h("p", { class: "note" }, ["No trust records yet."])]);
       return h("div", null, [h("h2", null, ["Vendors"]), form, h("h3", null, ["Registered vendors"]), table(["ID", "Name", "Wallet", "Status", ""], rows), earnPanel]);
     },
 

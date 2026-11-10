@@ -318,7 +318,7 @@
         row.appendChild(t);
         var btn = el("button", "mini", scope === r.slug ? "Showing" : "Show its decisions");
         btn.type = "button";
-        btn.addEventListener("click", function () { scope = scope === r.slug ? null : r.slug; loadStats(); loadOutcomes(); loadFeed(); loadBusinesses(); loadTraction(); });
+        btn.addEventListener("click", function () { scope = scope === r.slug ? null : r.slug; loadStats(); loadOutcomes(); loadFeed(); loadBusinesses(); loadTraction(); loadVendorTrust(); });
         row.appendChild(btn);
         box.appendChild(row);
       });
@@ -364,6 +364,40 @@
     }
   }
 
+
+  // Each vendor's streak, graduated state, autopay state and revocations for the shown business. Records, not payments: autopay payments
+  // are shadow payments and are in no live figure. Each record's Check button verifies its hash like any decision.
+  async function loadVendorTrust() {
+    var box = $("trust-list"), note = $("trust-note");
+    box.textContent = "";
+    try {
+      var slug = scope || C.home;
+      var v = V.vendorTrustView(await getJson("/businesses/" + encodeURIComponent(slug) + "/vendor-trust"));
+      note.textContent = v.empty
+        ? "No vendor has a streak or a trust record yet. " + v.threshold
+        : v.threshold + " A graduation, a revocation and the owner's autopay switch are each one signed ledger record. They are not payments, and autopay payments are shadow payments that no live figure includes.";
+      v.vendors.forEach(function (x) {
+        var row = el("div", "item");
+        row.appendChild(el("span", "chip " + (x.graduated ? "graduated" : "shadow"), x.graduated ? "GRADUATED" : "NOT GRADUATED"));
+        var t = el("div", "t");
+        t.appendChild(el("strong", null, x.name));
+        t.appendChild(el("span", null, x.streak + ". " + x.state + ". " + x.revocations + "."));
+        t.appendChild(el("span", null, x.autopay + "."));
+        x.records.forEach(function (r) {
+          var line = el("span", null, r.label + ", " + when(r.at) + " ");
+          var b = el("button", "mini", "Check it");
+          b.type = "button";
+          b.addEventListener("click", function () { $("hash").value = r.hash; runVerify(); $("verify").scrollIntoView({ behavior: reduce ? "auto" : "smooth" }); });
+          line.appendChild(b);
+          t.appendChild(line);
+        });
+        row.appendChild(t);
+        box.appendChild(row);
+      });
+    } catch (e) {
+      note.textContent = "The vendors' trust records could not be loaded just now.";
+    }
+  }
 
   // ---------- the whole ledger chain
   var chainBiz = [];
@@ -420,6 +454,7 @@
   loadOutcomes();
   loadFeed();
   loadBusinesses();
+  loadVendorTrust();
   loadEscrows();
   // A link from the vendor portal (#check=<64 hex>) opens straight onto that decision's check.
   var deep = /^#check=([0-9a-f]{64})$/.exec(location.hash || "");

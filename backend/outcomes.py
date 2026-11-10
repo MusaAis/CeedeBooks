@@ -66,7 +66,7 @@ def _empty() -> dict:
 
 
 def outside_statement(counts: dict, one_business: bool) -> str:
-    """Written by code, never by a model (rule 18)."""
+    """Written by code, never by a model."""
     if one_business:
         return "Figures for one business."
     ext, total = counts["external"], counts["total"]

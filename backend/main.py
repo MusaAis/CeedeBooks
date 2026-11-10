@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agent import categories as category_rules
-from agent import anchor, autopay, contract, decision_log, earned, escrow_chain, escrow_release, evidence, gateway, ledger, payables, safe_fetch, treasury
+from agent import anchor, autopay, contract, decision_log, earned, escrow_chain, escrow_release, evidence, gateway, ledger, payables, safe_fetch, treasury, vendor_trust
 from agent.config import config
 from backend import admin_auth, auth, models, outcomes, vendor_auth
 
@@ -992,15 +992,7 @@ async def _earned_check(business_id: int, vendor_id: int) -> Optional[str]:
 
 
 async def _earned_view(business: dict) -> dict:
-    vendors = []
-    for v in await models.list_vendors(business["id"]):
-        state = await earned.vendor_state(business["id"], v["id"])
-        switch = await models.get_autopay(business["id"], v["id"])
-        on = bool(switch and switch["active"])
-        vendors.append({"id": v["id"], "name": v["name"], "streak": state["streak"], "graduated": state["graduated"],
-                        "record_hash": state["record_hash"], "record_at": state["record_at"],
-                        "autopay": {"on": on, "max_usdc": switch["max_usdc"] if on else None, "record_hash": switch["reasoning_hash"] if on else None}})
-    return {"earn_after": int(business["earn_after"]), "min": earned.MIN_EARN_AFTER, "max": earned.MAX_EARN_AFTER, "vendors": vendors}
+    return await vendor_trust.overview(business, only_with_trust=False)
 
 
 class EarnedSettingsIn(_Strict):
@@ -1585,6 +1577,17 @@ async def business_traction(slug: Slug):
             for r in paid
         ],
     }
+
+
+@app.get("/businesses/{slug}/vendor-trust")
+async def business_vendor_trust(slug: Slug):
+    """Public, no login, read only. Each vendor with a streak or a trust record: its streak against the owner's threshold, whether
+    it is graduated, whether the owner's autopay switch is on (and its per-payment cap), how many invoices autopay paid, and its
+    graduation, revocation and autopay records with the hash of each (open it on the proof page to verify). Wallets and signatures
+    are not included. Nothing here is a traction figure: autopay payments are shadow payments."""
+    business = await _business_by_slug(slug, active_only=True)
+    return {"business": {"name": business["name"], "slug": business["slug"]},
+            **await vendor_trust.overview(business, only_with_trust=True)}
 
 
 @app.get("/operator/business-applications")

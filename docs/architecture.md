@@ -13,7 +13,7 @@ How the parts fit, which Circle tools are used and why the design is what it is.
 ├──────────────────┼──────────────────┼───────────────────────────┤
 │ Circle Gateway    │ Three-way match  │ MilestoneEscrow.sol       │
 │ POST /v1/balances │ rules baseline   │ holds USDC per milestone  │
-│                   │ LLM: narrative + │                           │
+│ (read live)       │ LLM: narrative + │                           │
 │ USYC via own      │ recorded 2nd     │ Evidence dry run (built)  │
 │ pooled wrapper    │ opinion (never   │ informs a decision; the   │
 │ (CeedeBooksYield  │ acts)            │ contract's own require    │
@@ -47,8 +47,8 @@ The engine, the audit log and the ledger are built; the Treasury Brain column is
 | USDC | ✅ live | Native ERC-20 at `0x3600000000000000000000000000000000000000` |
 | Gateway | ✅ live: balance read and a manual deposit | `POST /v1/balances` for the agent wallet on domain 26, shown on the admin Overview; `scripts/gateway_deposit.py` approves and deposits USDC into Circle's Gateway Wallet (run once, 3 USDC). No spend path yet |
 | USYC | Planned (Phase G) | Via own pooled wrapper (Arc's Teller has a $100k / allowlist gate) |
-| CCTP | Stretch | Domain 26, `minFinalityThreshold: 2000`, V2 7-param `depositForBurn` only |
-| EURC | Stretch | European vendor payments |
+| CCTP | Planned | Domain 26, `minFinalityThreshold: 2000`, V2 7-param `depositForBurn` only |
+| EURC | Planned | European vendor payments |
 | ~~Paymaster~~ | Dropped | Not used |
 
 Honest count: 3 live (Agent Wallet, USDC, and Gateway for a balance read and a manual deposit, with no spend), 3 planned (USYC, CCTP, EURC).
@@ -60,4 +60,4 @@ Honest count: 3 live (Agent Wallet, USDC, and Gateway for a balance read and a m
 - **Model output is an input, never a release condition.** In Circle's `arc-escrow` sample, the app releases funds when a GPT-4o answer returns `valid: true` with `HIGH` confidence (`app/api/contracts/validate-work/route.ts`), and the escrow contract itself does not check the work. In CeedeBooks the model's answer is a recorded input: the rules verdict acts, and the contract enforces the limits whatever the model says.
 - **Independent receipt witness.** A three-way match proves nothing if the agent can confirm its own receipts. It can't.
 - **Settlement is confirmed, not hoped for.** Circle's transaction API is asynchronous — accepting a request isn't the same as it succeeding on-chain. CeedeBooks waits for a terminal state before trusting any result, closing a real phantom-payment risk most demos never test for.
-- **Tested, not just described.** 111 Foundry tests (24 cover the v1 contract, 45 cover the multi-business contracts, 42 cover the escrow contract) plus 741 Python tests covering the decision pipeline, the isolation between businesses, onboarding, shadow mode, per-business categories, the signed ledger and its on-chain anchor, the admin routes, the oversight controls, and the outcome figures, and the escrow reads, the evidence fetch rules and the public escrow decision list.
+- **Tested, not just described.** 111 Foundry tests (24 cover the v1 contract, 45 cover the multi-business contracts, 42 cover the escrow contract) plus 766 Python tests covering the decision pipeline, the isolation between businesses, onboarding, shadow mode, per-business categories, the signed ledger and its on-chain anchor, the admin routes, the oversight controls, and the outcome figures, and the escrow reads, the evidence fetch rules and the public escrow decision list.

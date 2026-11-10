@@ -1,5 +1,5 @@
 """Phase P1: public outcome figures. Every figure is read from one SQL statement; these tests seed rows directly and check
-the numbers, the own/outside and origin splits, the null cases (rule 19) and that nothing private leaves the API."""
+the numbers, the own/outside and origin splits, the null cases (an undefined metric is null, never agreement) and that nothing private leaves the API."""
 import asyncio
 import sqlite3
 import time
@@ -207,7 +207,7 @@ def test_every_documented_query_runs_as_written(client):
 
 
 def test_no_digits_are_written_by_a_model_into_the_statement():
-    """Rule 18: the sentence on the page is built from counts by code only."""
+    """Figures are written by code: the sentence on the page is built from counts by code only."""
     assert outcomes.outside_statement({"total": 1, "external": 0}, False) == \
         "Outside businesses: 0 confirmed. 1 active business, none confirmed as an outside party."
     assert outcomes.outside_statement({"total": 3, "external": 2}, False) == \

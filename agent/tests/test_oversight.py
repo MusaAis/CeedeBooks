@@ -74,7 +74,7 @@ def _rows(sql, args=()):
         return db.execute(sql, args).fetchall()
 
 
-# ---- figures written by code (rule 18)
+# ---- figures are written by code
 
 def test_render_figures_only_has_the_figures_it_was_given():
     assert figures.render_figures(amount_usdc=5.5, po_amount_usdc=5) == {"amount": "5.5 USDC", "po_amount": "5 USDC"}

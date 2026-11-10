@@ -18,7 +18,7 @@ The [README](../README.md) is the short front page. The detail lives here, one s
 | [`project-structure.md`](project-structure.md) | The repository tree |
 | [`known-issues.md`](known-issues.md) | Documented bugs and gotchas |
 | [`rollouts/`](rollouts/README.md) | One record per thing run live, failures included |
-| [`../deploy/DEPLOY.md`](../deploy/DEPLOY.md) | Server steps, one upgrade section per release |
+| [`../deploy/DEPLOY.md`](../deploy/DEPLOY.md) | Server steps: first install, then one upgrade section per release from v1.2.8.1 on, newest first (earlier releases are covered by the install steps) |
 
 ## Keeping them current
 
@@ -27,7 +27,7 @@ Every release updates, in the same commit:
 1. `CHANGELOG.md`: a new entry at the top.
 2. The README: the Status line, the test counts in the badges and the "Since Sep 27" numbers.
 3. Only the docs files the release touched: a new route goes in `api.md`, a new file in `project-structure.md`, a new phase row in `roadmap.md`, a new bug in `known-issues.md`, a new contract in `contracts.md`.
-4. `deploy/DEPLOY.md`: an upgrade section.
+4. `deploy/DEPLOY.md`: an upgrade section at the top of the upgrade list (a one-line section for a docs-only release).
 5. `rollouts/`: a record for anything run live.
 
 Rules: a fact is written once and linked from elsewhere; numbers come from code or git, not memory; failures stay in; nothing is described as built unless it runs.

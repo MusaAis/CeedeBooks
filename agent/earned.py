@@ -2,7 +2,7 @@
 
 A payee is graduated after the owner has approved N of the agent's shadow pay decisions on it in a row. One disagreement
 (a rejected pay, or an "I would not" verdict on that payee) ends it. Graduation and revocation are written only through
-decision_log.log_decision (one signed ledger entry each), with code-written text (rule 18).
+decision_log.log_decision (one signed ledger entry each), with code-written text.
 """
 import aiosqlite
 
@@ -70,7 +70,7 @@ async def _last_record(db, business_id: int, vendor_id: int):
 async def vendor_state(business_id: int, vendor_id: int) -> dict:
     """What is true now for one vendor, read from the verdicts and the ledger records. `graduated` is true only if the last record is
     a graduation AND no disagreement was recorded after it, so a revocation that failed to be written can never leave a vendor
-    looking graduated (rule 17)."""
+    looking graduated (fail closed)."""
     async with aiosqlite.connect(config.db_path) as db:
         events = await _events(db, business_id, vendor_id)
         last = await _last_record(db, business_id, vendor_id)

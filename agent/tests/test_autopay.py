@@ -225,7 +225,7 @@ def test_switching_on_writes_a_signed_ledger_record_first(client, chain):
     assert "up to 0.75 USDC" in rows[0]["reasoning"] and W1 in rows[0]["reasoning"] and ADMIN_1.address.lower() in rows[0]["reasoning"]
     assert out["record_hash"] == rows[0]["reasoning_hash"]
     view = {v["id"]: v for v in client.get("/admin/earned-vendors", headers=h).json()["vendors"]}[vid]
-    assert view["autopay"] == {"on": True, "max_usdc": "0.75", "record_hash": rows[0]["reasoning_hash"]}
+    assert view["autopay"] == {"on": True, "max_usdc": "0.75", "record_hash": rows[0]["reasoning_hash"], "paid": 0}
     assert client.get("/ledger/verify").json()["ok"]
 
 

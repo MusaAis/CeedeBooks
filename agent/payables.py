@@ -99,7 +99,7 @@ def _vendor_registered(chain, wallet: str) -> Optional[bool]:
 
 
 async def _narrative(invoice: Invoice, reason: str) -> str:
-    """The model's words with code-written figures (rule 18). A reply with a digit of its own is replaced by the
+    """The model's words with code-written figures. A reply with a digit of its own is replaced by the
     code-written reason, so no model-made number is ever stored or hashed."""
     figs = figures.render_figures(amount_usdc=invoice.amount_usdc)
     raw = await escalation_reasoning(f"Invoice {invoice.invoice_number}: {reason}. {figures.placeholder_help(figs)}")
@@ -293,7 +293,7 @@ async def _commit_then_pay(
     comparison: Optional[dict] = None,
 ) -> str:
     """Hash first, then commit, wait, pay, wait. Returns the reasoning hash. The contract re-checks everything.
-    Pause state is read right before anything is hashed; an unreadable state raises and nothing is paid (rule 17)."""
+    Pause state is read right before anything is hashed; an unreadable state raises and nothing is paid (fail closed)."""
     if chain.is_paused():
         raise PaymentsPaused()
     reasoning_hash_hex = await decision_log.log_decision(

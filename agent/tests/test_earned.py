@@ -319,7 +319,7 @@ def test_a_graduation_a_disagreement_has_ended_never_reads_as_graduated_even_if_
     assert [x["action"] for x in _records()] == ["VENDOR_GRADUATED", "VENDOR_REVOKED"]
 
 
-# ---- isolation (rule 20)
+# ---- tenant isolation
 
 def test_another_business_sees_and_changes_only_its_own(client, chain):
     _add_acme()

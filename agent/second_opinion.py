@@ -34,7 +34,7 @@ def _numbers(text: str) -> set:
 
 
 def clean_reasoning(text, facts: dict) -> str:
-    """Words only (rule 18): text with a figure that is not in the facts is replaced, never stored."""
+    """Words only (figures are written by code): text with a figure that is not in the facts is replaced, never stored."""
     one_line = " ".join(str(text or "").split())[:MAX_REASONING]
     if not _numbers(one_line) <= _numbers(json.dumps(facts, sort_keys=True)):
         return WITHHELD

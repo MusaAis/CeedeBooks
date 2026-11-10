@@ -32,7 +32,7 @@ Holds USDC for one contractor job and releases it per milestone. One instance pe
 - **Approver:** `overrideRelease` (a Pending or Rejected milestone, the only way to release one above the limit), `rejectMilestone` (the agent can reject too), `setPaused`, `setAgent`, a two-step approver change, and `withdraw`, which can take only the balance not reserved for Pending milestones (`withdrawable()`). Pause blocks the agent's release and reject; the approver's override, reject and withdraw still work.
 - **What it does not do:** it cannot check that work was done. The `evidenceHash` is a record emitted in `MilestoneReleased`, not proof, and the approver threshold is what keeps the agent from releasing a large milestone alone. A milestone that is not funded cannot be released: the transfer reverts and the milestone stays Pending.
 
-The one deployment (its address is in the [README](../README.md#contracts-arc-testnet)) is a reference: no engagement has run and it holds no funds. Its source could not be verified on the explorer (see [Known issues, #12](known-issues.md)); the deployed bytecode matches a local build of this source.
+The one deployment (its address is in the [README](../README.md#contracts-arc-testnet)) is a reference deployment for our own testing: it holds only our own testnet funds and no outside party has used it. Its source could not be verified on the explorer (see [Known issues, #12](known-issues.md)); the deployed bytecode matches a local build of this source.
 
 ## Businesses and the original approver
 

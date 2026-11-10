@@ -1,6 +1,6 @@
 # The approver's actions on a milestone escrow, first live run (Oct 29, 2026)
 
-**Feature:** the **Approver actions** section of the admin site's Escrows tab (`admin/admin.js`, `admin/wallet.js`, v1.3.2.4, Phase H piece 4). **Where:** the production admin site (`admin.ceedebooks.xyz`), driven from a phone by the escrow's approver wallet `0xaE16D350db806A7785113C7C3690C337B753eAaa`, against the reference escrow [`0x9752F995...2971dd5`](https://explorer.testnet.arc.io/address/0x9752F995739C8A171AbD24944925Eaf4d2971dd5). **Whose money:** the builder's own, testnet USDC. Every wallet involved (the approver, the agent `0x32B5...37b0`, the contractor `0x1e89Fc19Bfa9015C72cAd70D27CC77E684d59b38`) belongs to the builder, so none of this is outside-business traction. These actions send no request to the server and write no activity-log or ledger entry by design: each transaction on the escrow is the record.
+**Feature:** the **Approver actions** section of the admin site's Escrows tab (`admin/admin.js`, `admin/wallet.js`, v1.3.2.4, Phase H piece 4). **Where:** the production admin site (`admin.ceedebooks.xyz`), driven from a phone by the escrow's approver wallet `0xaE16D350db806A7785113C7C3690C337B753eAaa`, against the reference escrow [`0x9752F995...2971dd5`](https://explorer.testnet.arc.io/address/0x9752F995739C8A171AbD24944925EaF4d2971dd5). **Whose money:** the builder's own, testnet USDC. Every wallet involved (the approver, the agent `0x32B5...37b0`, the contractor `0x1e89Fc19Bfa9015C72cAd70D27CC77E684d59b38`) belongs to the builder, so none of this is outside-business traction. These actions send no request to the server and write no activity-log or ledger entry by design: each transaction on the escrow is the record.
 
 ## What was run
 
@@ -30,9 +30,9 @@ Nothing in the code.
 ## Check it yourself
 
 ```bash
-curl -s "https://explorer.testnet.arc.io/api/v2/addresses/0x9752F995739C8A171AbD24944925Eaf4d2971dd5/transactions" | python3 -c "import sys,json; [print(t['hash'], t.get('method'), t['timestamp'], t['status'], t['from']['hash']) for t in json.load(sys.stdin)['items']]"
-cast call 0x9752F995739C8A171AbD24944925Eaf4d2971dd5 "paused()(bool)" --rpc-url $ARC_TESTNET_RPC_URL
-cast call 0x9752F995739C8A171AbD24944925Eaf4d2971dd5 "milestones(uint256)(uint256,bytes32,uint8)" 1 --rpc-url $ARC_TESTNET_RPC_URL
+curl -s "https://explorer.testnet.arc.io/api/v2/addresses/0x9752F995739C8A171AbD24944925EaF4d2971dd5/transactions" | python3 -c "import sys,json; [print(t['hash'], t.get('method'), t['timestamp'], t['status'], t['from']['hash']) for t in json.load(sys.stdin)['items']]"
+cast call 0x9752F995739C8A171AbD24944925EaF4d2971dd5 "paused()(bool)" --rpc-url $ARC_TESTNET_RPC_URL
+cast call 0x9752F995739C8A171AbD24944925EaF4d2971dd5 "milestones(uint256)(uint256,bytes32,uint8)" 1 --rpc-url $ARC_TESTNET_RPC_URL
 ```
 
 The first lists the transactions above; `paused()` returns `false`; milestone 1 returns status `2` (Rejected).

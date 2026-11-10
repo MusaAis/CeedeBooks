@@ -1,5 +1,5 @@
 """Phase P3 fix: the per-business traction figures count the agent's own traffic only. Manual and demo invoices (the
-relabelled test runs and the demo path) are shown apart in `not_traction`, never in `live` or `latest_paid` (rule 14)."""
+relabelled test runs and the demo path) are shown apart in `not_traction`, never in `live` or `latest_paid` (origins `demo` and `manual` never count as agent traffic)."""
 import asyncio
 
 import pytest

@@ -6,7 +6,7 @@
 
 All times UTC, Oct 28. Each on-chain step was confirmed one at a time before it was taken.
 
-1. 09:53: the reference escrow [`0x9752F995...2971dd5`](https://explorer.testnet.arc.io/address/0x9752F995739C8A171AbD24944925Eaf4d2971dd5) (deployed Oct 24, never funded until now) was registered from the Escrows tab (an off-chain action; the Activity tab shows `register_escrow`).
+1. 09:53: the reference escrow [`0x9752F995...2971dd5`](https://explorer.testnet.arc.io/address/0x9752F995739C8A171AbD24944925EaF4d2971dd5) (deployed Oct 24, never funded until now) was registered from the Escrows tab (an off-chain action; the Activity tab shows `register_escrow`).
 2. Funding, two USDC transfers from the approver's own wallet through the tab: 0.5 USDC in [`0xe391d45d...5d02250b`](https://explorer.testnet.arc.io/tx/0xe391d45de1e18203fce33fef71bd37bfba400fd7966b9f20304d158c5d02250b) and, after the first screen read 0.5, a further 5 USDC in [`0x8bf14a34...592e9b31`](https://explorer.testnet.arc.io/tx/0x8bf14a3454d6611231f68786b24d4f9f053d1fb9dd6b779dd4935c33592e9b31). The tab then read balance 5.5, reserved 0.8, agent limit 0.25, Active. (The 5 USDC was more than the run needed.)
 3. 10:04: a hold. Milestone 0 with pull request 934 of `foundry-rs/forge-std`, which is closed and was never merged. The dry run said hold ("the pull request offered as evidence is not merged") and wrote nothing; Release then recorded `ESCROW_HELD`, decision hash `ccbaf7ac53bff4f5282abff3cb78d1e9f36b7e18364730fcf8405fe67e3e11b4`, and sent nothing.
 4. 10:12: an escalation. Milestone 2 (0.5 USDC, above the 0.25 limit) with merged pull request 937. The verdict was escalate ("above the agent's release limit, so only the approver can release it"); `ESCROW_ESCALATED`, decision hash `dc3a8a57f478fdb781317dc0419acc09731a4002d69c120898751b5546ffc83c`, nothing sent.
@@ -38,7 +38,7 @@ Nothing in the code.
 
 ```bash
 curl -s https://api.ceedebooks.xyz/decisions/e720c5eb420bc48df8e6bc6cc18e1ae78fc3f920d5c477f4612064038723a895/verify
-curl -s "https://explorer.testnet.arc.io/api/v2/addresses/0x9752F995739C8A171AbD24944925Eaf4d2971dd5/transactions"
+curl -s "https://explorer.testnet.arc.io/api/v2/addresses/0x9752F995739C8A171AbD24944925EaF4d2971dd5/transactions"
 ```
 
 The evidence hash is the SHA-256 of the canonical JSON of the facts for `GET https://api.github.com/repos/foundry-rs/forge-std/pulls/937`.

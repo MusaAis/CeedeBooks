@@ -15,6 +15,7 @@ ceedebooks/
 │   ├── evidence.py         # a GitHub pull request turned into facts and an evidence hash (v1.3.2.1)
 │   ├── escrow_chain.py     # read-only view of a MilestoneEscrow contract and the registration checks (v1.3.2.1)
 │   ├── earned.py           # earned vendors: the streak rule, graduation and revocation records (they pay nothing)
+│   ├── vendor_trust.py     # each vendor's streak, graduated state, autopay state and revocations from the audit records; read only (v1.3.3.2)
 │   ├── autopay.py          # the owner's per-vendor autopay switch: eligibility checks and the on and off records
 │   ├── escrow_release.py   # the agent's release verdict, decision record and the two transactions (commit, release) for an escrow (v1.3.2.3)
 │   ├── decision_log.py     # canonical-JSON SHA-256 audit log, hash-before-action
@@ -48,6 +49,8 @@ ceedebooks/
 │       ├── test_escrow.py
 │       ├── test_earned.py
 │       ├── test_autopay.py
+│       ├── test_vendor_trust.py
+│       ├── test_check_docs.py
 │       ├── test_escrow_release.py
 │       ├── test_relabel.py
 │       └── test_red_team.py
@@ -60,6 +63,7 @@ ceedebooks/
 │   ├── admin_auth.py       # wallet sign-in for the admin site (session bound to the on-chain approver)
 │   └── vendor_auth.py      # wallet signatures for vendor, business and application sign-in
 ├── scripts/
+│   ├── check_docs.py       # docs checker: test counts, address checksums, links, private wording, repeated text, DEPLOY order, API routes (v1.3.3.2)
 │   ├── create_api_key.py   # create / revoke API keys (printed once, stored hashed)
 │   ├── ledger_key.py       # create the ledger signing key without printing it
 │   ├── anchor_ledger.py    # status, and the confirmed first anchor per business

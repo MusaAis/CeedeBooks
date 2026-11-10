@@ -32,4 +32,6 @@ A business that does not want to move real money can still be judged on real dec
 
 **Autopay (v1.3.3.1).** For a graduated vendor the owner can sign a switch with their wallet: a message naming the vendor, its wallet and a cap per payment, which sends no transaction. While it is on, a shadow invoice from that vendor that the agent would park for the owner is instead paid by the agent, through the same commit-then-pay path as the owner's click, so the match, the rules, the pause and the contract's own limits all still apply. If the agent holds or escalates, the contract refuses, or the owner disagrees, the switch goes off and the ledger records why. The payment stays a labelled shadow mirror (`auto`) and moves no live figure.
 
+**Vendor trust (v1.3.3.2).** The proof page and the admin site show, for each vendor with a streak or a trust record, its streak against the owner's threshold, whether it is graduated, whether autopay is on (and its per-payment cap), how many shadow invoices autopay paid, and its graduation, revocation and autopay records, each with a hash that the "Check it" button verifies like any decision. It reads records only: it pays nothing and moves no figure, and a vendor's wallet and signatures are not shown.
+
 **Not in shadow mode:** no bank or ERP connection, no PDF or email intake, no exchange-rate oracle.

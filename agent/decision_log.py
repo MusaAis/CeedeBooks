@@ -156,7 +156,7 @@ async def mark_contract_refused(reasoning_hash: str) -> None:
 
 async def comparison_metrics(business_id: Optional[int] = None) -> dict:
     """Rules-versus-model counts over decisions that carry a comparison (hash format 3). `compared` counts only decisions a
-    model answered; agreement is None when none were compared (rule 19). Live and shadow decisions are kept apart and split by
+    model answered; agreement is None when none were compared (an undefined metric is null, never agreement). Live and shadow decisions are kept apart and split by
     origin and by business. business_id=None is the public aggregate (archived businesses left out); a number scopes it."""
     scope, args = ("AND a.business_id = ? ", (business_id,)) if business_id is not None else (
         "AND a.business_id NOT IN (SELECT id FROM businesses WHERE status = 'archived') ", ())

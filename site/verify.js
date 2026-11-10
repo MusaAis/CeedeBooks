@@ -8,6 +8,7 @@
     enforcer: "0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB", // the original business (v1 contract)
     factory: "0x97b9A3802bA6B258cBeF6070532a265656bb391C",   // every other business's contract is created by this factory
     anchor: "0x008217BeC86462E76126F94e50eBe68fb4a41444",    // LedgerAnchor: each agent wallet anchors its business's ledger head here
+    home: "ceedebooks", // the builder's own business: what the vendor-trust block shows when no business is picked
     chainId: "0x4cef52", // Arc Testnet, 5042002
     explorer: "https://explorer.testnet.arc.io",
     rpcs: [
@@ -237,6 +238,33 @@
     };
   }
 
+  // The vendor-trust block (R3): each vendor's streak against the owner's threshold, graduated state, autopay state and revocations,
+  // all from /businesses/{slug}/vendor-trust. Every line is a ledger record or a count of them; nothing here is a payment figure.
+  var TRUST_LABELS = { VENDOR_GRADUATED: "Graduated", VENDOR_REVOKED: "Graduation revoked", VENDOR_AUTOPAY_ON: "Autopay switched on",
+                       VENDOR_AUTOPAY_OFF: "Autopay switched off" };
+  function plural(n, one, many) { return n + " " + (n === 1 ? one : many); }
+  function vendorTrustView(t) {
+    var n = t.earn_after;
+    return {
+      empty: !t.vendors.length,
+      threshold: "The owner set the threshold at " + n + " agreed pay decisions in a row.",
+      vendors: t.vendors.map(function (v) {
+        var ap = v.autopay || {};
+        var state = v.graduated ? "Graduated" : v.revocations ? "Graduation revoked, earning it again" : "Not yet graduated";
+        return {
+          name: v.name,
+          streak: v.streak + " of " + n + " agreed in a row",
+          state: state,
+          revocations: v.revocations ? plural(v.revocations, "revocation", "revocations") : "No revocations",
+          autopay: ap.on ? "Autopay on, up to " + ap.max_usdc + " USDC per payment" + (ap.paid ? ", " + plural(ap.paid, "payment", "payments") + " made by it" : "")
+                         : "Autopay off" + (ap.paid ? ", " + (ap.paid === 1 ? "1 payment was" : ap.paid + " payments were") + " made by it" : ""),
+          graduated: v.graduated, autopayOn: !!ap.on,
+          records: (v.records || []).map(function (r) { return { label: TRUST_LABELS[r.action] || r.action, at: r.at, hash: r.reasoning_hash }; })
+        };
+      })
+    };
+  }
+
   // The Outcomes block. Every sentence is built from the API's figures; nothing is rounded up and a missing rate says so.
   // Own and outside businesses are separate rows; only the agent origin is headline traction, the rest are shown apart.
   function outcomesView(o) {
@@ -382,7 +410,7 @@
   }
 
   var api = {
-    tractionView: tractionView, outcomesView: outcomesView, escrowView: escrowView, escrowTarget: escrowTarget, findEscrowRelease: findEscrowRelease, CONFIG: CONFIG, TOPICS: TOPICS, normalizeHash: normalizeHash, isTxHash: isTxHash, sha256Hex: sha256Hex,
+    tractionView: tractionView, vendorTrustView: vendorTrustView, outcomesView: outcomesView, escrowView: escrowView, escrowTarget: escrowTarget, findEscrowRelease: findEscrowRelease, CONFIG: CONFIG, TOPICS: TOPICS, normalizeHash: normalizeHash, isTxHash: isTxHash, sha256Hex: sha256Hex,
     checkRecord: checkRecord, findEvent: findEvent, readReceipt: readReceipt, isKnownBusiness: isKnownBusiness, businessRows: businessRows,
     SELECTORS: SELECTORS, checkChain: checkChain, compareAnchor: compareAnchor, readAnchor: readAnchor, verifyWholeChain: verifyWholeChain
   };

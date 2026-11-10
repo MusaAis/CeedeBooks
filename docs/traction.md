@@ -2,12 +2,10 @@
 
 Everything below is checkable on-chain; nothing is estimated. The short table with links is in the [README](../README.md#evidence-you-can-check) and each live run has a record in [`rollouts/`](rollouts/README.md).
 
-Everything below is checkable on-chain. Nothing here is estimated.
-
 | What | Evidence |
 |---|---|
 | Contract deployed and verified on Arc Testnet | [`BudgetEnforcer`](https://explorer.testnet.arc.io/address/0x47D8a05a0d31aFA492A9F4A37A8991ED4aa683fB) |
-| Test suites | 111 Foundry (24 on the v1 contract, 45 on the multi-business contracts, 42 on the escrow contract) + 741 Python tests + 6 Node runs (proof page, admin site, vendor portal), run by CI on every push |
+| Test suites | 111 Foundry (24 on the v1 contract, 45 on the multi-business contracts, 42 on the escrow contract) + 766 Python tests + 6 Node runs (proof page, admin site, vendor portal), run by CI on every push |
 | First self-owned vendor bill paid through the contract | `ceedebooks.xyz` registration, 2.20 USDC, category 1 |
 | Multi-business contracts deployed and verified (v1.2.8) | [`BudgetFactory`](https://explorer.testnet.arc.io/address/0x97b9A3802bA6B258cBeF6070532a265656bb391C), [`LedgerAnchor`](https://explorer.testnet.arc.io/address/0x008217BeC86462E76126F94e50eBe68fb4a41444) |
 | First ledger anchor of the original business (sequence 9) | [`0x24045426...a36639fb`](https://explorer.testnet.arc.io/tx/0x24045426ab28d346ce6e48998dfef1964e5890d64ee04f385cae1011a36639fb); `GET /ledger/verify?business=ceedebooks` compares it with the chain |
@@ -26,7 +24,7 @@ Everything below is checkable on-chain. Nothing here is estimated.
 
 **Live numbers** (pool balance, paid, held and escalated counts, vendors, purchase orders) change with every payment, so the [proof page](https://ceedebooks.xyz) and `GET /stats` are the only source. The escalations on it are self-owned test invoices that the agent parked for review, as designed. Testnet USDC has no market value.
 
-**The domain payment.** CeedeBooks' own domain was bought by card (Namecheap order 215679394, $2.00 + $0.20 ICANN fee), and the registrar cannot take USDC, so the founder was reimbursed through the contract: vendor registered with `setVendor`, category 1 given a 20 USDC/day limit, the receipt hashed into `docHash`, the reasoning hash logged off-chain first, then `commitDecision` and `pay` from the Circle agent wallet in separate blocks.
+**The domain payment.** CeedeBooks' own domain was bought by card ($2.00 + $0.20 ICANN fee), and the registrar cannot take USDC, so the founder was reimbursed through the contract: vendor registered with `setVendor`, category 1 given a 20 USDC/day limit, the receipt hashed into `docHash`, the reasoning hash logged off-chain first, then `commitDecision` and `pay` from the Circle agent wallet in separate blocks.
 
 - Payment transaction: [`0x8c176242...ce5d0d`](https://explorer.testnet.arc.io/tx/0x8c176242a84235a884d5790edf4a9aed403d87619359373e11f2e27141ce5d0d)
 - `reasoning_hash`: `46f65d7786a368e6e0814c938b8af9a7f6bed20bb1196478ac0a32708fa6f14a`

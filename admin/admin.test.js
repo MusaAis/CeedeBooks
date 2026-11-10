@@ -85,8 +85,10 @@ global.fetch = async (url, opt = {}) => {
     if (/^\/admin\/invoices\/\d+\/rerun$/.test(path) && method === "POST") { posts.push({ rerun: path }); return ok({ ok: true }); }
     if (path === "/purchase-orders" && method === "POST") { posts.push({ po: JSON.parse(opt.body) }); return ok({ id: 9 }); }
     if (path === "/admin/earned-vendors") return ok({ earn_after: 5, min: 2, max: 50, vendors: [{ id: 1, name: "Ops", streak: 3, graduated: false, record_hash: null, record_at: null, autopay: { on: false } },
-      { id: 2, name: "Grad Co", streak: 5, graduated: true, record_hash: "aa".repeat(32), record_at: "t", autopay: { on: false } },
-      { id: 3, name: "Auto Co", streak: 7, graduated: true, record_hash: "bb".repeat(32), record_at: "t", autopay: { on: true, max_usdc: "0.75", record_hash: "cc".repeat(32) } }] });
+      { id: 2, name: "Grad Co", streak: 5, graduated: true, record_hash: "aa".repeat(32), record_at: "t", graduations: 2, revocations: 1, autopay: { on: false, paid: 0 },
+        records: [{ action: "VENDOR_GRADUATED", at: 1762560000, reasoning_hash: "aa".repeat(32) }, { action: "VENDOR_REVOKED", at: 1762550000, reasoning_hash: "ee".repeat(32) }] },
+      { id: 3, name: "Auto Co", streak: 7, graduated: true, record_hash: "bb".repeat(32), record_at: "t", autopay: { on: true, max_usdc: "0.75", record_hash: "cc".repeat(32), paid: 2 },
+        records: [{ action: "VENDOR_AUTOPAY_ON", at: 1762570000, reasoning_hash: "cc".repeat(32) }] }] });
     if (path === "/admin/autopay/challenge" && method === "POST") { posts.push({ apChallenge: JSON.parse(opt.body) }); return ok({ nonce: "n".repeat(32), message: "CeedeBooks autopay: Grad Co up to 0.75 USDC" }); }
     if (path === "/admin/autopay/on" && method === "POST") { posts.push({ apOn: JSON.parse(opt.body) }); return ok({ ok: true }); }
     if (/^\/admin\/autopay\/\d+\/off$/.test(path) && method === "POST") { posts.push({ apOff: path }); return ok({ ok: true, was_on: true }); }
@@ -139,6 +141,7 @@ const tick = (ms = 20) => new Promise((r) => setTimeout(r, ms));
   await tabs[0].listeners.click(); await tick()
   assert.ok(/Not approved/.test(root.textContent));
   assert.ok(/Earned vendors/.test(root.textContent) && /3 of 5/.test(root.textContent) && /Not yet/.test(root.textContent) && /pays nothing/.test(root.textContent), "the vendors tab shows the earned-vendor streak and says a graduation pays nothing");
+  assert.ok(/1 revocation/.test(root.textContent) && /Trust records/.test(root.textContent) && /Graduation revoked/.test(root.textContent) && /Autopay switched on/.test(root.textContent) && /eeeeeeeeeeee/.test(root.textContent) && /2 payments made by it/.test(root.textContent), "the vendors tab lists each vendor's revocations, autopaid payments and its trust records with their hashes");
   assert.ok(/autopay on, up to 0.75 USDC/.test(root.textContent) && /Turn autopay on/.test(root.textContent) && /Turn off/.test(root.textContent), "a graduated vendor offers the switch; a switched-on one shows its cap and a way to turn it off");
   {
     const txBefore = calls.filter((c) => c.method === "eth_sendTransaction").length;
