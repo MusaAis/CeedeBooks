@@ -63,6 +63,19 @@ Reviewing applications: the admin site has an **Applications** tab. Accepting on
 The portal loads its typeface (Bricolage Grotesque, the same as the proof page) from Google Fonts, so its Content-Security-Policy allows `fonts.googleapis.com` and `fonts.gstatic.com`. If you set the portal up before that line existed, update the live config in place (do not copy the repo file over it: certbot has edited the live one):
 `sudo sed -i "s#style-src 'self'; img-src#style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src#" /etc/nginx/sites-available/ceedebooks-portal && sudo nginx -t && sudo systemctl reload nginx`
 
+## Upgrading to v1.3.3.4 (the health watch)
+
+A new script (`scripts/health_watch.py`) and two systemd units. No API change, so the API needs no restart; no schema, contract or ledger change.
+
+1. Create a Discord webhook in the channel that should get alerts (Channel settings, Integrations, Webhooks), copy its URL, and add one line to `~/ceedebooks/.env`: `DISCORD_WEBHOOK_URL=<the URL>`. Never commit it or paste it into a chat.
+2. Install the units: `sudo cp deploy/ceedebooks-health.service deploy/ceedebooks-health.timer /etc/systemd/system/ && sudo systemctl daemon-reload`.
+3. Check the setup without posting: `cd ~/ceedebooks && python3 scripts/health_watch.py --dry-run` (expect six lines starting `ok`, exit code 0).
+4. Check Discord: `python3 scripts/health_watch.py --test-webhook` (expect `test message posted` and the message in the channel).
+5. Start the timer: `sudo systemctl enable --now ceedebooks-health.timer`, then `systemctl list-timers ceedebooks-health.timer` (expect a next run within 10 minutes).
+6. Test an alert once: `sudo systemctl stop ceedebooks-api`, wait 25 minutes (two runs fail, then the DOWN message arrives), then `sudo systemctl start ceedebooks-api` and wait 10 minutes (the RECOVERED message arrives). To see it at once, run `HEALTH_FAIL_AFTER=1 python3 scripts/health_watch.py` while the API is stopped, then start it and run the script again.
+
+To go back: `sudo systemctl disable --now ceedebooks-health.timer` and remove the two unit files. Nothing is written to the database or the ledger; the only file it keeps is `~/.ceedebooks-health.json` (its alert state).
+
 ## Upgrading to v1.3.3.3 (README and docs only)
 
 Nothing to deploy: no code, route, schema, contract or environment change. `git pull` is enough; no restart is needed.

@@ -8,6 +8,8 @@ Everything runs on Arc Testnet with test USDC. Two businesses exist and both are
 
 ## Latest releases
 
+**v1.3.3.4**: a health watch. A script on a 10-minute timer, outside the API, checks the public routes and the three sites and posts to a Discord webhook when one stops answering (after two failed checks in a row), with one message when it recovers. It reads and posts only. Phase R is complete with this release.
+
 **v1.3.3.3**: documentation only. The README became a short front page and this page, the evidence page and the Sep 27 page took the detail. No code changed.
 
 **v1.3.3.2**, Phase R piece 3 (vendor trust on the proof page and in the admin site, with a documentation correction): a public, read-only route `GET /businesses/{slug}/vendor-trust` and a "Vendor trust" block on the proof page show, for each vendor with a streak or a trust record, its streak against the owner's threshold, whether it is graduated, whether the owner's autopay switch is on (and its per-payment cap), how many shadow invoices autopay paid, and its graduation, revocation and autopay records, each with a hash and a "Check it" button that verifies it. The admin Vendors tab shows the same records and a revocation count for every vendor. It reads records and writes nothing: no payment, no figure, no ledger entry. Built and tested (14 new route tests, 11 for the docs checker; proof page and admin site checked in a headless browser); nothing in it needs a live run beyond reading it.

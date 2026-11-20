@@ -51,6 +51,7 @@ ceedebooks/
 │       ├── test_autopay.py
 │       ├── test_vendor_trust.py
 │       ├── test_check_docs.py
+│       ├── test_health_watch.py
 │       ├── test_escrow_release.py
 │       ├── test_relabel.py
 │       └── test_red_team.py
@@ -67,6 +68,7 @@ ceedebooks/
 │   ├── create_api_key.py   # create / revoke API keys (printed once, stored hashed)
 │   ├── ledger_key.py       # create the ledger signing key without printing it
 │   ├── anchor_ledger.py    # status, and the confirmed first anchor per business
+│   ├── health_watch.py     # the health watch: checks the public routes and sites, posts to Discord (v1.3.3.4)
 │   ├── relabel_origin.py   # list, then (after confirmation) relabel test invoices agent -> demo
 │   ├── gateway_deposit.py  # asks for yes at each step: USDC approve and deposit into Circle's Gateway Wallet (max 5 USDC)
 │   ├── red_team.py         # asks for yes at each step: a payment the contract must refuse, then an anchor
@@ -94,6 +96,7 @@ ceedebooks/
 ├── deploy/
 │   ├── DEPLOY.md           # server steps, one upgrade section per release
 │   ├── ceedebooks-api.service
+│   ├── ceedebooks-health.service, ceedebooks-health.timer   # the health watch, every 10 minutes
 │   └── nginx-api.conf, nginx-site.conf, nginx-admin.conf, nginx-portal.conf
 ├── contracts/
 │   ├── BudgetEnforcer.sol      # v1, deployed (original business)

@@ -2,6 +2,13 @@
 
 Every release, newest first: what was built, what was tested, what was not run. The short status is in the [README](README.md); the full record of what ran live is in [`docs/rollouts/`](docs/rollouts/README.md).
 
+**v1.3.3.4: Phase R, piece 4, a health watch with a Discord alert (built and tested; run live on the server after deploy)**
+- New `scripts/health_watch.py`, started every 10 minutes by `deploy/ceedebooks-health.timer` and `deploy/ceedebooks-health.service`, outside the API process. It calls six public addresses: `/stats`, `/businesses`, `/ledger/verify?business=ceedebooks`, the proof page, the admin site and the vendor portal. It reads and posts only: no wallet, no signing key, no database access.
+- A check must fail twice in a row before one DOWN message is posted (`HEALTH_FAIL_AFTER`, default 2); a failing check posts again at most every 6 hours; one RECOVERED message follows when it passes. A post Discord refuses is tried again on the next run. The message mentions no one, and the webhook URL (`DISCORD_WEBHOOK_URL` in `.env`, empty in `.env.example`) is never printed or logged.
+- `--dry-run` prints the checks and posts nothing; `--test-webhook` posts one test message.
+- Tests: 26 new (each check against a stubbed site, a server error, JSON that is not the expected shape, an empty business list, a ledger with problems, a site that is down without its address in the detail, the alert rules, flapping that never alerts, recovery, the reminder, a refused post retried, no webhook, no leak of the URL, dry run, the unit files). Mutation checks (threshold, mentions, URL leak, retry, reminder) each failed a test. 792 Python tests in all. No route, schema, contract or ledger change.
+- Also: the LICENSE copyright name now matches the README (Musa Ali). One earlier test (`test_a_graduation_or_a_revocation_moves_no_public_figure`) no longer compares the clock field `as_of` of `/outcomes`, which made it fail on a slow run when the second ticked between two reads; no code changed.
+
 **v1.3.3.3: README rebuilt as a short front page (documentation only; nothing to deploy)**
 - The README is now a front page: pitch, diagram, what is live, a quick start that needs no wallet, verified results, where the sponsor technology is used, security, setup and a documentation index. The long status text moved to `docs/status.md`, the evidence table to `docs/evidence.md` and the Sep 27 comparison to `docs/HACKATHON.md`, with every link and figure kept. New diagram: `docs/assets/architecture.svg`.
 - `.env.example` again names the Canteen RPC endpoint for `ARC_TESTNET_RPC_URL`.

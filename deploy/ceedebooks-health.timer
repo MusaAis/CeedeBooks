@@ -1,0 +1,12 @@
+# /etc/systemd/system/ceedebooks-health.timer
+# Runs the health watch two minutes after boot and then every 10 minutes.
+[Unit]
+Description=Run the CeedeBooks health watch every 10 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

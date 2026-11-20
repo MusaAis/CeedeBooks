@@ -8,7 +8,7 @@
 ![CI](https://github.com/MusaAis/CeedeBooks/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 ![Foundry tests](https://img.shields.io/badge/forge%20tests-111%2F111%20passing-brightgreen)
-![Python tests](https://img.shields.io/badge/pytest-766%2F766%20passing-brightgreen)
+![Python tests](https://img.shields.io/badge/pytest-792%2F792%20passing-brightgreen)
 ![Network](https://img.shields.io/badge/Arc-Testnet-informational)
 
 CeedeBooks checks each invoice against a purchase order and an independently confirmed receipt, then pays, holds or escalates it. Spending limits are enforced by a smart contract, never by a prompt, and every decision is hash-logged before money moves.
@@ -32,7 +32,7 @@ Most small businesses pay bills from a spreadsheet, a chat thread and a bank app
 | Admin site (wallet sign-in) | [admin.ceedebooks.xyz](https://admin.ceedebooks.xyz) |
 | Vendor portal and business registration | [portal.ceedebooks.xyz](https://portal.ceedebooks.xyz), [registration](https://portal.ceedebooks.xyz/business.html) |
 | Agent manifest | [`/.well-known/agent.json`](https://api.ceedebooks.xyz/.well-known/agent.json) |
-| Status | **v1.3.3.3**, running on Arc Testnet with test USDC. Details: [status](docs/status.md) |
+| Status | **v1.3.3.4**, running on Arc Testnet with test USDC. Details: [status](docs/status.md) |
 
 Everything runs on testnet. Two businesses exist and both are ours; no outside business or paying user yet. The limits are in the [trust model](docs/trust-model.md).
 
@@ -53,7 +53,7 @@ No wallet needed.
 | What | Result |
 |---|---|
 | Foundry tests | 111 passing |
-| Python tests | 766 passing |
+| Python tests | 792 passing |
 | Node suites | 6 runs passing, CI on every push |
 | Live payment, Arc Testnet | 2.20 USDC, verified on-chain: [evidence](docs/evidence.md) |
 | Contract refusal, Arc Testnet | an unapproved vendor refused, anchored on-chain: [record](docs/rollouts/2026-10-15-red-team.md) |

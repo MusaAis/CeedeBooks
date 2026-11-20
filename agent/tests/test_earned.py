@@ -339,7 +339,9 @@ def test_another_business_sees_and_changes_only_its_own(client, chain):
 # ---- public figures do not move (rules 51, 53 and 61)
 
 def _public(client):
-    return {p: client.get(p).json() for p in ("/stats", "/outcomes", "/businesses/ceedebooks/traction", "/metrics/decisions")}
+    out = {p: client.get(p).json() for p in ("/stats", "/outcomes", "/businesses/ceedebooks/traction", "/metrics/decisions")}
+    out["/outcomes"].pop("as_of", None)  # the clock, not a figure; it can tick between the two reads
+    return out
 
 
 def test_a_graduation_or_a_revocation_moves_no_public_figure(client, chain):

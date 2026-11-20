@@ -1,0 +1,15 @@
+# /etc/systemd/system/ceedebooks-health.service
+# One run of the health watch (scripts/health_watch.py). The timer starts it; it holds no wallet or signing key.
+# DISCORD_WEBHOOK_URL is read from ~/ceedebooks/.env by the script, not set here.
+[Unit]
+Description=CeedeBooks health watch
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/ceedebooks
+ExecStart=/usr/bin/python3 scripts/health_watch.py
+NoNewPrivileges=true
+PrivateTmp=true
